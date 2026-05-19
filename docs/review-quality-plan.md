@@ -162,11 +162,13 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ Decoupled from `codebaseAwareness` via a new always-on `groundingFetch` context (full file fetched once, shared by W1+W2). Per the maintainer decision: full file for every flagged finding.
 - Remaining lever (not yet done): run verification on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
 
-### W3 — Honor triage / dispute replies  ★★★ (prevents P3 in #31; half of the convergence guard)
-**Targets:** `packages/lambda/src/handlers/review-agent.ts`, `packages/server/src/review-processor.ts`, `reviewer.ts`
-- Parse the `## mergewatch triage` reply convention (the author already uses it consistently — see #31, #37, #38, #39, #145 r1+r2). Feed rebuttal + disputed finding + file slice into a re-eval before the next review.
-- Outcome must be explicit: **withdraw** (not "resolve" — see W9) or post a specific counter-argument. Never silently re-assert.
-- **Convergence guard (W3∩W9):** a re-review must NOT re-raise a `(canonical_path, normalized_rule)` the author rebutted in a prior-commit triage. Without this, every fix commit regenerates the rebutted concern under a new title/line (#145 round 2 — same finding "✅ resolved" *and* "🆕 new" in one comment).
+### W3 — Honor triage / dispute replies  ✅ SHIPPED (PR #148) — prevents P3 in #31; half of the convergence guard
+**Targets:** `packages/core/src/triage.ts` (new), `reviewer.ts`, both handlers
+- ✅ `## mergewatch triage` replies are detected (`isTriageComment`/`fetchTriageComments`) and mapped via one light-model call (`computeDisputedKeys`, `TRIAGE_MAPPING_PROMPT`) onto the prior review's W9 stable keys. Only `rebutted`/`deferred` suppress; `fixed`/`unclear` don't.
+- ✅ `partitionDisputed` drops matching current findings before delta + scoring with a `[triage-suppressed]` audit log; they roll into `Suppressed N`.
+- ✅ **Fail-open:** no triage / no priors / list failure / LLM error / unparseable → suppress nothing. Only an explicit author disposition hides a finding.
+- ✅ **Code-anchored** via the W9 fingerprint: a rebuttal stops applying once the cited code materially changes, so a finding that becomes real again resurfaces (E2E-23 over-suppression regression-check).
+- Not done (deliberate, v1 = suppress): a visible **Disputed bucket** in the comment instead of silent suppression — tracked as a follow-up; the triage comment + audit log are the current trail.
 
 ### W8 — Location accuracy & reconciliation  ★★★ (prevents P8 in #37,#39)
 **Targets:** finding→location mapping in `packages/core/src/agents/` + `packages/core/src/github/client.ts`
@@ -174,11 +176,12 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - Resolve the LLM's line guess to a real anchor by matching the quoted code snippet against file contents; if it can't be matched, the finding is low-confidence (downgrade or drop).
 - Never cite a function *definition* line for a call-site finding.
 
-### W9 — Honest counters / no phantom resolution  ★★★ (prevents P9 in #39,#145; P7 in #31,#37,#145)
-**Targets:** `packages/core/src/review-delta.ts` (`findingKey`), agents + review-store comparison
-- Root cause confirmed: `findingKey()` = `` `${file}::${title}` `` where `title` is free-text LLM output. A code edit shifts lines, the orchestrator re-titles the same concern ⇒ counted as both "resolved" and "new" (#145 round 2, on tape).
-- Stable identity key: `(canonical_path, normalized_rule, code_fingerprint)` — not title, not line — so a finding doesn't churn resolved↔new as lines/wording shift. This is the **other half of the convergence guard** (with W3).
-- A finding may be marked **Resolved** only if the cited code region actually changed *and* it re-evaluates clean. A prior false positive becomes **Withdrawn**, not Resolved. Disputed findings get a **Disputed** bucket, not back to "new."
+### W9 — Honest counters / no phantom resolution  ✅ SHIPPED (PR #147) — prevents P9 in #39,#145; P7 in #31,#37,#145
+**Targets:** `packages/core/src/review-delta.ts`, `reviewer.ts`
+- Root cause confirmed & fixed: the old `findingKey()` = `` `${file}::${title}` `` (free-text title). ✅ `fingerprintFromCode` now derives a stable key from the **normalized cited code line** (not title, not line number); persisted on each finding (`fingerprint?`, back-compat, flows through the store JSON).
+- ✅ `computeReviewDelta` **union-matches** on fingerprint key OR title key — can only *reduce* spurious resolved/new, never add it, and stays back-compat with pre-W9 stored findings. The duplicate `findingKey` in `reviewer.ts` was removed; security-improvement scoring reuses `computeReviewDelta` (one identity definition).
+- ✅ Regression-locked: `review-delta.test.ts` "the whack-a-mole case" reproduces #145 round 2 (catch line unchanged, retitled, line-shifted) ⇒ `carriedOver`, not resolved+new.
+- Not done (deliberate): a separate **Withdrawn** vs **Resolved** label in the UI — current behavior keeps unmatched priors in `resolved`; the convergence win is the union-match. Follow-up if the distinction proves needed.
 
 ### W10 — Finding consolidation  ★★ (prevents P10 in #37; P5 generally)
 **Targets:** orchestrator dedup in `reviewer.ts` + the `Suppressed … by dedup & quality filters` path (already exists — extend it)
@@ -206,9 +209,9 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 
 ## Priority order (current)
 
-0. ✅ **W1, W2** — SHIPPED in PR #145 (claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39).
-1. **W9 + W3 — the convergence guard.** ⬆ Promoted above W8: #145's self-review proved the reviewer **cannot converge** — same finding "✅ resolved" *and* "🆕 new" in one comment; every fix commit regenerates ~4 "new" warnings. Stable identity key (W9) + don't-re-raise-rebutted (W3) is now the single highest-leverage fix.
-2. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
+0. ✅ **W1, W2** — SHIPPED (PR #145): claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39.
+1. ✅ **W9 + W3 — the convergence guard** — SHIPPED (PR #147 W9, PR #148 W3, stacked on #145). Stable code-fingerprint identity (no more "resolved + new" for one issue) + triage-rebutted findings suppressed on re-review. E2E-23 both halves now regression-locked.
+2. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition). ← next.
 3. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
 4. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
 
