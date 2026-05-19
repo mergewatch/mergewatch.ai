@@ -37,6 +37,7 @@ import {
 import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
+import { partitionDisputed } from '../triage.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -828,6 +829,15 @@ export interface ReviewPipelineOptions {
    * agents get agentic context. Falls back to `fileFetchOptions` when unset.
    */
   groundingFetch?: FileFetchOptions;
+  /**
+   * Finding identity keys the author already dispositioned (rebutted/deferred)
+   * in a prior `## mergewatch triage` reply (W3). Current findings whose
+   * match-keys intersect this set are suppressed instead of re-raised — the
+   * second half of the convergence guard (W9 supplies the stable keys).
+   * Computed by the handler via computeDisputedKeys(); empty/undefined on the
+   * first review or when no triage reply exists.
+   */
+  disputedKeys?: string[];
   /** User-defined custom review agents */
   customAgents?: CustomAgentDef[];
   /** Tone for review findings */
@@ -1296,6 +1306,7 @@ export async function runReviewPipeline(
     enabledAgents,
     fileFetchOptions,
     groundingFetch,
+    disputedKeys,
     customAgents = [],
     tone,
     customPricing,
@@ -1425,12 +1436,29 @@ export async function runReviewPipeline(
   // Filter findings to only those on or near actually changed lines
   const changedLines = extractChangedLines(diff);
   const CHANGED_LINE_TOLERANCE = 3;
-  const filteredFindings = withCodeFingerprints(
+  const onChangedLines = withCodeFingerprints(
     groundedFindings.filter(
       (f) => isLineNearChange(changedLines, f.file, f.line, CHANGED_LINE_TOLERANCE),
     ),
     groundingFileContents,
   );
+
+  // W3 convergence guard: drop findings the author already rebutted/deferred
+  // in a prior `## mergewatch triage` reply (keyed via the W9 stable
+  // identity, so the suppression only sticks while the cited code is
+  // unchanged — edit the code and it correctly resurfaces).
+  const { kept: filteredFindings, suppressed: triageSuppressed } = partitionDisputed(
+    onChangedLines,
+    disputedKeys,
+  );
+  for (const f of triageSuppressed) {
+    console.warn(
+      '[triage-suppressed] "%s" (%s:%d) — author rebutted/deferred this in a prior triage; not re-raising',
+      f.title,
+      f.file,
+      f.line,
+    );
+  }
 
   // Delta caption — only on re-reviews where something actually changed
   // commit-to-commit. Uses lightModel to match the other prose agents.

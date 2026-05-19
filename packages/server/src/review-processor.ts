@@ -11,6 +11,7 @@ import {
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
+  fetchTriageComments, computeDisputedKeys,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -372,6 +373,22 @@ export async function processReviewJob(
 
     const previousDiagram = typeof prevComplete?.diagramText === 'string' ? prevComplete.diagramText : undefined;
 
+    // W3 convergence guard: if the author posted a `## mergewatch triage`
+    // reply rebutting/deferring prior findings, map it to stable identity
+    // keys so the pipeline doesn't re-raise them. Best-effort, fail-open.
+    let disputedKeys: string[] = [];
+    if (prevComplete?.findings && prevComplete.findings.length > 0) {
+      const triageComments = await fetchTriageComments(octokit, owner, repo, prNumber);
+      if (triageComments.length > 0) {
+        disputedKeys = await computeDisputedKeys(
+          triageComments,
+          prevComplete.findings,
+          deps.llm,
+          config.lightModel || config.model,
+        );
+      }
+    }
+
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
     const conventionsResult = await fetchConventions(octokit, owner, repo, ref, config.conventions);
     if (conventionsResult) {
@@ -404,6 +421,7 @@ export async function processReviewJob(
         customPricing: config.pricing,
         previousDiagram,
         previousFindings: prevComplete?.findings,
+        disputedKeys,
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
       },

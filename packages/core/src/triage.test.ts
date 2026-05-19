@@ -1,0 +1,85 @@
+import { describe, it, expect } from 'vitest';
+import type { ILLMProvider } from './llm/types.js';
+import {
+  isTriageComment,
+  partitionDisputed,
+  computeDisputedKeys,
+  type TriagePriorFinding,
+} from './triage.js';
+
+function mockLLM(response: string): ILLMProvider {
+  return { async invoke() { return response; } };
+}
+
+const priors: TriagePriorFinding[] = [
+  { file: 'a.ts', line: 10, title: 'Missing await on foo', severity: 'critical', fingerprint: 'const r = foo()' },
+  { file: 'a.ts', line: 20, title: 'Broad catch swallows error', severity: 'warning', fingerprint: '} catch (e) {' },
+  { file: 'b.ts', line: 5, title: 'No input validation', severity: 'warning' },
+];
+
+describe('isTriageComment', () => {
+  it('matches the marker, case-insensitively, past leading whitespace/quote', () => {
+    expect(isTriageComment('## mergewatch triage\n...')).toBe(true);
+    expect(isTriageComment('  \n## MergeWatch Triage (round 2)')).toBe(true);
+    expect(isTriageComment('> ## mergewatch triage')).toBe(true);
+  });
+  it('rejects non-triage bodies', () => {
+    expect(isTriageComment('Thanks, will fix')).toBe(false);
+    expect(isTriageComment('## some other heading')).toBe(false);
+    expect(isTriageComment('')).toBe(false);
+    expect(isTriageComment(null)).toBe(false);
+  });
+});
+
+describe('partitionDisputed', () => {
+  it('returns everything kept when there are no disputed keys', () => {
+    const r = partitionDisputed(priors, []);
+    expect(r.suppressed).toEqual([]);
+    expect(r.kept).toHaveLength(3);
+  });
+
+  it('suppresses findings whose fingerprint OR title key intersects disputed', () => {
+    const r = partitionDisputed(priors, ['a.ts::F::} catch (e) {', 'b.ts::T::No input validation']);
+    expect(r.suppressed.map((f) => f.title).sort()).toEqual([
+      'Broad catch swallows error',
+      'No input validation',
+    ]);
+    expect(r.kept.map((f) => f.title)).toEqual(['Missing await on foo']);
+  });
+});
+
+describe('computeDisputedKeys', () => {
+  it('returns [] when there are no triage comments or no priors', async () => {
+    expect(await computeDisputedKeys([], priors, mockLLM('[]'), 'm')).toEqual([]);
+    expect(await computeDisputedKeys(['## mergewatch triage'], [], mockLLM('[]'), 'm')).toEqual([]);
+  });
+
+  it('suppresses rebutted and deferred, but NOT fixed or unclear', async () => {
+    const llm = mockLLM(JSON.stringify([
+      { index: 0, disposition: 'rebutted' },
+      { index: 1, disposition: 'deferred' },
+      { index: 2, disposition: 'fixed' },
+    ]));
+    const keys = await computeDisputedKeys(['## mergewatch triage ...'], priors, llm, 'm');
+    // index 0: title + fingerprint keys; index 1: title + fingerprint keys; index 2 (fixed): none
+    expect(keys).toContain('a.ts::T::Missing await on foo');
+    expect(keys).toContain('a.ts::F::const r = foo()');
+    expect(keys).toContain('a.ts::T::Broad catch swallows error');
+    expect(keys).toContain('a.ts::F::} catch (e) {');
+    expect(keys).not.toContain('b.ts::T::No input validation');
+  });
+
+  it('fail-open: unparseable model output suppresses nothing', async () => {
+    expect(await computeDisputedKeys(['## mergewatch triage'], priors, mockLLM('not json'), 'm')).toEqual([]);
+  });
+
+  it('fail-open: an LLM error suppresses nothing', async () => {
+    const llm: ILLMProvider = { async invoke() { throw new Error('throttled'); } };
+    expect(await computeDisputedKeys(['## mergewatch triage'], priors, llm, 'm')).toEqual([]);
+  });
+
+  it('ignores out-of-range indices defensively', async () => {
+    const llm = mockLLM(JSON.stringify([{ index: 99, disposition: 'rebutted' }]));
+    expect(await computeDisputedKeys(['## mergewatch triage'], priors, llm, 'm')).toEqual([]);
+  });
+});
