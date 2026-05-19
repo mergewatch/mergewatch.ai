@@ -1391,6 +1391,16 @@ describe('suggestionAlreadyApplied', () => {
     ).toBe(false);
   });
 
+  it('bails out on an oversized suggestion (input bound, > 4KB)', () => {
+    // Even though the real code IS present, a >4KB suggestion is never a
+    // realistic "already applied" case — bound the input before regex work.
+    const huge =
+      'const run = await migrationRunner({ dir, direction: "up" });' +
+      ' // padding'.repeat(600);
+    expect(huge.length).toBeGreaterThan(4096);
+    expect(suggestionAlreadyApplied(huge, file)).toBe(false);
+  });
+
   it('requires EVERY code segment present — a multi-line fix not yet applied is not a no-op', () => {
     // The rollback suggestion: one clause exists (the ROLLBACK call) but the
     // error-preserving wrapper does not — must NOT be treated as applied.

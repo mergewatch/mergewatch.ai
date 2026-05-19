@@ -1011,6 +1011,11 @@ export function suggestionAlreadyApplied(
   fileContent: string,
 ): boolean {
   if (!suggestion || !fileContent) return false;
+  // Bound the input before regex work. The regexes below are linear (no
+  // catastrophic backtracking), so this is consistency with the codebase's
+  // FINDING_TEXT_MAX_BYTES convention, not a fix for an actual ReDoS — and
+  // a >4KB "suggestion" is never a realistic "fix already applied" case.
+  if (suggestion.length > FINDING_TEXT_MAX_BYTES) return false;
 
   const unfenced = suggestion.replace(/```[a-zA-Z]*\n?|```/g, '\n');
   const segments = unfenced
@@ -1178,8 +1183,13 @@ export async function verifyCriticalFindings(
   modelId: string,
   llm: ILLMProvider,
 ): Promise<OrchestratedFinding[]> {
-  const verdicts = await Promise.all(
-    findings.map(async (f) => {
+  // Bounded concurrency, not Promise.all: a pathological PR with many
+  // criticals would otherwise burst N parallel Bedrock InvokeModel calls and
+  // hit the per-minute TPM quota (same reason runReviewPipeline uses
+  // AGENT_CONCURRENCY). withConcurrency preserves input order, so the
+  // verdicts[i] ↔ findings[i] alignment below still holds.
+  const verdicts = await withConcurrency<boolean>(
+    findings.map((f) => async () => {
       if (f.severity !== 'critical') return true;
       const content = fileContents[f.file];
       if (!content) return true; // Couldn't fetch the file — can't disprove it.
@@ -1200,10 +1210,10 @@ ${content}`;
         const raw = normalizeLLMResult(
           await llm.invoke(modelId, prompt, undefined, { temperature: 0 }),
         ).text;
-        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(
-          raw,
-          { valid: true },
-        );
+        // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
+        // or verdict-less response is distinguishable from an explicit
+        // pass — the fail-safe "keep" is then logged, not silent.
+        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
         if (parsed.valid === false) {
           console.warn(
             '[critical-verify] dropped false-positive critical "%s" (%s:%d): %s',
@@ -1213,6 +1223,14 @@ ${content}`;
             (parsed.reason ?? '').slice(0, 200),
           );
           return false;
+        }
+        if (parsed.valid !== true) {
+          console.warn(
+            '[critical-verify] no usable verdict for "%s" (%s:%d) — keeping finding (fail-safe)',
+            f.title,
+            f.file,
+            f.line,
+          );
         }
         return true;
       } catch (err) {
@@ -1226,6 +1244,7 @@ ${content}`;
         return true;
       }
     }),
+    AGENT_CONCURRENCY,
   );
 
   return findings.filter((_, i) => verdicts[i]);
