@@ -198,6 +198,26 @@ Rules:
 Return JSON:
 { "caption": "single sentence here" }`;
 
+// ─── Critical verification pass ────────────────────────────────────────────
+
+export const CRITICAL_VERIFICATION_PROMPT = `You are a strict verifier checking whether a CRITICAL code-review finding is actually true.
+
+The original reviewer saw only the PR diff — limited surrounding context. You are given the COMPLETE current file. Many false-criticals are produced by reasoning from a truncated hunk: e.g. flagging a "missing await" when the assignment line (\`const x = await foo()\`) was just outside the hunk, or "unhandled error" when the call is already inside a try/catch a few lines up.
+
+Your job: decide if the defect, EXACTLY as the finding describes it, genuinely exists in the file as shown.
+
+Mark the finding INVALID (valid=false) when:
+- The code the finding claims is missing/wrong is actually present or correct in the full file.
+- The finding's suggested fix is already what the code does.
+- The cited line does not contain the construct the finding describes and no nearby line does either.
+
+Mark it VALID (valid=true) only when you can point to the specific code that exhibits the described defect.
+
+Be conservative about VALID: if the finding is a genuine defect, keep it. This check exists to remove confidently-wrong criticals, not to relitigate judgement calls — when the defect is real but debatable in severity, it is still valid=true.
+
+Return ONLY JSON:
+{ "valid": true | false, "confidence": 0.0-1.0, "reason": "one sentence citing the specific code" }`;
+
 // ─── Diagram agent ────────────────────────────────────────────────────────
 // Placeholder used in DIAGRAM_PROMPT; see runDiagramAgent() in reviewer.ts for replacement logic
 export const PREVIOUS_DIAGRAM_PLACEHOLDER = '{{PREVIOUS_DIAGRAM}}';

@@ -17,6 +17,8 @@ import {
   runReviewPipeline,
   extractFindingIdentifiers,
   groundFinding,
+  suggestionAlreadyApplied,
+  verifyCriticalFindings,
   type ReviewContext,
   type AgentFinding,
   type ReviewPipelineOptions,
@@ -1323,5 +1325,143 @@ describe('groundFinding', () => {
   it('drops a critical when the anchor is past EOF', () => {
     const file = 'one\ntwo\nthree';
     expect(groundFinding({ ...baseFinding, line: 999 }, file)).toBeNull();
+  });
+
+  it('drops a finding whose suggested code already exists (no-op guard, W1)', () => {
+    // The PR #31 false positive: "missing await" flagged on a line that
+    // already reads `const run = await migrationRunner({`, with a suggestion
+    // echoing that exact code.
+    const file = [
+      'export async function runMigrations() {',
+      '  const run = await migrationRunner({ dir, direction: "up" });',
+      '  return run.map((m) => m.name);',
+      '}',
+    ].join('\n');
+    const f = {
+      ...baseFinding,
+      line: 2,
+      title: 'Missing await on async migrationRunner call',
+      description: 'The migrationRunner result is not awaited; race condition.',
+      suggestion: 'Add await before migrationRunner: const run = await migrationRunner({',
+    };
+    expect(groundFinding(f, file)).toBeNull();
+  });
+});
+
+// ─── suggestionAlreadyApplied (W1) ──────────────────────────────────────────
+
+describe('suggestionAlreadyApplied', () => {
+  const file = [
+    'export async function runMigrations() {',
+    '  const run = await migrationRunner({ dir, direction: "up" });',
+    '  return run.map((m) => m.name);',
+    '}',
+  ].join('\n');
+
+  it('detects a suggestion whose code is already present (whitespace-insensitive)', () => {
+    expect(
+      suggestionAlreadyApplied(
+        'Add await before migrationRunner: const run = await migrationRunner({',
+        file,
+      ),
+    ).toBe(true);
+  });
+
+  it('unwraps fenced code blocks before comparing', () => {
+    expect(
+      suggestionAlreadyApplied(
+        'Use:\n```ts\nconst run = await migrationRunner({ dir, direction: "up" });\n```',
+        file,
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false when the suggested code is NOT in the file (real finding)', () => {
+    expect(
+      suggestionAlreadyApplied(
+        'Wrap the call: const run = await withRetry(() => migrationRunner({ dir }));',
+        file,
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false for prose-only suggestions (no code-shaped segment)', () => {
+    expect(
+      suggestionAlreadyApplied('Await both calls in the correct order.', file),
+    ).toBe(false);
+  });
+
+  it('requires EVERY code segment present — a multi-line fix not yet applied is not a no-op', () => {
+    // The rollback suggestion: one clause exists (the ROLLBACK call) but the
+    // error-preserving wrapper does not — must NOT be treated as applied.
+    const partial = [
+      'async function tx() {',
+      '  await client.query("ROLLBACK");',
+      '}',
+    ].join('\n');
+    const suggestion =
+      'try { await client.query("ROLLBACK"); } catch (rollbackErr) { console.error("Rollback failed:", rollbackErr); } throw originalError;';
+    expect(suggestionAlreadyApplied(suggestion, partial)).toBe(false);
+  });
+});
+
+// ─── verifyCriticalFindings (W2) ────────────────────────────────────────────
+
+describe('verifyCriticalFindings', () => {
+  const critical = {
+    file: 'src/rag.ts',
+    line: 410,
+    severity: 'critical' as const,
+    category: 'bug',
+    title: 'Missing await on async searchViaPostgres call',
+    description: 'searchViaPostgres is not awaited; unhandled rejection.',
+    suggestion: 'Add await before searchViaPostgres.',
+  };
+  const fileContents = { 'src/rag.ts': 'return await searchViaPostgres(q);\n' };
+
+  it('drops a critical the model judges invalid', async () => {
+    const llm = createMockLLM([
+      '{"valid": false, "confidence": 0.95, "reason": "line 1 already awaits searchViaPostgres"}',
+    ]);
+    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([]);
+  });
+
+  it('keeps a critical the model confirms', async () => {
+    const llm = createMockLLM(['{"valid": true, "confidence": 0.9, "reason": "genuine defect"}']);
+    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([critical]);
+  });
+
+  it('keeps the finding when the file could not be fetched (fail-safe)', async () => {
+    const llm = createMockLLM(['{"valid": false}']);
+    const result = await verifyCriticalFindings([critical], {}, 'light', llm);
+    expect(result).toEqual([critical]);
+    expect(llm.calls).toHaveLength(0); // no file → no verification call
+  });
+
+  it('keeps the finding when the LLM call throws (fail-safe)', async () => {
+    const llm: ILLMProvider = {
+      async invoke() {
+        throw new Error('bedrock throttled');
+      },
+    };
+    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([critical]);
+  });
+
+  it('keeps the finding on unparseable LLM output (fail-safe)', async () => {
+    const llm = createMockLLM(['not json at all']);
+    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([critical]);
+  });
+
+  it('only verifies criticals — warnings/info pass through untouched', async () => {
+    const warning = { ...critical, severity: 'warning' as const };
+    const info = { ...critical, severity: 'info' as const };
+    const llm = createMockLLM(['{"valid": false}']);
+    const result = await verifyCriticalFindings([warning, info], fileContents, 'light', llm);
+    expect(result).toEqual([warning, info]);
+    expect(llm.calls).toHaveLength(0);
   });
 });
