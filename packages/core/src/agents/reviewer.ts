@@ -36,7 +36,7 @@ import {
 } from './prompts.js';
 import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
-import { computeReviewDelta } from '../review-delta.js';
+import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -52,6 +52,15 @@ export interface AgentFinding {
   title: string;
   description: string;
   suggestion: string;
+  /**
+   * Stable identity for cross-commit delta (W9). Derived from the normalized
+   * cited code, NOT the line number or the LLM's free-text title — both of
+   * which drift between commits and cause a finding to be reported as both
+   * "resolved" and "new" (the whack-a-mole). Set by runReviewPipeline from
+   * the fetched file contents; absent when contents couldn't be fetched, in
+   * which case delta falls back to the title key.
+   */
+  fingerprint?: string;
 }
 
 export interface OrchestratedFinding extends AgentFinding {
@@ -918,14 +927,9 @@ const FINDING_TEXT_MAX_BYTES = 4096;
  */
 const GROUNDING_WINDOW_LINES = 5;
 
-/**
- * Build a fingerprint for severity-aware delta comparison. Intentionally
- * excludes line number — the orchestrator may shift the line after a
- * fix without the underlying issue being the "same" finding.
- */
-function findingKey(f: { file: string; title: string }): string {
-  return `${f.file}::${f.title}`;
-}
+// Severity-aware delta (security-improvement scoring) reuses computeReviewDelta
+// so it shares one identity definition (W9 union-matching) — no second,
+// drifting findingKey. See the resolvedCriticals/newCriticals block below.
 
 /**
  * Extract identifier-shaped strings from a finding's text that should
@@ -1251,6 +1255,30 @@ ${content}`;
 }
 
 /**
+ * Stamp each finding with a stable code fingerprint (W9) derived from the
+ * normalized text of its cited line in the file at the PR head. This is the
+ * cross-commit identity used by computeReviewDelta — robust to line drift
+ * (keyed on code, not line number) and to the LLM rewording the title.
+ *
+ * Best-effort: when the file wasn't fetched or the anchor is out of range,
+ * the finding keeps no fingerprint and delta falls back to the title key.
+ */
+function withCodeFingerprints<T extends OrchestratedFinding>(
+  findings: T[],
+  fileContents: Record<string, string>,
+): T[] {
+  return findings.map((f) => {
+    const content = fileContents[f.file];
+    if (!content) return f;
+    const lines = content.split('\n');
+    const idx = f.line - 1;
+    if (idx < 0 || idx >= lines.length) return f;
+    const fingerprint = fingerprintFromCode(lines[idx]);
+    return fingerprint ? { ...f, fingerprint } : f;
+  });
+}
+
+/**
  * Execute the full multi-agent review pipeline.
  * All independent agents run in parallel; the orchestrator runs after they complete.
  */
@@ -1397,8 +1425,11 @@ export async function runReviewPipeline(
   // Filter findings to only those on or near actually changed lines
   const changedLines = extractChangedLines(diff);
   const CHANGED_LINE_TOLERANCE = 3;
-  const filteredFindings = groundedFindings.filter(
-    (f) => isLineNearChange(changedLines, f.file, f.line, CHANGED_LINE_TOLERANCE),
+  const filteredFindings = withCodeFingerprints(
+    groundedFindings.filter(
+      (f) => isLineNearChange(changedLines, f.file, f.line, CHANGED_LINE_TOLERANCE),
+    ),
+    groundingFileContents,
   );
 
   // Delta caption — only on re-reviews where something actually changed
@@ -1425,18 +1456,16 @@ export async function runReviewPipeline(
   );
   const noActionItems = actionFindings.length === 0;
 
-  const prevCriticalKeys = new Set(
-    (previousFindings ?? [])
-      .filter((p) => p.severity === 'critical')
-      .map(findingKey),
+  // Reuse computeReviewDelta so "resolved"/"new" criticals share the exact
+  // same identity definition (W9 union-matching) as the user-facing delta —
+  // a fixed critical that the LLM re-words must not read as new here either.
+  const currentCriticals = filteredFindings.filter((f) => f.severity === 'critical');
+  const criticalDelta = computeReviewDelta(
+    currentCriticals,
+    (previousFindings ?? []).filter((p) => p.severity === 'critical'),
   );
-  const currentCriticalKeys = new Set(
-    filteredFindings
-      .filter((f) => f.severity === 'critical')
-      .map(findingKey),
-  );
-  const resolvedCriticals = [...prevCriticalKeys].filter((k) => !currentCriticalKeys.has(k)).length;
-  const newCriticals = [...currentCriticalKeys].filter((k) => !prevCriticalKeys.has(k)).length;
+  const resolvedCriticals = criticalDelta?.resolvedCount ?? 0;
+  const newCriticals = criticalDelta ? criticalDelta.newCount : currentCriticals.length;
   // Two tiers of reward for security-improving PRs:
   //   - PURE improvement (resolved > 0, new = 0): score >= 4 (green). The PR
   //     closed criticals without introducing any new ones — clear win.

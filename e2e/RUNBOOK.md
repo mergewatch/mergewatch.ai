@@ -149,7 +149,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-20](#e2e-20-pr-description-vs-code-drift-catch) | Stale "we now use X" in PR body → reviewer flags the mismatch | 2m | 60s | feedback |
 | [E2E-21](#e2e-21-no-op-suggestion-guard-w1) | Finding whose suggested fix already exists in the file → dropped | 1m | 60s | #145 |
 | [E2E-22](#e2e-22-claim-aware-critical-verification-w2) | "Missing await" critical on code that already awaits (truncated-diff artifact) → dropped by full-file verification | 1m | 60s | #145 |
-| [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new"; a triage-rebutted finding is not re-raised | 3m | 90s | #145 (target: W9+W3) |
+| [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new" (W9 ✅); a triage-rebutted finding is not re-raised (W3 pending) | 3m | 90s | #145 / W9 |
 
 ---
 
@@ -916,11 +916,15 @@ PR diff should only touch the `.map(...)` / `return` lines (so the `const rows =
 
 ---
 
-### E2E-23: Re-review convergence — no whack-a-mole (W9+W3) — TARGET, currently failing
+### E2E-23: Re-review convergence — no whack-a-mole (W9+W3)
 
-**Behavior (intended, once W9+W3 land)**: across commits, the same underlying concern keeps a stable identity and a rebutted finding is not regenerated. Specifically: (a) no finding appears as both **✅ Resolved** and **🆕 new** in the same review comment; (b) a finding the author rebutted in a `## mergewatch triage` reply on a prior commit is **not** re-raised under a drifted title/line on the next commit.
+**Behavior**: across commits, the same underlying concern keeps a stable identity and a rebutted finding is not regenerated. Specifically: (a) no finding appears as both **✅ Resolved** and **🆕 new** in the same review comment; (b) a finding the author rebutted in a `## mergewatch triage` reply on a prior commit is **not** re-raised under a drifted title/line on the next commit.
 
-**Status: this fixture currently FAILS** — it is the regression guard for the W9 (stable identity key, replacing `findingKey()` = `` `${file}::${title}` `` in `review-delta.ts`) + W3 (convergence guard) work. Live evidence: **PR #145 round 2** reported `:1207 "Catch-and-continue pattern…"` as 🆕 new while the *same code* (`:1225 "Broad exception catching…"`) was listed ✅ Resolved in the same comment. Keep this card; flip the checkboxes to required once W9+W3 ship.
+**Status:**
+- **(a) — W9 SHIPPED** (PR stacked on #145): `computeReviewDelta` now union-matches on a code fingerprint (`fingerprintFromCode`, normalized cited line) OR the title, so a line-shift + LLM reword no longer reads as resolved+new. Unit-locked in `review-delta.test.ts` ("the whack-a-mole case"). Verify (a) below is now satisfied on a real re-review.
+- **(b) — W3 TARGET, still failing**: triage-aware suppression not yet implemented. `## mergewatch triage` is not parsed; a rebutted finding can still be re-raised.
+
+Live evidence this card defends: **PR #145 round 2** reported `:1207 "Catch-and-continue pattern…"` as 🆕 new while the *same code* (`:1225 "Broad exception catching…"`) was listed ✅ Resolved in the same comment.
 
 **Setup**
 
@@ -930,18 +934,18 @@ Two-commit sequence on branch `fixture/23-convergence`.
 
 **Step 2** — post a PR comment starting `## mergewatch triage` that rebuts the finding *by design* (e.g. "the catch-all is the intentional fail-safe; logging added"), then push a small commit that adds the log line (shifts subsequent line numbers).
 
-**Expected outcomes (post W9+W3)**
+**Expected outcomes**
 
-- [ ] The re-review's "📎 Previously reported" section does **not** list the same concern under both ✅ Resolved and 🆕 new
-- [ ] The rebutted finding is either **Withdrawn** or appears in a **Disputed** bucket — not re-raised as 🆕 new at the shifted line under a reworded title
-- [ ] `🆕 new` count counts only genuinely new concerns introduced by the step-2 diff
-- [ ] Verdict is allowed to converge across commits (not pinned by regenerated restatements)
+- [x] **(a) W9** The re-review's "📎 Previously reported" section does **not** list the same concern under both ✅ Resolved and 🆕 new (the catch line is unchanged → matched by fingerprint despite the reworded title and shifted line)
+- [ ] **(b) W3** The rebutted finding is either **Withdrawn** or appears in a **Disputed** bucket — not re-raised as 🆕 new under a reworded title *(pending W3)*
+- [x] **(a) W9** `🆕 new` counts only genuinely new concerns introduced by the step-2 diff (line drift alone produces zero "new")
+- [ ] **(b) W3** Verdict converges across commits once rebutted findings stop regenerating *(pending W3)*
 
-**Failure modes (current behavior — expected to fail until W9+W3)**
-- ❌ Same finding simultaneously ✅ Resolved and 🆕 new (identity key churns on title/line drift — P9)
-- ❌ A `mergewatch triage`-rebutted finding reappears verbatim-in-substance at a new line (P3/P7)
+**Failure modes**
+- ✅ FIXED (W9) — Same finding simultaneously ✅ Resolved and 🆕 new (identity churned on title/line drift — P9). Regression-locked in `review-delta.test.ts`.
+- ❌ STILL OPEN (W3) — A `mergewatch triage`-rebutted finding reappears verbatim-in-substance at a new line (P3/P7).
 
-**Note**: until W9+W3 ship, run this as a *characterization* test — record the churn so the W9/W3 PR can show the diff in behavior. This is the canonical non-convergence fixture; do not delete it when it starts passing — invert it to a regression guard.
+**Note**: W9 half is now a real regression guard (don't delete). Run the full card as a characterization test for the W3 half until triage-aware suppression ships, then flip checkbox (b).
 
 ---
 

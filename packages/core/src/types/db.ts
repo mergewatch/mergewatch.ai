@@ -337,6 +337,12 @@ export interface ReviewFinding {
   title: string;
   description: string;
   suggestion: string;
+  /**
+   * Stable cross-commit identity (W9). Normalized cited code, not line/title.
+   * Persisted so the next review's delta can match by code, not by the LLM's
+   * (drifting) wording. Optional for back-compat with pre-W9 stored reviews.
+   */
+  fingerprint?: string;
 }
 
 // =============================================================================
