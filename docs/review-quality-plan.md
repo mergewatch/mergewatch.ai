@@ -128,17 +128,18 @@ Any fix that reduces noise must preserve these.
 
 Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) to change.
 
-### W1 — File-grounded findings + no-op-suggestion guard  ★★★ (prevents P1,P2 in #31,#37,#39)
+### W1 — File-grounded findings + no-op-suggestion guard  ✅ SHIPPED (PR #145) — prevents P1,P2 in #31,#37,#39
 **Targets:** `packages/core/src/agents/reviewer.ts`, `packages/core/src/agents/prompts.ts`
 > **Decision (maintainer-confirmed):** accept the extra *input* tokens of full-file context — it materially reduces hallucinations (P1/P2). The expensive part (W2 verification) is gated to Criticals only, so net cost stays bounded relative to the cost of one wrong blocking review.
-- Any finding asserting *absence* (`missing await`, `unhandled error`, `no validation`) must quote ±5 real lines fetched from full file contents, not the hunk.
-- Hard rule: *if the suggested replacement is identical to / a no-op against the cited code, discard the finding.*
-- Add a unit guard that rejects a finding whose `suggestion` string ⊇ the cited source line.
+- ✅ `suggestionAlreadyApplied()` + a no-op guard in `groundFinding`: a finding whose suggested code already exists (whitespace-normalized, every code-shaped segment present) is dropped outright. Deterministic, zero LLM cost — kills the #31 case.
+- Note: structural grounding already existed but only checked *identifier presence* (the missing-await false positive passed because `migrationRunner(` IS near the anchor). That gap is what W1/W2 close.
 
-### W2 — Critical verification pass  ★★★ (prevents P1,P4 in #31,#38,#39)
-**Targets:** `packages/core/src/agents/reviewer.ts` (orchestrator stage)
-- Every Critical gets a cheap second pass: *"Here is the finding and the real file slice — still valid? yes/no + reason."* Only survivors gate the verdict.
-- Lever: run the verification pass on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
+### W2 — Critical verification pass  ✅ SHIPPED (PR #145) — prevents P1,P4 in #31,#38,#39
+**Targets:** `packages/core/src/agents/reviewer.ts`, `packages/core/src/agents/prompts.ts`
+- ✅ `verifyCriticalFindings()`: every surviving Critical is re-checked by the light model against the **complete** file (`CRITICAL_VERIFICATION_PROMPT`). Dropped only on an explicit, parseable `valid:false`.
+- ✅ Fail-safe: missing file / LLM error / unparseable output keeps the finding — infra trouble never silently suppresses a real Critical.
+- ✅ Decoupled from `codebaseAwareness` via a new always-on `groundingFetch` context (full file fetched once, shared by W1+W2). Per the maintainer decision: full file for every flagged finding.
+- Remaining lever (not yet done): run verification on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
 
 ### W3 — Honor triage / dispute replies  ★★ (prevents P3 in #31; P9 root cause)
 **Targets:** `packages/lambda/src/handlers/review-agent.ts`, `packages/server/src/review-processor.ts`, `reviewer.ts`
@@ -183,7 +184,8 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 
 ## Priority order (current)
 
-1. **W1, W2, W8** — kill the hallucinated/mis-located findings (P1/P2/P8 — the most frequent and most trust-destroying; the missing-await bug is now confirmed systemic across #31 and #39).
+0. ✅ **W1, W2** — SHIPPED in PR #145 (claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39).
+1. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
 2. **W9** — stop lying in the counters (phantom "resolved", churn).
 3. **W3** — close the loop on author rebuttals (feeds W9).
 4. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
@@ -205,10 +207,10 @@ _Re-rank as examples land — the Evidence Index frequency row drives this._
 
 ---
 
-## Open questions
+## Open questions — answered (code-traced 2026-05-19)
 
-- Does the pipeline pass full file contents to agents, or only diff hunks? (Scope of W1/W8 — prompt vs. plumbing.)
-- Where is resolved/new/carried-over computed, and what's the current identity key? (W9.)
-- Is `## mergewatch triage` parsed anywhere, or purely a human convention today? (W3.)
-- Why does a single run emit 2–4 GitHub Reviews (some empty)? Retry/idempotency bug vs. per-agent submission? (W12.)
-- What drives the `Suppressed N by dedup & quality filters` count — can W10 reuse it? (#38 proves the hook exists.)
+- **Full file vs. diff?** ✅ Agents get **diff only** (`reviewer.ts` injects `${diff}`). Full-file fetch existed but was opt-in behind `codebaseAwareness`. W2 adds an always-on `groundingFetch` so grounding/verification get the full file regardless. *(W1/W8 plumbing now exists.)*
+- **resolved/new/carried key?** ✅ `` `${file}::${title}` `` in `review-delta.ts:36` — `title` is free-text LLM output, so title drift makes one issue count as both "resolved" and "new". **This is the root cause of P9's phantom resolution.** W9 = stable `(file, rule, code-fingerprint)` key.
+- **`mergewatch triage` parsed?** ✅ **No** — confirmed not referenced anywhere; only `/resolve` intent (`inline-reply.ts`) is parsed. W3 is greenfield.
+- **2–4 reviews per run?** ✅ Mostly expected: one `submitPRReview` per run, prior bot reviews dismissed (one run per commit push). Empty-body DISMISSED entries still need a targeted look — **P12 downgraded** in priority.
+- **`Suppressed N` source?** ✅ `totalRawFindings − filteredFindings.length` (`reviewer.ts`): orchestrator cap + grounding + line-proximity. The dedup is a ranking/cap, **not** root-cause clustering — W10 still needs its own consolidation step (cannot reuse as-is).
