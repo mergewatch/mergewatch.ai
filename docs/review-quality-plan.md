@@ -27,7 +27,7 @@ Reviewing model observed in evidence: **claude-sonnet-4** (per the "Review detai
 | 3 | orca #38 | kbStore.searchCandidates + test | 3/5 Review rec. | P4 P5 P6 P11 P12 |
 | 4 | orca #39 | KB_BACKEND s3\|postgres switch | 2/5 Needs fixes | P1 P2 P4 P5 P8 P9 P11 P12 |
 
-Pattern frequency (4 examples): **P1×3, P4×3, P5×4, P6×3, P11×3, P12×3**, P2×2, P7×2, P8×2, P3×1, P9×1, P10×1.
+Pattern frequency (5 examples): **P1×4, P5×4, P4×3, P6×3, P11×3, P12×3**, P2×2, P7×2, P8×2, P3×1, P9×1, P10×1.
 
 > Key takeaway: the "missing `await` on async X" hallucination is **systemic** — it independently recurred in #31 and #39, both times with **wrong line numbers** and an author rebuttal. P1/P2 + P8 are the spine of the problem.
 
@@ -59,6 +59,7 @@ The goal is **precision, not silence.** Things MergeWatch already does well:
 - **Real bugs caught.** #37 `seed.ts:38` (S3 errors unhandled) and `seed.ts:109` (rollback masks original error) were legit — author fixed both.
 - **Accurate nit.** #39 `rag.ts:243` "comment describes removed import, not the lazy-load pattern" was correct and actionable — author fixed it.
 - **Dedup exists.** #38 reported `Suppressed 4 findings removed by dedup & quality filters` — the machinery is there; it's under-tuned, not absent.
+- **Real concurrency catch.** #145 (self-review) flagged unbounded `Promise.all` in `verifyCriticalFindings` — a genuine Bedrock-TPM risk, fixed. The bot caught a real defect in its own quality-improvement code.
 - **Diagram + summary + cost transparency** are genuinely useful and should stay.
 
 Any fix that reduces noise must preserve these.
@@ -113,6 +114,18 @@ Any fix that reduces noise must preserve these.
   - 🔴 Critical `rag.ts:410` "Postgres fallback untested" — it's a 3-line non-fatal `try/catch`; S3-fallback test deferred with rationale (needs invasive seams), Postgres path it guards *is* covered. 2/5 gated on a coverage-gap Critical. **[P4][P5][P11]**
   - `🆕 4 new` are all test-coverage gaps again. **[P5]** DISMISSED empty-body review. **[P12]**
 - **Patterns:** P1 P2 P4 P5 P8 P9 P11 P12
+
+### Example 5 — mergewatch.ai PR #145 (self-review / dogfood of the W1+W2 PR)
+
+- **Evidence:** `gh pr view 145 --repo santthosh/mergewatch.ai` · dashboard `…%3A145%23b8c91ef`
+- **Verdict:** `3/5 — Review recommended`. 0 critical, **4 warnings**. 81,428 tok, ~$0.21, 29.3s. `Suppressed 7`, conventions loaded from `AGENTS.md`. One COMMENTED review (correct — no criticals, didn't block).
+- **Legit (kept honest):**
+  - ⚠️ **Unbounded `Promise.all` in `verifyCriticalFindings`** — genuine, the strongest catch. A PR with many criticals would burst N parallel Bedrock calls and hit the per-minute TPM quota — the exact failure `runReviewPipeline` already avoids via `withConcurrency`/`AGENT_CONCURRENCY`. **Fixed.**
+  - ⚠️ **Silent fail-safe on unparseable verification JSON** — real observability gap; the keep-on-bad-output path emitted no signal. **Fixed** (sentinel default + explicit log).
+- **What it got wrong:**
+  - ⚠️ "Potential code injection / ReDoS in `suggestionAlreadyApplied`" — **mis-categorization (P1-family).** The regexes are all linear (no catastrophic backtracking) and `suggestion` is LLM-generated, not request-controlled — no injection/ReDoS path. Same shape as #37's "SQL injection" on a parameterized query: a confident security label on code that doesn't have the defect. (A 4KB input bound was still added for consistency with the codebase's own `FINDING_TEXT_MAX_BYTES` convention.)
+  - ⚠️ "Broad exception catching masks failure modes" — the catch-all is the intentional fail-safe; all paths throw the same `Error` from `llm.invoke` and aren't separable. Low-signal nit. **[P5-adjacent]**
+- **Patterns:** P1 P5 — *and a Positive Signal: the bounded-concurrency catch was real and worth crediting.*
 
 ### Example N — _TBD (template — copy this block)_
 
