@@ -27,7 +27,9 @@ Reviewing model observed in evidence: **claude-sonnet-4** (per the "Review detai
 | 3 | orca #38 | kbStore.searchCandidates + test | 3/5 Review rec. | P4 P5 P6 P11 P12 |
 | 4 | orca #39 | KB_BACKEND s3\|postgres switch | 2/5 Needs fixes | P1 P2 P4 P5 P8 P9 P11 P12 |
 
-Pattern frequency (5 examples): **P1×4, P5×4, P4×3, P6×3, P11×3, P12×3**, P2×2, P7×2, P8×2, P3×1, P9×1, P10×1.
+Pattern frequency (5 examples): **P1×4, P5×4, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P8×2, P9×2, P3×1, P10×1.
+
+> **Whack-a-mole / non-convergence** (P7+P9 compounded) is now the headline failure: PR #145's own re-review reported the *same finding as both "✅ resolved" and "🆕 new"* in one comment. Every fix commit shifts lines and regenerates ~4 "new" warnings, so the verdict never converges. This is the single highest-leverage thing to fix — see **W3∩W9 convergence guard**.
 
 > Key takeaway: the "missing `await` on async X" hallucination is **systemic** — it independently recurred in #31 and #39, both times with **wrong line numbers** and an author rebuttal. P1/P2 + P8 are the spine of the problem.
 
@@ -125,7 +127,13 @@ Any fix that reduces noise must preserve these.
 - **What it got wrong:**
   - ⚠️ "Potential code injection / ReDoS in `suggestionAlreadyApplied`" — **mis-categorization (P1-family).** The regexes are all linear (no catastrophic backtracking) and `suggestion` is LLM-generated, not request-controlled — no injection/ReDoS path. Same shape as #37's "SQL injection" on a parameterized query: a confident security label on code that doesn't have the defect. (A 4KB input bound was still added for consistency with the codebase's own `FINDING_TEXT_MAX_BYTES` convention.)
   - ⚠️ "Broad exception catching masks failure modes" — the catch-all is the intentional fail-safe; all paths throw the same `Error` from `llm.invoke` and aren't separable. Low-signal nit. **[P5-adjacent]**
-- **Patterns:** P1 P5 — *and a Positive Signal: the bounded-concurrency catch was real and worth crediting.*
+- **Round 2 (commit `f264640`, after the round-1 triage + fixes) — the whack-a-mole, on tape:** verdict `✅ 4 resolved · 🆕 4 new`, still pinned `3/5`. The "4 new" were the round-1 concerns **re-titled at shifted line numbers**:
+  - `:1207` "Catch-and-continue pattern in critical verification" is the *same code* as round-1 `:1225` "Broad exception catching" — which the **same comment** lists under "✅ Resolved on this commit." **One finding reported as both resolved and new in a single review.** [P9]
+  - `:1180` "Silent failure in file fetch" = round-1 `:1198` "silent JSON failure" relocated to `fetchFindingFileContents`. [P7]
+  - `:1167` "LLM prompt injection in verification prompt" = round-1 `:1061` "code injection in `suggestionAlreadyApplied`" relocated to the prompt. [P1 mis-framing + P7] *(a real defense-in-depth guard was still added — `prompts.ts` data-isolation line, matching `buildConventionsBlock`.)*
+  - `:1180` (info) "decompose function" — net-new nitpick. [P5]
+  Root cause is exactly the confirmed P9 mechanism: identity key `` `${file}::${title}` `` + line drift on every commit ⇒ old titles "resolved", near-identical concerns "new". **The verdict cannot converge by fixing the PR.** Triage declared round 2 the last reactive round; the fix is W3∩W9 (convergence guard), not more commits.
+- **Patterns:** P1 P5 P7 P9 — *Positive Signal: the bounded-concurrency catch was real and worth crediting. This example is now the canonical whack-a-mole / non-convergence demonstration.*
 
 ### Example N — _TBD (template — copy this block)_
 
@@ -154,10 +162,11 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ Decoupled from `codebaseAwareness` via a new always-on `groundingFetch` context (full file fetched once, shared by W1+W2). Per the maintainer decision: full file for every flagged finding.
 - Remaining lever (not yet done): run verification on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
 
-### W3 — Honor triage / dispute replies  ★★ (prevents P3 in #31; P9 root cause)
+### W3 — Honor triage / dispute replies  ★★★ (prevents P3 in #31; half of the convergence guard)
 **Targets:** `packages/lambda/src/handlers/review-agent.ts`, `packages/server/src/review-processor.ts`, `reviewer.ts`
-- Parse the `## mergewatch triage` reply convention (the author already uses it consistently). Feed rebuttal + disputed finding + file slice into a re-eval before the next review.
+- Parse the `## mergewatch triage` reply convention (the author already uses it consistently — see #31, #37, #38, #39, #145 r1+r2). Feed rebuttal + disputed finding + file slice into a re-eval before the next review.
 - Outcome must be explicit: **withdraw** (not "resolve" — see W9) or post a specific counter-argument. Never silently re-assert.
+- **Convergence guard (W3∩W9):** a re-review must NOT re-raise a `(canonical_path, normalized_rule)` the author rebutted in a prior-commit triage. Without this, every fix commit regenerates the rebutted concern under a new title/line (#145 round 2 — same finding "✅ resolved" *and* "🆕 new" in one comment).
 
 ### W8 — Location accuracy & reconciliation  ★★★ (prevents P8 in #37,#39)
 **Targets:** finding→location mapping in `packages/core/src/agents/` + `packages/core/src/github/client.ts`
@@ -165,11 +174,11 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - Resolve the LLM's line guess to a real anchor by matching the quoted code snippet against file contents; if it can't be matched, the finding is low-confidence (downgrade or drop).
 - Never cite a function *definition* line for a call-site finding.
 
-### W9 — Honest counters / no phantom resolution  ★★★ (prevents P9 in #39; P7 in #31,#37)
-**Targets:** the resolved/new/carried-over diffing logic (locate via `Explore`; agents + review-store comparison)
-- A finding may be marked **Resolved** only if the cited code region actually changed *and* it re-evaluates clean. A prior finding that was a false positive becomes **Withdrawn**, not Resolved.
-- Stable identity key: `(canonical_path, normalized_rule, code_fingerprint)` — not line number — so a finding doesn't churn new↔carried as lines shift.
-- Disputed findings get a **Disputed** bucket, not back to "new."
+### W9 — Honest counters / no phantom resolution  ★★★ (prevents P9 in #39,#145; P7 in #31,#37,#145)
+**Targets:** `packages/core/src/review-delta.ts` (`findingKey`), agents + review-store comparison
+- Root cause confirmed: `findingKey()` = `` `${file}::${title}` `` where `title` is free-text LLM output. A code edit shifts lines, the orchestrator re-titles the same concern ⇒ counted as both "resolved" and "new" (#145 round 2, on tape).
+- Stable identity key: `(canonical_path, normalized_rule, code_fingerprint)` — not title, not line — so a finding doesn't churn resolved↔new as lines/wording shift. This is the **other half of the convergence guard** (with W3).
+- A finding may be marked **Resolved** only if the cited code region actually changed *and* it re-evaluates clean. A prior false positive becomes **Withdrawn**, not Resolved. Disputed findings get a **Disputed** bucket, not back to "new."
 
 ### W10 — Finding consolidation  ★★ (prevents P10 in #37; P5 generally)
 **Targets:** orchestrator dedup in `reviewer.ts` + the `Suppressed … by dedup & quality filters` path (already exists — extend it)
@@ -198,11 +207,10 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 ## Priority order (current)
 
 0. ✅ **W1, W2** — SHIPPED in PR #145 (claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39).
-1. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
-2. **W9** — stop lying in the counters (phantom "resolved", churn).
-3. **W3** — close the loop on author rebuttals (feeds W9).
-4. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
-5. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
+1. **W9 + W3 — the convergence guard.** ⬆ Promoted above W8: #145's self-review proved the reviewer **cannot converge** — same finding "✅ resolved" *and* "🆕 new" in one comment; every fix commit regenerates ~4 "new" warnings. Stable identity key (W9) + don't-re-raise-rebutted (W3) is now the single highest-leverage fix.
+2. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
+3. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
+4. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
 
 _Re-rank as examples land — the Evidence Index frequency row drives this._
 
