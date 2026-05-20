@@ -390,6 +390,55 @@ describe('runDiagramAgent', () => {
     expect(result.diagram).not.toContain('&amp;amp;');
     expect(result.diagram).not.toContain('&amp;lt;');
   });
+
+  it('decodes HTML entities used as syntactic delimiters outside quoted labels (#148 corruption)', async () => {
+    // Live regression: PR #148's diagram had brackets/parens/arrows
+    // expressed as entities (`B&lsqb;…&rsqb;`, `--&gt;`, `&lpar;&rpar;`),
+    // and multiple statements glued onto one line by `<br/>`. None of
+    // that parses as Mermaid.
+    const mermaid = [
+      '%% W3 triage guard',
+      'flowchart TD',
+      '    A["Prior findings&lt;br/&gt;from review"] --&gt;|"findingMatchKeys&lpar;&rpar;"| B&lsqb;"Stable identity keys<br/>fingerprint + title"&rsqb;<br/>    C&lsqb;"Triage comments"&rsqb; --&gt;|"isTriageComment&lpar;&rpar;"| D["Filter to&lt;br/&gt;## mergewatch triage"]',
+    ].join('\n');
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llm);
+
+    // Syntactic delimiters must be literal brackets / parens / arrows now.
+    expect(result.diagram).toContain('B["Stable identity keys');
+    expect(result.diagram).toContain('C["Triage comments"]');
+    expect(result.diagram).toContain('D["Filter to');
+    // No entity-form delimiters or arrows in SYNTACTIC positions. Inside
+    // `"…"` labels, `&lpar;&rpar;` etc. ARE the intentional defensive
+    // escape from escapeMermaidLabelChars — so check only the unquoted
+    // segments (alternating split, even indices).
+    const unquotedSegments = result.diagram.split(/"[^"]*"/);
+    const unquotedBody = unquotedSegments.join('');
+    expect(unquotedBody).not.toMatch(/&lsqb;|&rsqb;|&lbrace;|&rbrace;/);
+    expect(unquotedBody).not.toMatch(/--&gt;/);
+    // The `<br/>` that was glueing the two statements onto one line has
+    // become a real newline — so the parser sees two body lines, not one
+    // mangled line. (Mirrors the live #148 pattern where multiple node
+    // defs were joined by `<br/>` instead of `\n`.)
+    const bodyLines = result.diagram.split('\n').filter((l) => l.trim() && !l.startsWith('%%') && !/^flowchart/i.test(l));
+    expect(bodyLines.length).toBe(2);
+    expect(bodyLines[0]).toMatch(/^\s*A\[/);
+    expect(bodyLines[1]).toMatch(/^\s*C\[/);
+    expect(result.caption).toBe('W3 triage guard');
+  });
+
+  it('keeps `<br/>` INSIDE quoted labels (legitimate label line-break)', async () => {
+    // Decoding must NOT eat the in-label `<br/>` — Mermaid uses it for
+    // label-internal line breaks. The pass-1 escape will re-emit it as
+    // `&lt;br/&gt;` so the rendered label shows on two lines.
+    const mermaid = 'flowchart TD\n    A["line one<br/>line two"] --> B["plain"]';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llm);
+    // The in-label form survives through to escaped output.
+    expect(result.diagram).toContain('line one&lt;br/&gt;line two');
+    // And the diagram is still a single statement per line (not split mid-label).
+    expect(result.diagram.split('\n').filter((l) => l.trim().startsWith('A['))).toHaveLength(1);
+  });
 });
 
 // ─── runErrorHandlingAgent ──────────────────────────────────────────────────

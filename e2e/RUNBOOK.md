@@ -577,11 +577,15 @@ Use names with characters like `<`, `>`, `"`, `\t`, embedded newlines in JSDoc, 
 - [ ] No raw `&lt;` / `&gt;` HTML entities visible in the rendered diagram (they're decoded by Mermaid)
 - [ ] No literal `<br/>` tags visible in node labels (they render as line breaks)
 - [ ] Tabs / lone CR characters in upstream content don't break the diagram
+- [ ] **Syntactic delimiters appear as literal `[` `]` `(` `)` `-->`** in the raw Mermaid source (view the comment markdown via "…" → "Quote reply"). The `decodeMermaidOutsideQuotes` pass converts entity forms like `B&lsqb;…&rsqb;`, `--&gt;`, `&lpar;&rpar;` back to literals before render. Inside `"…"` labels, the in-label defensive escape (`&lpar;&rpar;`, `&lt;br/&gt;`) is correct and SHOULD appear. Regression locked: PR #148 round 4.
+- [ ] **Each Mermaid statement on its own real line** in the raw source. The pre-pass converts any `<br/>` used as a *statement separator* (outside `"…"`) into a real newline. No more than one node/edge definition per line.
 
 **Failure modes**
 - ❌ "Unable to render rich display" or red error block where the diagram should be
 - ❌ Diagram truncates mid-node label
 - ❌ Quoted labels show literal escape sequences
+- ❌ Raw source shows entity-encoded brackets / arrows in unquoted positions (`B&lsqb;` / `--&gt;`) — the regression PR #149 fix
+- ❌ Multiple node/edge definitions glued onto one line by `<br/>` instead of `\n` — same PR #149 fix
 
 ---
 

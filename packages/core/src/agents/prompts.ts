@@ -245,7 +245,8 @@ CRITICAL — accuracy rules:
 - Every node that references a file path MUST point to a file that actually appears in the diff. Do NOT invent paths like \`src/utils/index.ts\` or \`src/lib/helper.ts\` if they aren't in the diff.
 - Every function name in a node label MUST be a function that actually exists in the diff. Do NOT fabricate \`foo()\` if \`foo\` isn't defined or called in the changed code.
 - If you cannot verify a node from the diff, leave it out. A smaller accurate diagram is always better than a larger one with hallucinations.
-- Do not output HTML entities (\`&lt;\`, \`&gt;\`, \`&amp;\`) in labels — write the literal characters and rely on the diagram tooling to escape them. Double-encoded labels render as garbled text.
+- Do NOT output HTML entities ANYWHERE in the diagram. Content inside the \`\`\`mermaid\`\`\` code fence is parsed as Mermaid syntax, NOT as HTML — entities like \`&lt;\`, \`&gt;\`, \`&amp;\`, \`&lpar;\`, \`&rpar;\`, \`&lsqb;\`, \`&rsqb;\`, \`&lbrace;\`, \`&rbrace;\` render as literal text and break the parse when they appear in syntactic positions (a node bracket \`A&lsqb;…&rsqb;\` does not anchor a node; an arrow \`--&gt;\` is not an arrow). Write the LITERAL character (\`<\`, \`>\`, \`(\`, \`)\`, \`[\`, \`]\`, \`{\`, \`}\`) in every position.
+- Put each statement on its own REAL newline. NEVER use \`<br/>\` as a statement separator. \`<br/>\` is ONLY legal INSIDE a quoted label (e.g. \`A["line one<br/>line two"]\`) where it produces a line break inside the rendered label.
 
 ${PREVIOUS_DIAGRAM_PLACEHOLDER}
 
