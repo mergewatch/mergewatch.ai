@@ -41,6 +41,8 @@ import {
   fetchRepoConfig,
   fetchConventions,
   handleInlineReply,
+  fetchTriageComments,
+  computeDisputedKeys,
 } from '@mergewatch/core';
 import type {
   ReviewJobPayload,
@@ -494,6 +496,24 @@ export async function handler(
 
     const previousDiagram = typeof prevComplete?.diagramText === 'string' ? prevComplete.diagramText : undefined;
 
+    // W3 convergence guard: map a prior `## mergewatch triage` reply onto
+    // stable finding keys so rebutted/deferred findings aren't re-raised.
+    // Best-effort, fail-open (suppresses nothing on any error).
+    let disputedKeys: string[] = [];
+    if (prevComplete?.findings && prevComplete.findings.length > 0) {
+      // Author-filtered: a third-party drive-by commenter cannot suppress
+      // findings on someone else's PR (the security boundary for W3).
+      const triageComments = await fetchTriageComments(octokit, owner, repo, prNumber, prContext.prAuthor);
+      if (triageComments.length > 0) {
+        disputedKeys = await computeDisputedKeys(
+          triageComments,
+          prevComplete.findings,
+          llm,
+          lightModelId,
+        );
+      }
+    }
+
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
     const conventionsResult = await fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions);
     if (conventionsResult) {
@@ -523,6 +543,7 @@ export async function handler(
       customPricing: runtimeConfig.pricing,
       previousDiagram,
       previousFindings: prevComplete?.findings,
+      disputedKeys,
       conventions: conventionsResult?.content,
       agentAuthored: event.source === 'agent',
     }, { llm });

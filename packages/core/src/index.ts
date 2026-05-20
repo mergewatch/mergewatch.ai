@@ -113,8 +113,18 @@ export { formatReviewComment, buildWorkDoneSection } from './comment-formatter.j
 export type { Finding, WorkDoneSection } from './comment-formatter.js';
 
 // ─── Review delta ────────────────────────────────────────────────────────────
-export { computeReviewDelta } from './review-delta.js';
+export { computeReviewDelta, fingerprintFromCode, findingMatchKeys } from './review-delta.js';
 export type { ReviewDelta, FindingLike } from './review-delta.js';
+
+// ─── Triage convergence guard (W3) ───────────────────────────────────────────
+export {
+  TRIAGE_MARKER,
+  isTriageComment,
+  fetchTriageComments,
+  computeDisputedKeys,
+  partitionDisputed,
+} from './triage.js';
+export type { TriagePriorFinding } from './triage.js';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
