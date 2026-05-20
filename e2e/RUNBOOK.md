@@ -152,6 +152,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new" (W9); a triage-rebutted finding is not re-raised (W3) | 3m | 90s | W9 / W3 |
 | [E2E-24](#e2e-24-triage-author-filter-security-boundary) | A `## mergewatch triage` from a NON-PR-author does not suppress findings (W3 security boundary) | 2m | 60s | #148 |
 | [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 |
+| [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 |
 
 ---
 
@@ -1042,6 +1043,50 @@ Provide `groundingFetch` (the default on SaaS / when configured) so verification
 - ❌ A confirmed-real Critical (`verification: 'verified'`) was also clamped (the clamp should require *every* surviving Critical to be unverified — a mixed set with even one verified Critical must still block)
 
 **Note**: the verification verdict is stochastic on real models. To force the clamp in a self-hosted run, swap in an LLM whose `CRITICAL_VERIFICATION_PROMPT` response throws or returns garbage — each Critical gets tagged `unverified` and the clamp triggers deterministically.
+
+---
+
+### E2E-26: W8 location accuracy — snap to call site, not definition
+
+**Behavior**: when a finding references a function by name, `groundFinding` walks every occurrence of the identifier in the file and snaps to the **call site** closest to the LLM's anchor — never to the function's *definition* line when at least one use-site exists. Verifies the PR #39 failure mode: the bot cited `rag.ts:330` (the `function searchViaPostgres(…)` definition) for a finding about the call at line 410.
+
+**Setup**
+
+Branch: `fixture/26-call-site-snap`. Add `src/svc.ts`:
+
+```ts
+// Line 1: the function DEFINITION.
+export async function searchViaPostgres(q: number[]): Promise<unknown[]> {
+  // Line 3: body.
+  return globalThis.db.query(q);
+}
+
+// Some unrelated code so the def and the call are not on consecutive lines.
+function unrelated() {
+  return 42;
+}
+
+// Line 12: the call SITE — this is what a finding about
+// `searchViaPostgres` should anchor at.
+export async function loadResults(): Promise<unknown[]> {
+  return await searchViaPostgres([1, 2, 3]);
+}
+```
+
+Craft the PR so the diff touches both the definition area and the call site (e.g., add the call site in this PR, or modify both regions). The bait: the LLM may try to anchor a finding about the call at the function's signature line.
+
+**Expected outcomes**
+
+- [ ] If a finding about `searchViaPostgres` lands in the rendered comment, its `line` field points at the **call site** (`return await searchViaPostgres([...])` line), NOT at the `export async function searchViaPostgres(…)` line
+- [ ] In the inline-comment thread, the comment is anchored on the call line and matches the summary table / Critical block line exactly (single canonical location across all three renderings)
+- [ ] If the finding is genuinely about the *definition* (e.g., "function takes too many parameters"), the snap correctly stays on the def line — the W8 heuristic only drops definitions when a **use-site** exists for the same identifier
+
+**Failure modes**
+- ❌ Finding rendered at the `function searchViaPostgres(…)` line when a call site exists elsewhere in the same file (the PR #39 regression)
+- ❌ Inline-comment line differs from the summary table line for the same finding (#37 reported `:38` in summary but `:39` inline)
+- ❌ A finding about the function's signature gets *incorrectly* snapped away to a call site (over-snap — the W8 fallback should keep def-only findings on the def line; the regression test guards both directions)
+
+**Note**: the snap is deterministic given the file contents and finding text. To force the def-line failure pre-W8, inject `{ "file": "src/svc.ts", "line": 1, "severity": "critical", "title": "Missing await on \`searchViaPostgres\` call" }` into the orchestrator response and confirm post-W8 it snaps to the call line.
 
 ---
 

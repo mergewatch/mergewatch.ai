@@ -1151,21 +1151,14 @@ export function groundFinding(
   const identifiers = extractFindingIdentifiers(`${f.title} ${f.description} ${f.suggestion}`);
   if (identifiers.length === 0) return f; // No identifier to verify against — pass through.
 
-  // ±GROUNDING_WINDOW_LINES around the anchor (inclusive).
-  const start = Math.max(0, zeroBased - GROUNDING_WINDOW_LINES);
-  const end = Math.min(lines.length, zeroBased + GROUNDING_WINDOW_LINES + 1);
-  const window = lines.slice(start, end).join('\n');
-
-  // Identifier appears near anchor — finding is grounded.
-  if (identifiers.some((id) => window.includes(id))) return f;
-
-  // Identifier appears somewhere else in the file — snap to first occurrence.
-  // This handles the common "anchor is on a comment line, actual code is 1-3
-  // lines below" failure mode without dropping otherwise-correct findings.
-  for (let i = 0; i < lines.length; i++) {
-    if (identifiers.some((id) => lines[i].includes(id))) {
-      return { ...f, line: i + 1 };
-    }
+  // W8 — find the best anchor line for this finding. Prefers call sites
+  // over definitions (the #39 failure mode was a finding about a call site
+  // anchored at the function's `function searchViaPostgres(…)` definition
+  // line; the actual `return await searchViaPostgres(q)` was elsewhere).
+  // Ties broken by proximity to the LLM's original anchor.
+  const snapped = findBestAnchorLine(lines, identifiers, zeroBased);
+  if (snapped !== null) {
+    return snapped === zeroBased ? f : { ...f, line: snapped + 1 };
   }
 
   // Identifier nowhere in file. The orchestrator likely hallucinated the
@@ -1174,6 +1167,86 @@ export function groundFinding(
   if (f.severity === 'critical') return null;
   if (f.severity === 'warning') return { ...f, severity: 'info' };
   return null;
+}
+
+/**
+ * On-line definition-keyword shape: matches the part of a line *immediately
+ * before the identifier name*, looking for a JS/TS declaration keyword that
+ * makes the next token a *defining* occurrence rather than a *use* of the
+ * identifier. Tracks the common surface forms:
+ *   `function foo(`            ← classic FunctionDeclaration
+ *   `async function foo(`      ← async variant (the `async ` is part of the
+ *                                 same word stream; the regex above only
+ *                                 inspects the chars immediately preceding
+ *                                 the name, so the `\bfunction\s+$` clause
+ *                                 still matches when `async ` is two tokens
+ *                                 back)
+ *   `export function foo(`     ← same as above with an `export` modifier;
+ *                                 the regex anchors on the last non-name
+ *                                 keyword before the identifier, which is
+ *                                 still `function`
+ *   `class Foo`, `interface Foo`, `type Foo` ← named type declarations
+ *   `public foo(`, `private foo(`, `protected foo(`, `static foo(`
+ *                                ← class method shorthand
+ * Use-site forms (`return foo()`, `await foo()`, `const r = foo()`,
+ * `foo.bar()`) deliberately do NOT match — the chars right before the
+ * identifier on those lines are `return `, `await `, `= `, `.`, none of
+ * which are declaration keywords.
+ */
+const W8_DEFINITION_BEFORE = /\b(function|class|interface|type|method|public|private|protected|static)\s+$/;
+
+/**
+ * Find the best line to anchor a finding to, given the identifiers we
+ * extracted from its text and the LLM's original anchor (zero-based). The
+ * scoring is two-pass:
+ *
+ *   1. Bucket every occurrence as **call-site / use** or **definition**
+ *      based on whether `W8_DEFINITION_BEFORE` matches the chars immediately
+ *      before the identifier name on that line.
+ *   2. If there's at least one use-site, drop the definitions — a call-site
+ *      finding anchored at the definition line is the canonical P8 failure
+ *      and never the right answer. If there are NO use-sites, fall back to
+ *      the definitions (they're the only signal we have).
+ *   3. Within the chosen pool, pick the line CLOSEST to the LLM's original
+ *      anchor. The LLM is usually approximately right; the distance tie-
+ *      break stops us from snapping across the entire file when there are
+ *      multiple call sites.
+ *
+ * Returns the zero-based line index, or `null` when the identifier appears
+ * nowhere in the file (caller drops/downgrades).
+ */
+function findBestAnchorLine(
+  lines: string[],
+  identifiers: string[],
+  anchorIdx: number,
+): number | null {
+  const candidates: Array<{ lineIdx: number; isDef: boolean }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const id of identifiers) {
+      const idx = line.indexOf(id);
+      if (idx < 0) continue;
+      const before = line.slice(0, idx);
+      const isDef = W8_DEFINITION_BEFORE.test(before);
+      candidates.push({ lineIdx: i, isDef });
+      break; // one match per line is enough
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  const useSites = candidates.filter((c) => !c.isDef);
+  const pool = useSites.length > 0 ? useSites : candidates;
+
+  let best = pool[0];
+  let bestDist = Math.abs(best.lineIdx - anchorIdx);
+  for (let i = 1; i < pool.length; i++) {
+    const dist = Math.abs(pool[i].lineIdx - anchorIdx);
+    if (dist < bestDist) {
+      best = pool[i];
+      bestDist = dist;
+    }
+  }
+  return best.lineIdx;
 }
 
 /**
