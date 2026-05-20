@@ -378,7 +378,9 @@ export async function processReviewJob(
     // keys so the pipeline doesn't re-raise them. Best-effort, fail-open.
     let disputedKeys: string[] = [];
     if (prevComplete?.findings && prevComplete.findings.length > 0) {
-      const triageComments = await fetchTriageComments(octokit, owner, repo, prNumber);
+      // Author-filtered: a third-party drive-by commenter cannot suppress
+      // findings on someone else's PR (the security boundary for W3).
+      const triageComments = await fetchTriageComments(octokit, owner, repo, prNumber, prContext.prAuthor);
       if (triageComments.length > 0) {
         disputedKeys = await computeDisputedKeys(
           triageComments,
