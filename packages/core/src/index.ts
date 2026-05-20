@@ -126,6 +126,9 @@ export {
 } from './triage.js';
 export type { TriagePriorFinding } from './triage.js';
 
+// ─── Scope/architecture awareness (W11) ─────────────────────────────────────
+export { detectNoTestHarness, suppressTestCoverageFindings } from './scope-awareness.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,
