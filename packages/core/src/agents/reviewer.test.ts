@@ -19,6 +19,7 @@ import {
   groundFinding,
   suggestionAlreadyApplied,
   verifyCriticalFindings,
+  reconcileMergeScore,
   type ReviewContext,
   type AgentFinding,
   type ReviewPipelineOptions,
@@ -1129,6 +1130,7 @@ describe('runReviewPipeline', () => {
     expect(typeof result.inputTokens).toBe('number');
     expect(typeof result.outputTokens).toBe('number');
   });
+
 });
 
 // ─── agentAuthored flag (AGENT_MODE_SUFFIX injection) ───────────────
@@ -1486,41 +1488,163 @@ describe('verifyCriticalFindings', () => {
     expect(result).toEqual([]);
   });
 
-  it('keeps a critical the model confirms', async () => {
+  it('keeps a critical the model confirms — tags it `verified` (W7 input)', async () => {
     const llm = createMockLLM(['{"valid": true, "confidence": 0.9, "reason": "genuine defect"}']);
     const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([critical]);
+    expect(result).toEqual([{ ...critical, verification: 'verified' }]);
   });
 
-  it('keeps the finding when the file could not be fetched (fail-safe)', async () => {
+  it('keeps the finding when the file could not be fetched — leaves verification UNSET (W2 didn\'t run)', async () => {
+    // No file content = verification was skipped, not attempted-and-inconclusive.
+    // Leaving the field unset preserves legacy behavior (no W7 clamp on this
+    // critical) so callers without `groundingFetch` aren't surprised.
     const llm = createMockLLM(['{"valid": false}']);
     const result = await verifyCriticalFindings([critical], {}, 'light', llm);
-    expect(result).toEqual([critical]);
-    expect(llm.calls).toHaveLength(0); // no file → no verification call
+    expect(result).toEqual([critical]); // unchanged object, no verification field
+    expect(llm.calls).toHaveLength(0);
   });
 
-  it('keeps the finding when the LLM call throws (fail-safe)', async () => {
+  it('keeps the finding when the LLM call throws — tags it `unverified`', async () => {
     const llm: ILLMProvider = {
       async invoke() {
         throw new Error('bedrock throttled');
       },
     };
     const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([critical]);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 
-  it('keeps the finding on unparseable LLM output (fail-safe)', async () => {
+  it('keeps the finding on unparseable LLM output — tags it `unverified`', async () => {
     const llm = createMockLLM(['not json at all']);
     const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([critical]);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 
-  it('only verifies criticals — warnings/info pass through untouched', async () => {
+  it('keeps the finding on parsed-but-no-verdict output — tags it `unverified`', async () => {
+    // Model returned valid JSON but no `valid` field (or some other shape).
+    // Fail-safe keep, tagged unverified so W7 scoring can downgrade.
+    const llm = createMockLLM(['{"confidence": 0.5, "reason": "hard to tell"}']);
+    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+  });
+
+  it('only verifies criticals — warnings/info pass through with NO verification tag', async () => {
     const warning = { ...critical, severity: 'warning' as const };
     const info = { ...critical, severity: 'info' as const };
     const llm = createMockLLM(['{"valid": false}']);
     const result = await verifyCriticalFindings([warning, info], fileContents, 'light', llm);
-    expect(result).toEqual([warning, info]);
+    expect(result).toEqual([warning, info]); // no verification field added
     expect(llm.calls).toHaveLength(0);
+  });
+});
+
+// ─── reconcileMergeScore (W7 score guardrail) ───────────────────────────────
+
+describe('reconcileMergeScore', () => {
+  // Minimal helpers — only the fields the function reads.
+  function critical(over: Partial<AgentFinding> & { verification?: 'verified' | 'unverified' } = {}) {
+    return {
+      file: 'a.ts', line: 1, severity: 'critical' as const,
+      category: 'security', title: 'X', description: '', suggestion: '',
+      ...over,
+    };
+  }
+  function warning(over: Partial<AgentFinding> = {}) {
+    return {
+      file: 'a.ts', line: 1, severity: 'warning' as const,
+      category: 'style', title: 'W', description: '', suggestion: '',
+      ...over,
+    };
+  }
+
+  it('returns 5 when there are no action items', () => {
+    expect(reconcileMergeScore({
+      filteredFindings: [], previousFindings: undefined,
+      orchestratorScore: 2, orchestratorReason: 'red',
+    })).toMatchObject({ mergeScore: 5 });
+  });
+
+  it('falls through to orchestrator score for confirmed criticals (W7 does NOT downgrade)', () => {
+    const r = reconcileMergeScore({
+      filteredFindings: [critical({ verification: 'verified' })],
+      previousFindings: undefined,
+      orchestratorScore: 1, orchestratorReason: 'real critical',
+    });
+    expect(r).toEqual({ mergeScore: 1, mergeScoreReason: 'real critical' });
+  });
+
+  it('back-compat: a critical with NO verification field does NOT trigger the W7 clamp', () => {
+    // The verification field is absent — W2 didn't run on this finding.
+    // Legacy behavior preserved: orchestrator score stands (can be ≤2).
+    const r = reconcileMergeScore({
+      filteredFindings: [critical()],
+      previousFindings: undefined,
+      orchestratorScore: 2, orchestratorReason: 'red',
+    });
+    expect(r.mergeScore).toBe(2);
+  });
+
+  it('W7 — clamps to 3 when EVERY surviving Critical is `unverified` and orchestrator scored ≤2', () => {
+    // The #148 P13 "no-exit critical" scenario: W2 ran on each Critical
+    // but couldn't confirm any of them — orchestrator still scored red.
+    const r = reconcileMergeScore({
+      filteredFindings: [
+        critical({ title: 'A', verification: 'unverified' }),
+        critical({ title: 'B', verification: 'unverified' }),
+      ],
+      previousFindings: undefined,
+      orchestratorScore: 1, orchestratorReason: 'two criticals',
+    });
+    expect(r.mergeScore).toBe(3);
+    expect(r.mergeScoreReason).toMatch(/could not be confirmed|verification inconclusive|advisory/i);
+  });
+
+  it('W7 does NOT clamp when even ONE surviving Critical is verified (the verified one still blocks)', () => {
+    const r = reconcileMergeScore({
+      filteredFindings: [
+        critical({ title: 'verified-real',     verification: 'verified' }),
+        critical({ title: 'unverified-maybe', verification: 'unverified' }),
+      ],
+      previousFindings: undefined,
+      orchestratorScore: 1, orchestratorReason: 'one real, one maybe',
+    });
+    expect(r.mergeScore).toBe(1); // verified Critical still blocks
+  });
+
+  it('W7 does NOT clamp when orchestrator score is already ≥ 3', () => {
+    // Guardrail only fires on the "would have been red" path; not a generic uplift.
+    const r = reconcileMergeScore({
+      filteredFindings: [critical({ verification: 'unverified' })],
+      previousFindings: undefined,
+      orchestratorScore: 3, orchestratorReason: 'yellow',
+    });
+    expect(r.mergeScore).toBe(3);
+    expect(r.mergeScoreReason).toBe('yellow'); // orchestrator reason preserved
+  });
+
+  it('pure security improvement overrides W7: ≥4 when resolved>0 and new=0', () => {
+    // Mixed tier interaction — pure-improvement check runs BEFORE W7.
+    const r = reconcileMergeScore({
+      filteredFindings: [warning()], // not a critical → no current criticals
+      previousFindings: [critical({ title: 'old' })], // had a prior critical
+      orchestratorScore: 1, orchestratorReason: 'red',
+    });
+    expect(r.mergeScore).toBeGreaterThanOrEqual(4);
+    expect(r.mergeScoreReason).toMatch(/Resolved 1 critical issue/);
+  });
+
+  it('net security improvement still hits its tier (≥3) regardless of W7 verification state', () => {
+    const r = reconcileMergeScore({
+      filteredFindings: [
+        critical({ title: 'new-A', verification: 'unverified' }),
+      ],
+      previousFindings: [
+        critical({ title: 'old-A' }),
+        critical({ title: 'old-B' }),
+      ],
+      orchestratorScore: 1, orchestratorReason: 'one critical',
+    });
+    expect(r.mergeScore).toBeGreaterThanOrEqual(3);
+    expect(r.mergeScoreReason).toMatch(/net improvement/);
   });
 });

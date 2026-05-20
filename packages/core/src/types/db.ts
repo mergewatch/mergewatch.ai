@@ -343,6 +343,14 @@ export interface ReviewFinding {
    * (drifting) wording. Optional for back-compat with pre-W9 stored reviews.
    */
   fingerprint?: string;
+  /**
+   * Result of the W2 critical-verification pass (W7 score-guardrail input).
+   * `verified` = the verifier model confirmed the defect against the full
+   * file; `unverified` = inconclusive / fail-safe-kept. Persisted so a
+   * later re-review can still reason about the prior verification result.
+   * Optional / back-compat with pre-W7 stored reviews.
+   */
+  verification?: 'verified' | 'unverified';
 }
 
 // =============================================================================
