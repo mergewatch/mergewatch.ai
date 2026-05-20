@@ -409,7 +409,58 @@ function escapeMermaidLabelChars(label: string): string {
  * 2. Quotes unquoted node labels that contain reserved characters.
  * 3. Quotes unquoted edge labels (|...|) that contain reserved characters.
  */
+/**
+ * Decode HTML entities and de-glue `<br/>`-joined statements in the regions
+ * of a Mermaid diagram that are OUTSIDE double-quoted label strings.
+ *
+ * Why: the LLM sometimes assumes the diagram text will be HTML-rendered and
+ * pre-escapes Mermaid's syntactic characters as entities — but inside a
+ * ` ```mermaid ` code fence the content is parsed as Mermaid, not HTML, so
+ * those entities are read as literal text. The result (observed live on
+ * PR #148): `B&lsqb;"…"&rsqb;` instead of `B["…"]`, `--&gt;` instead of
+ * `-->`, plus multiple statements glued onto one line by `<br/>`. None of
+ * those shapes parse.
+ *
+ * Inside `"…"` labels the SAME characters are LEGITIMATE (`<br/>` is the
+ * Mermaid label line-break syntax; entities decode-and-re-encode in
+ * escapeMermaidLabelChars). So this pass only touches the unquoted regions,
+ * leaving label internals to the existing pass-1 escape.
+ */
+function decodeMermaidOutsideQuotes(diagram: string): string {
+  // Split into alternating non-quoted / quoted segments. Capturing group →
+  // odd indices are quoted regions (kept verbatim); even indices are
+  // unquoted regions (transformed). The character class `[^"]` includes
+  // newlines, so quoted regions that span lines are still a single segment.
+  const parts = diagram.split(/("[^"]*")/);
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i]
+      // Entity → literal. `&amp;` MUST decode LAST so we don't introduce a
+      // bare `&` that earlier replacements then re-decode through.
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'")
+      .replace(/&lbrace;/g, '{')
+      .replace(/&rbrace;/g, '}')
+      .replace(/&lpar;/g, '(')
+      .replace(/&rpar;/g, ')')
+      .replace(/&lsqb;/g, '[')
+      .replace(/&rsqb;/g, ']')
+      .replace(/&amp;/g, '&')
+      // Outside any label, `<br/>` is misuse-as-statement-separator: convert
+      // to a real newline so the per-statement parser actually sees them.
+      .replace(/<br\s*\/?>/gi, '\n');
+  }
+  return parts.join('');
+}
+
 function sanitizeMermaidOutput(diagram: string): string {
+  // Pass 0 — OUTSIDE quoted regions: decode HTML entities the model sometimes
+  // emits in syntactic positions, and convert any literal `<br/>` outside a
+  // label back into a statement-separating newline. See decode helper above.
+  const decoded = decodeMermaidOutsideQuotes(diagram);
+
   // Pass 1 — full-diagram scan: escape forbidden chars inside ANY double-
   // quoted region. Critically this runs BEFORE the per-line split so labels
   // that span multiple lines (an embedded real newline inside `"..."`) are
@@ -419,7 +470,7 @@ function sanitizeMermaidOutput(diagram: string): string {
   // Inside escapeMermaidLabelChars, both literal `\\n` (two chars) and real
   // newline chars are converted to `<br/>` — either way the resulting label
   // is single-line and Mermaid-safe by the time we split by lines below.
-  const preEscaped = diagram.replace(/"([^"]*)"/g, (_match, inner: string) => {
+  const preEscaped = decoded.replace(/"([^"]*)"/g, (_match, inner: string) => {
     return `"${escapeMermaidLabelChars(inner)}"`;
   });
 
