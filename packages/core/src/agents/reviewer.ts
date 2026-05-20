@@ -62,6 +62,18 @@ export interface AgentFinding {
    * which case delta falls back to the title key.
    */
   fingerprint?: string;
+  /**
+   * Result of the W2 critical-verification pass (W7 score guardrail input):
+   *   - `verified`   — model explicitly confirmed the defect against the
+   *                    full file content (parsed.valid === true).
+   *   - `unverified` — verification was inconclusive (missing file, LLM
+   *                    error, unparseable output, no clear verdict). The
+   *                    finding was kept fail-safe but couldn't be confirmed,
+   *                    so it must not by itself BLOCK the PR (W7 clamps the
+   *                    score to ≥3 when all surviving Criticals are unverified).
+   * Absent for non-critical findings (verification only runs on criticals).
+   */
+  verification?: 'verified' | 'unverified';
 }
 
 export interface OrchestratedFinding extends AgentFinding {
@@ -1248,16 +1260,31 @@ export async function verifyCriticalFindings(
   modelId: string,
   llm: ILLMProvider,
 ): Promise<OrchestratedFinding[]> {
+  // Each task returns the disposition for one finding:
+  //   - { keep: true }                            — pass-through (non-critical).
+  //   - { keep: true,  verification: 'verified' } — model confirmed the defect.
+  //   - { keep: true,  verification: 'unverified' } — kept fail-safe; W7
+  //                                                   will treat this as
+  //                                                   advisory in scoring.
+  //   - { keep: false }                           — model said valid:false, drop.
   // Bounded concurrency, not Promise.all: a pathological PR with many
   // criticals would otherwise burst N parallel Bedrock InvokeModel calls and
   // hit the per-minute TPM quota (same reason runReviewPipeline uses
   // AGENT_CONCURRENCY). withConcurrency preserves input order, so the
   // verdicts[i] ↔ findings[i] alignment below still holds.
-  const verdicts = await withConcurrency<boolean>(
+  type Verdict = { keep: boolean; verification?: 'verified' | 'unverified' };
+  const verdicts = await withConcurrency<Verdict>(
     findings.map((f) => async () => {
-      if (f.severity !== 'critical') return true;
+      if (f.severity !== 'critical') return { keep: true };
       const content = fileContents[f.file];
-      if (!content) return true; // Couldn't fetch the file — can't disprove it.
+      if (!content) {
+        // No file content for this path — verification was SKIPPED (not
+        // attempted-and-inconclusive). Keep the finding with NO verification
+        // tag so legacy callers without `groundingFetch` don't get the W7
+        // score clamp applied. The clamp is opt-in: it fires only when W2
+        // explicitly ran and couldn't confirm (see the LLM branches below).
+        return { keep: true };
+      }
 
       const prompt = `${CRITICAL_VERIFICATION_PROMPT}
 
@@ -1277,7 +1304,7 @@ ${content}`;
         ).text;
         // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
         // or verdict-less response is distinguishable from an explicit
-        // pass — the fail-safe "keep" is then logged, not silent.
+        // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
         const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
         if (parsed.valid === false) {
           console.warn(
@@ -1287,32 +1314,41 @@ ${content}`;
             f.line,
             (parsed.reason ?? '').slice(0, 200),
           );
-          return false;
+          return { keep: false };
         }
-        if (parsed.valid !== true) {
-          console.warn(
-            '[critical-verify] no usable verdict for "%s" (%s:%d) — keeping finding (fail-safe)',
-            f.title,
-            f.file,
-            f.line,
-          );
+        if (parsed.valid === true) {
+          return { keep: true, verification: 'verified' };
         }
-        return true;
+        // Ambiguous: parsed but no usable verdict.
+        console.warn(
+          '[critical-verify] no usable verdict for "%s" (%s:%d) — keeping finding (unverified, advisory)',
+          f.title,
+          f.file,
+          f.line,
+        );
+        return { keep: true, verification: 'unverified' };
       } catch (err) {
         console.warn(
-          '[critical-verify] verification call failed for "%s" (%s:%d) — keeping finding:',
+          '[critical-verify] verification call failed for "%s" (%s:%d) — keeping finding (unverified, advisory):',
           f.title,
           f.file,
           f.line,
           err,
         );
-        return true;
+        return { keep: true, verification: 'unverified' };
       }
     }),
     AGENT_CONCURRENCY,
   );
 
-  return findings.filter((_, i) => verdicts[i]);
+  // Drop the explicit-invalid ones; tag the survivors with their verdict.
+  const result: OrchestratedFinding[] = [];
+  for (let i = 0; i < findings.length; i++) {
+    const v = verdicts[i];
+    if (!v.keep) continue;
+    result.push(v.verification ? { ...findings[i], verification: v.verification } : findings[i]);
+  }
+  return result;
 }
 
 /**
@@ -1337,6 +1373,95 @@ function withCodeFingerprints<T extends OrchestratedFinding>(
     const fingerprint = fingerprintFromCode(lines[idx]);
     return fingerprint ? { ...f, fingerprint } : f;
   });
+}
+
+/**
+ * Reconcile the orchestrator's raw 1–5 score with the post-grounding /
+ * post-line-filter / post-triage finding set. Pure function — extracted
+ * from runReviewPipeline so the tiered scoring rules are directly
+ * unit-testable (no agent / LLM mocking required).
+ *
+ * Tiers, in priority order:
+ *   1. **No action items** → 5. `info`-only or empty.
+ *   2. **Pure security improvement** (resolved criticals > 0, new = 0) →
+ *      ≥4. The PR closed criticals without introducing new ones.
+ *   3. **Net security improvement** (resolved > new, both > 0) → ≥3.
+ *      Closed more than opened; reviewer still gets signal about the new.
+ *   4. **W7 guardrail — unverified-only criticals** → 3 (clamped from
+ *      ≤2). Every surviving Critical was tagged `verification: 'unverified'`
+ *      by the W2 pass — kept fail-safe but couldn't be confirmed against
+ *      the source. A single un-confirmable Critical must not BLOCK the
+ *      PR; mergeScoreToReviewEvent maps 3 → COMMENT, so the check stays
+ *      advisory. Verified Criticals (or any mix containing a verified
+ *      one) still hit the orchestrator's full score (which can be ≤2).
+ *      Back-compat: an absent `verification` field is treated as "W2
+ *      didn't run on this finding" and does NOT trigger the clamp.
+ *   5. **Default** → orchestrator's raw score (can be red).
+ */
+export function reconcileMergeScore(input: {
+  filteredFindings: OrchestratedFinding[];
+  previousFindings: PreviousFinding[] | undefined;
+  orchestratorScore: number;
+  orchestratorReason: string;
+}): { mergeScore: number; mergeScoreReason: string } {
+  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason } = input;
+
+  const actionFindings = filteredFindings.filter(
+    (f) => f.severity === 'critical' || f.severity === 'warning',
+  );
+  const noActionItems = actionFindings.length === 0;
+
+  // Reuse computeReviewDelta so "resolved"/"new" criticals share the exact
+  // same identity definition (W9 union-matching) as the user-facing delta —
+  // a fixed critical that the LLM re-words must not read as new here either.
+  const currentCriticals = filteredFindings.filter((f) => f.severity === 'critical');
+  const criticalDelta = computeReviewDelta(
+    currentCriticals,
+    (previousFindings ?? []).filter((p) => p.severity === 'critical'),
+  );
+  const resolvedCriticals = criticalDelta?.resolvedCount ?? 0;
+  const newCriticals = criticalDelta ? criticalDelta.newCount : currentCriticals.length;
+
+  const isPureSecurityImprovement = resolvedCriticals > 0 && newCriticals === 0;
+  const isNetSecurityImprovement = resolvedCriticals > newCriticals && newCriticals > 0;
+
+  // W7 — opt-in: a Critical with NO verification field (pre-W7 record OR
+  // a path where W2 didn't run) is treated as "verification didn't run"
+  // and does NOT count toward the clamp. Only explicit `unverified` does.
+  const hasAnyConfirmedOrUntaggedCritical = currentCriticals.some(
+    (f) => f.verification !== 'unverified',
+  );
+  const allCriticalsUnverified =
+    currentCriticals.length > 0 && !hasAnyConfirmedOrUntaggedCritical;
+
+  if (noActionItems) {
+    return {
+      mergeScore: 5,
+      mergeScoreReason: filteredFindings.length === 0
+        ? 'No issues found on changed lines.'
+        : 'No action items — only informational notes.',
+    };
+  }
+  if (isPureSecurityImprovement) {
+    return {
+      mergeScore: Math.max(4, orchestratorScore),
+      mergeScoreReason: `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review, no new criticals introduced.`,
+    };
+  }
+  if (isNetSecurityImprovement) {
+    return {
+      mergeScore: Math.max(3, orchestratorScore),
+      mergeScoreReason: `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review; introduced ${newCriticals} new — net improvement, but review the new findings.`,
+    };
+  }
+  if (allCriticalsUnverified && orchestratorScore <= 2) {
+    const n = currentCriticals.length;
+    return {
+      mergeScore: 3,
+      mergeScoreReason: `${n} critical finding${n === 1 ? '' : 's'} could not be confirmed against the source (W2 verification inconclusive). Downgraded to advisory — review carefully, but the PR is not blocked on unverified concerns.`,
+    };
+  }
+  return { mergeScore: orchestratorScore, mergeScoreReason: orchestratorReason };
 }
 
 /**
@@ -1519,61 +1644,12 @@ export async function runReviewPipeline(
     : null;
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
-  // Three cases force the score upward:
-  //   1. No findings at all → 5/5. Genuinely clean.
-  //   2. Only info findings → 5/5. Comment-formatter renders "All clear!"
-  //      since info findings aren't action items; the score should match.
-  //   3. PR closes critical findings from a prior review and introduces
-  //      none → score is clamped to >= 4. The orchestrator scores based
-  //      on the current finding count alone and doesn't reward "fixed 3
-  //      criticals, still have 2 warnings". Without this, a security-
-  //      improvement PR gets the same orange face as the broken commit
-  //      it fixed (per the feedback: "fixing things should not get the
-  //      same emoji as ignoring them").
-  const actionFindings = filteredFindings.filter(
-    (f) => f.severity === 'critical' || f.severity === 'warning',
-  );
-  const noActionItems = actionFindings.length === 0;
-
-  // Reuse computeReviewDelta so "resolved"/"new" criticals share the exact
-  // same identity definition (W9 union-matching) as the user-facing delta —
-  // a fixed critical that the LLM re-words must not read as new here either.
-  const currentCriticals = filteredFindings.filter((f) => f.severity === 'critical');
-  const criticalDelta = computeReviewDelta(
-    currentCriticals,
-    (previousFindings ?? []).filter((p) => p.severity === 'critical'),
-  );
-  const resolvedCriticals = criticalDelta?.resolvedCount ?? 0;
-  const newCriticals = criticalDelta ? criticalDelta.newCount : currentCriticals.length;
-  // Two tiers of reward for security-improving PRs:
-  //   - PURE improvement (resolved > 0, new = 0): score >= 4 (green). The PR
-  //     closed criticals without introducing any new ones — clear win.
-  //   - NET improvement (resolved > new, both > 0): score >= 3 (yellow). The
-  //     PR closed more than it opened, but the LLM did flag some new
-  //     concerns on the fix code. Prevents the cliff from green → red just
-  //     because the agent picked at the fix; reviewer still gets signal
-  //     that something new is worth a look.
-  //   - Otherwise: fall through to orchestrator's verdict (can be red).
-  const isPureSecurityImprovement = resolvedCriticals > 0 && newCriticals === 0;
-  const isNetSecurityImprovement = resolvedCriticals > newCriticals && newCriticals > 0;
-
-  let mergeScore: number;
-  let mergeScoreReason: string;
-  if (noActionItems) {
-    mergeScore = 5;
-    mergeScoreReason = filteredFindings.length === 0
-      ? 'No issues found on changed lines.'
-      : 'No action items — only informational notes.';
-  } else if (isPureSecurityImprovement) {
-    mergeScore = Math.max(4, orchestratorResult.mergeScore);
-    mergeScoreReason = `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review, no new criticals introduced.`;
-  } else if (isNetSecurityImprovement) {
-    mergeScore = Math.max(3, orchestratorResult.mergeScore);
-    mergeScoreReason = `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review; introduced ${newCriticals} new — net improvement, but review the new findings.`;
-  } else {
-    mergeScore = orchestratorResult.mergeScore;
-    mergeScoreReason = orchestratorResult.mergeScoreReason;
-  }
+  const { mergeScore, mergeScoreReason } = reconcileMergeScore({
+    filteredFindings,
+    previousFindings,
+    orchestratorScore: orchestratorResult.mergeScore,
+    orchestratorReason: orchestratorResult.mergeScoreReason,
+  });
 
   return {
     summary,

@@ -151,6 +151,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-22](#e2e-22-claim-aware-critical-verification-w2) | "Missing await" critical on code that already awaits (truncated-diff artifact) → dropped by full-file verification | 1m | 60s | #145 |
 | [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new" (W9); a triage-rebutted finding is not re-raised (W3) | 3m | 90s | W9 / W3 |
 | [E2E-24](#e2e-24-triage-author-filter-security-boundary) | A `## mergewatch triage` from a NON-PR-author does not suppress findings (W3 security boundary) | 2m | 60s | #148 |
+| [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 |
 
 ---
 
@@ -992,6 +993,55 @@ Push a small commit on the PR branch to trigger a re-review.
 - ❌ A non-author can prompt-inject through the triage body to manipulate suppression of other findings on the same PR
 
 **Note**: closes the W3 attack surface. The same fixture also acts as the live test for the data-isolation guard in `TRIAGE_MAPPING_PROMPT` — if the author-filter ever regresses, the prompt-level guard is the second line of defense.
+
+---
+
+### E2E-25: W7 score guardrail — unverified-only Criticals don't block
+
+**Behavior**: when the orchestrator emits Critical(s) but the W2 verification pass can't confirm any of them against the file contents (LLM error, unparseable response, no clear verdict, etc.), the bot:
+- keeps the findings (fail-safe, never silently drops a real Critical),
+- tags each survivor with `verification: 'unverified'`,
+- clamps the merge score to **3/5** (would have been ≤2/5),
+- so the formal PR review event is **COMMENT** (advisory), not **REQUEST_CHANGES** — and the `MergeWatch Review` check stays a non-blocker.
+
+This closes the P13 "no-exit critical" state that pinned **PR #148** at `CHANGES_REQUESTED` × 4 rounds: the bot's residual concern was unverifiable but blocked the PR every commit. Now those land as advisory.
+
+**Status:** SHIPPED in the W7 PR. Both halves regression-locked by `reconcileMergeScore` unit tests (every tier interaction is covered).
+
+**Setup**
+
+Branch: `fixture/25-w7-guardrail`. The trigger is "the orchestrator scores ≤ 2 AND every surviving Critical is `unverified`". The exact prompt that elicits an inconclusive W2 verdict is stochastic, but a reliable shape:
+
+`src/inscrutable.ts` — a small file with an obvious-looking but ambiguous "issue" that's a known false-positive bait (e.g. a parameterised query that *looks* like SQL concat, a try/catch that swallows a noop error, a non-async function the model misreads as async):
+
+```ts
+// W7 fixture: ambiguous on purpose — the inline guard at line 4 is the
+// real safety net, but the model often misses it on first pass.
+export function lookupUser(id: number): Promise<unknown> {
+  if (!Number.isInteger(id) || id <= 0) throw new Error('bad id');
+  return db.prepare('SELECT * FROM users WHERE id = ?', [id]);
+}
+
+declare const db: { prepare(sql: string, p: unknown[]): Promise<unknown> };
+```
+
+Provide `groundingFetch` (the default on SaaS / when configured) so verification *actually runs* — `verification: 'unverified'` requires that W2 was attempted but didn't return a verdict, not that it was skipped entirely.
+
+**Expected outcomes**
+
+- [ ] If a Critical surfaces, the rendered comment shows score `3/5 — Review recommended` (not `2/5 — Needs fixes` or red)
+- [ ] Score-reason line includes phrasing like *"could not be confirmed against the source"* / *"verification inconclusive"* / *"advisory"*
+- [ ] Formal PR review event = **COMMENT** (not REQUEST_CHANGES)
+- [ ] `MergeWatch Review` check status = SUCCESS (advisory), not FAILURE
+- [ ] Each surviving Critical row carries the `verification: 'unverified'` tag in the stored review (DynamoDB / Postgres). Verify via the dashboard's "View full details" link or directly in the store.
+- [ ] Push a follow-up commit that makes the same code clearly broken (e.g. remove the inline guard); the next review's verification should now confirm the Critical → no clamp → score returns to ≤ 2 + REQUEST_CHANGES. Confirms the guardrail is gated on "W2 inconclusive," not "presence of any Critical."
+
+**Failure modes**
+- ❌ Score `1/5` or `2/5` with formal review `REQUEST_CHANGES` despite every Critical being unconfirmed by W2 (the W7 clamp didn't fire — likely an `allCriticalsUnverified` regression)
+- ❌ The Critical was silently dropped (over-suppression — W7 should clamp the SCORE, never the FINDING itself; the finding stays visible as advisory)
+- ❌ A confirmed-real Critical (`verification: 'verified'`) was also clamped (the clamp should require *every* surviving Critical to be unverified — a mixed set with even one verified Critical must still block)
+
+**Note**: the verification verdict is stochastic on real models. To force the clamp in a self-hosted run, swap in an LLM whose `CRITICAL_VERIFICATION_PROMPT` response throws or returns garbage — each Critical gets tagged `unverified` and the clamp triggers deterministically.
 
 ---
 
