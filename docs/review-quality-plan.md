@@ -27,7 +27,7 @@ Reviewing model observed in evidence: **claude-sonnet-4** (per the "Review detai
 | 3 | orca #38 | kbStore.searchCandidates + test | 3/5 Review rec. | P4 P5 P6 P11 P12 |
 | 4 | orca #39 | KB_BACKEND s3\|postgres switch | 2/5 Needs fixes | P1 P2 P4 P5 P8 P9 P11 P12 |
 
-Pattern frequency (5 examples): **P1×4, P5×4, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P8×2, P9×2, P3×1, P10×1.
+Pattern frequency (6 examples): **P1×5, P5×5, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P8×2, P9×2, P3×1, P10×1.
 
 > **Whack-a-mole / non-convergence** (P7+P9 compounded) is now the headline failure: PR #145's own re-review reported the *same finding as both "✅ resolved" and "🆕 new"* in one comment. Every fix commit shifts lines and regenerates ~4 "new" warnings, so the verdict never converges. This is the single highest-leverage thing to fix — see **W3∩W9 convergence guard**.
 
@@ -62,6 +62,7 @@ The goal is **precision, not silence.** Things MergeWatch already does well:
 - **Accurate nit.** #39 `rag.ts:243` "comment describes removed import, not the lazy-load pattern" was correct and actionable — author fixed it.
 - **Dedup exists.** #38 reported `Suppressed 4 findings removed by dedup & quality filters` — the machinery is there; it's under-tuned, not absent.
 - **Real concurrency catch.** #145 (self-review) flagged unbounded `Promise.all` in `verifyCriticalFindings` — a genuine Bedrock-TPM risk, fixed. The bot caught a real defect in its own quality-improvement code.
+- **Real security catch.** #148 (self-review) flagged the missing author-filter on `fetchTriageComments` as 🔴 Critical (prompt-injection via third-party triage comments). Genuine attack class; fixed via author-filter + prompt data-isolation. **1/1 critical was real and actionable** — the precision goal of the plan, validated on the bot's own security PR.
 - **Diagram + summary + cost transparency** are genuinely useful and should stay.
 
 Any fix that reduces noise must preserve these.
@@ -134,6 +135,20 @@ Any fix that reduces noise must preserve these.
   - `:1180` (info) "decompose function" — net-new nitpick. [P5]
   Root cause is exactly the confirmed P9 mechanism: identity key `` `${file}::${title}` `` + line drift on every commit ⇒ old titles "resolved", near-identical concerns "new". **The verdict cannot converge by fixing the PR.** Triage declared round 2 the last reactive round; the fix is W3∩W9 (convergence guard), not more commits.
 - **Patterns:** P1 P5 P7 P9 — *Positive Signal: the bounded-concurrency catch was real and worth crediting. This example is now the canonical whack-a-mole / non-convergence demonstration.*
+
+### Example 6 — mergewatch.ai PR #148 (self-review of the W3 PR)
+
+- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` · dashboard `…%3A148%23aad15c1`
+- **Verdict:** `2/5 — Needs fixes`. **1 critical**, 8 warnings, 1 info. 94,663 tok, ~$0.24, 39.5s. `Suppressed 9`. CHANGES_REQUESTED.
+- **Legit (kept honest) — the bot caught a real attack class on its own quality PR:**
+  - 🔴 **"Unvalidated triage comments enable prompt injection."** Genuine. `fetchTriageComments` accepted comments from anyone, so a third-party drive-by on a public OSS repo could post `## mergewatch triage` with an injection payload to manipulate suppression on someone else's PR. **Fixed in 90b81a5**: (a) `fetchTriageComments` now takes `prAuthor` and filters by `c.user?.login === prAuthor`, undefined `prAuthor` → `[]` without touching the API (fail-closed); (b) `TRIAGE_MAPPING_PROMPT` carries the same DATA-not-instructions guard the W2 verify prompt added in #145; (c) per-comment + total-prose byte caps. Regression-locked as **E2E-24** + a `triage.test.ts` case that includes an `IGNORE PREVIOUS INSTRUCTIONS` attacker comment.
+  - ⚠️ "Unsafe property access on JSON items" — behaviour was already defensively safe via optional chaining; added explicit shape validation (`object` + `typeof index === 'number'` + `typeof disposition === 'string'`) for clarity, locked with a "malformed items" test.
+  - ⚠️ "JSDoc misleads about return value" — minor; clarified.
+- **What it got wrong:**
+  - ⚠️ "ReDoS in `parseDispositionArray` `/\[\s\S]*\]/`" — **same mis-framing as #145's ReDoS finding [P1]**: the regex is linear (no nested quantifier, no catastrophic backtracking). Bound added anyway for codebase consistency, not because a ReDoS exists.
+  - ⚠️ "Silent failure in `fetchTriageComments` / `computeDisputedKeys`" — **rebutted**, intentional fail-open documented in the file's own module JSDoc. Same shape as #145's "broad catch" rebuttal — the safe direction is "infra trouble never hides a finding."
+  - ⚠️×3 "handler / pipeline integration lacks test coverage" — **rebutted on scope**. The transformation (`partitionDisputed`, `computeDisputedKeys`) is unit-tested through every interesting branch; the inline pipeline call is one-line plumbing whose behaviour is captured by those helpers + E2E-23. Mocking the full handler stack for plumbing is the ceremony `AGENTS.md` de-prioritises. [P5 nagging]
+- **Patterns:** P1 P5 — *and a strong Positive Signal: a real critical caught on the bot's own security PR (author-filter gap → prompt-injection). 1 of 1 criticals was real and actionable — exactly the precision goal of the plan.*
 
 ### Example N — _TBD (template — copy this block)_
 
