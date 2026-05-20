@@ -155,6 +155,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 |
 | [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 |
 | [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 |
+| [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 |
 
 ---
 
@@ -1172,6 +1173,59 @@ Run the fixtures separately to exercise both branches of the body-handling logic
 - ❌ Multiple formal Review objects on the same commit (`dismissStaleReviews` failed; should leave exactly one non-dismissed Review per run)
 
 **Note**: the HTML-comment stub `<!-- mergewatch-review -->` is the same marker used by the upserted issue comment. That's intentional — both surfaces share one identifier so future tooling can find them by a single grep.
+
+---
+
+### E2E-29: W10 finding consolidation — fragments on the same region merge
+
+**Behavior**: when the multi-agent pipeline emits multiple findings about the same underlying concern in the same code region — same file, line-span ≤ 50, ≥ 1 shared "significant" token across title + description — `clusterFindings` collapses them into **one** finding carrying the strongest severity, the earliest cited line, and a *"Related concerns clustered into this finding"* list of the absorbed siblings. The reader sees one row in "Requires your attention" where they would have seen N.
+
+Canonical reproduction: voice-bot PR #37 raised three findings about a single "validate the parsed S3 chunk file" concern — `seed.ts:82` (type assertion without runtime validation), `seed.ts:130` (untrusted JSON parsing without validation), `seed.ts:150` (SQL injection risk in dynamic construction). All three share *validation / structure / chunk* tokens; transitively they cluster (`:82↔:130` is 48 lines, `:130↔:150` is 20 lines, both within span 50).
+
+**Setup**
+
+Branch: `fixture/29-cluster`. Add a file that reliably draws multiple agents' attention to overlapping concerns in one region:
+
+```ts
+// src/seed.ts — designed to draw fragmented findings from multiple agents.
+type ChunkFileEntry = { text: string; embedding: number[]; metadata: unknown };
+
+export async function loadAndIndex(s3Key: string): Promise<void> {
+  // 1) Untrusted JSON — the json-parse / data-validation angle.
+  const raw = await s3.getObject(s3Key);
+  const json = JSON.parse(raw.Body.toString());
+
+  // 2) Type assertion without validation — the type-safety angle, same blob.
+  const chunks = json as ChunkFileEntry[];
+
+  // 3) Dynamic VALUES construction — the security angle, near the same code.
+  const values = chunks.map((c, i) => `(${i}, $${i + 1})`).join(', ');
+  await db.query(`INSERT INTO chunks VALUES ${values}`);
+}
+
+declare const s3: { getObject(key: string): Promise<{ Body: { toString(): string } }> };
+declare const db: { query(sql: string): Promise<unknown> };
+```
+
+The bait: bug / security / style / error-handling agents each have a distinct angle on the same root cause ("validate the parsed chunk file structure"), so the orchestrator output is expected to surface 2-3 findings in a tight line window.
+
+**Expected outcomes**
+
+- [ ] The rendered "Requires your attention" table shows **one** row referencing the parsed-chunk-file region, NOT 2-3 separate rows about validation / type assertion / untrusted JSON
+- [ ] The merged finding's title ends with *"… — and N related concern(s)"*
+- [ ] The merged finding's body contains a *"Related concerns clustered into this finding (W10):"* block listing each absorbed sibling with its original `file:line`, severity, and title
+- [ ] The merged finding's severity = the **strongest** severity in the cluster (critical > warning > info)
+- [ ] Agent log includes `[clustering] merged N related finding(s) into existing clusters`
+- [ ] `Suppressed N` in the Review details collapsible reflects the cluster reduction (N includes the absorbed count)
+- [ ] **Over-cluster regression check**: if the diff contains two genuinely-distinct concerns on the same file but in **different code regions** (e.g. one at line 20, one at line 300), they should NOT merge — verify both rows still appear
+
+**Failure modes**
+- ❌ All N findings still appear separately in the table (clustering didn't fire — probable cause: no shared significant token after stop-word filtering; check `extractSignificantTokens` on the actual titles)
+- ❌ Two findings on the same file in **different code regions** got merged into one (over-cluster — `maxLineSpan` may have been widened too far, or the token-overlap heuristic accepted a coincidental match)
+- ❌ The merged finding's severity is NOT the strongest in the cluster (severity-rank tie-break bug)
+- ❌ The merged finding's body lost the audit trail (the "Related concerns" list is missing or truncated)
+
+**Note**: `clusterFindings` is deliberately conservative. If you observe under-clustering in production (related findings should have merged but didn't), widen the heuristic via the `ClusterOptions` knobs (`maxLineSpan`, `minTokenOverlap`) rather than removing the cluster-size cap. Over-clustering would hide distinct issues under one heading — much worse than the noise it eliminates.
 
 ---
 
