@@ -154,6 +154,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 |
 | [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 |
 | [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 |
+| [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 |
 
 ---
 
@@ -1137,6 +1138,40 @@ The test-coverage agent will naturally raise "lacks coverage" on each new public
 - ❌ Removing the declaration in a follow-up commit does NOT restore per-function findings (suppression became sticky)
 
 **Note**: `detectNoTestHarness` is deliberately conservative — it requires an explicit declaration ("No unit test suite", "tests are out of scope", "no test harness", etc.). A casual mention of "tests" anywhere in AGENTS.md does NOT trigger suppression. If the test-coverage agent is still nagging on a repo that genuinely has no harness, the fix is to add the declaration to AGENTS.md, not to widen the regex.
+
+---
+
+### E2E-28: W6 single authoritative review comment — no duplicate verdict body
+
+**Behavior**: each review run produces exactly **one** rendered content surface — the upserted summary comment (carrying `<!-- mergewatch-review -->`). The formal PR Review object still exists to carry the APPROVE / REQUEST_CHANGES / COMMENT event and the batched inline comments, but its rendered body is **empty** (APPROVE: body omitted; REQUEST_CHANGES / COMMENT: an HTML-comment-only stub that renders as nothing). No more "🔴 Critical issues found — see the full review in the summary comment above" duplication next to the actual review. Verified the P6 noise observed on voice-bot #31 (5 overlapping comments) and orca #37 / #38 (verdict stubs on top of the main comment).
+
+**Setup**
+
+Branch: `fixture/28-single-comment`. Two micro-fixtures, one per verdict tier:
+
+- **Clean PR** (APPROVE path). A trivial JSDoc-only diff in `src/utils.ts` — same shape as E2E-01.
+- **PR with a Critical** (REQUEST_CHANGES path). A small file with a textbook security issue (e.g. unauthenticated admin endpoint, à la E2E-18 step 1).
+
+Run the fixtures separately to exercise both branches of the body-handling logic.
+
+**Expected outcomes — both fixtures**
+
+- [ ] **One** issue comment authored by `mergewatch[bot]` on the PR conversation. Inspect via `gh pr view <n> --json comments -q '.comments | length'` → 1.
+- [ ] **One** formal PR Review authored by `mergewatch[bot]`. Inspect via `gh pr view <n> --json reviews -q '.reviews | length'` → 1 (post-`dismissStaleReviews`).
+- [ ] The formal Review's **rendered** body is empty:
+  - APPROVE fixture: `gh api repos/<owner>/<repo>/pulls/<n>/reviews | jq '.[-1].body'` → `null` (body field omitted).
+  - REQUEST_CHANGES / COMMENT fixture: `… | jq '.[-1].body'` → `"<!-- mergewatch-review -->"` (HTML-comment stub; GitHub's UI renders zero visible content).
+- [ ] In the GitHub UI, the Review timeline entry shows only the event label (*"mergewatch approved these changes"* / *"requested changes"* / *"left a comment"*) plus the inline-comment count — **no** verdict text body below the label.
+- [ ] The summary comment IS the verdict surface: contains the 1-5 score, mergeScoreReason, findings table, etc.
+- [ ] No standalone inline-comment Review events (the inline comments are bundled under the single formal Review).
+
+**Failure modes**
+- ❌ Two issue comments authored by `mergewatch[bot]` on the same PR run (the upsert path regressed — `findExistingBotComment` failed to find the marker)
+- ❌ Formal Review's rendered body contains *"Critical issues found"* / *"Review recommended"* — duplicate of summary comment verdict line (the W6 reviewBody-`=`-`''` change regressed)
+- ❌ APPROVE Review has a body field present at all (legacy: omit entirely for APPROVE)
+- ❌ Multiple formal Review objects on the same commit (`dismissStaleReviews` failed; should leave exactly one non-dismissed Review per run)
+
+**Note**: the HTML-comment stub `<!-- mergewatch-review -->` is the same marker used by the upserted issue comment. That's intentional — both surfaces share one identifier so future tooling can find them by a single grep.
 
 ---
 

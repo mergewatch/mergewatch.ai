@@ -522,21 +522,15 @@ export async function processReviewJob(
     const warningCount = result.findings.filter((f: any) => f.severity === 'warning').length;
     const infoCount = result.findings.filter((f: any) => f.severity === 'info').length;
 
-    // ── Step C: Surface verdict + inline findings ──────────────────────────
-    // Branching policy (mirrors Lambda):
-    //   APPROVE (score 4-5) → submit a Review with NO body so the timeline
-    //     shows a clean "approved these changes" event. Inline comments
-    //     bundle under the Review.
-    //   REQUEST_CHANGES / COMMENT (score 1-3) → submit a Review with a
-    //     minimal one-line body pointing at the summary comment. GitHub
-    //     requires a body for these events; a single sentence consolidates
-    //     all inline comments into a single Review event instead of N
-    //     separate COMMENTED reviews from standalone inline comments.
-    const reviewBody = reviewEvent === 'APPROVE'
-      ? ''
-      : reviewEvent === 'REQUEST_CHANGES'
-        ? '🔴 Critical issues found — see the full review in the summary comment above.'
-        : '🟡 Review recommended — see the full review in the summary comment above.';
+    // ── Step C: Surface verdict + inline findings (W6 — single authoritative comment) ──
+    // Pass an empty body for every event; submitPRReview handles the
+    // GitHub API constraint (APPROVE → body omitted; REQUEST_CHANGES /
+    // COMMENT → an HTML-comment-only stub that renders as nothing). The
+    // paired upserted summary comment is the sole place the verdict /
+    // findings / etc. live; the formal Review object now only carries the
+    // event label + the batched inline comments — no duplicate "Critical
+    // issues found" body.
+    const reviewBody = '';
     try {
       await dismissStaleReviews(octokit, owner, repo, prNumber);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
