@@ -27,7 +27,9 @@ Reviewing model observed in evidence: **claude-sonnet-4** (per the "Review detai
 | 3 | orca #38 | kbStore.searchCandidates + test | 3/5 Review rec. | P4 P5 P6 P11 P12 |
 | 4 | orca #39 | KB_BACKEND s3\|postgres switch | 2/5 Needs fixes | P1 P2 P4 P5 P8 P9 P11 P12 |
 
-Pattern frequency (4 examples): **P1×3, P4×3, P5×4, P6×3, P11×3, P12×3**, P2×2, P7×2, P8×2, P3×1, P9×1, P10×1.
+Pattern frequency (7 examples): **P5×6, P1×5, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P3×2, P8×2, P9×2, P10×1, **P13×1 (new — and the highest user-visible severity: it leaves a PR structurally stuck at the GitHub level until a human dismisses the bot's review).**
+
+> **Whack-a-mole / non-convergence** (P7+P9 compounded) is now the headline failure: PR #145's own re-review reported the *same finding as both "✅ resolved" and "🆕 new"* in one comment. Every fix commit shifts lines and regenerates ~4 "new" warnings, so the verdict never converges. This is the single highest-leverage thing to fix — see **W3∩W9 convergence guard**.
 
 > Key takeaway: the "missing `await` on async X" hallucination is **systemic** — it independently recurred in #31 and #39, both times with **wrong line numbers** and an author rebuttal. P1/P2 + P8 are the spine of the problem.
 
@@ -49,6 +51,7 @@ Pattern frequency (4 examples): **P1×3, P4×3, P5×4, P6×3, P11×3, P12×3**, 
 | **P10** | Fragmented duplicate findings | One underlying concern emitted as several separate findings at different lines/severities. |
 | **P11** | Scope / architecture blindness | Flags work the PR's plan explicitly defers to a later task, or treats a correctly-throwing data-access function as a bug (ignores layering & stated task decomposition). |
 | **P12** | Review spam / empty-body reviews | Multiple GitHub *Reviews* per run, some with empty bodies; pure timeline/email noise. |
+| **P13** | "No-exit" critical / stuck PR state | A Critical the bot re-asserts every commit on a finding the author has dispositioned (often a design point with no code-level resolution), pinning `reviewDecision=CHANGES_REQUESTED` and check `FAILURE`. The PR is structurally blocked at the GitHub level because nothing in the product honors "rebutted with rationale" (W3) and no W7 score guardrail stops a single un-verified Critical from posting `CHANGES_REQUESTED`. User-visible manifestation of P3 compounded by missing W7. |
 
 ---
 
@@ -59,6 +62,8 @@ The goal is **precision, not silence.** Things MergeWatch already does well:
 - **Real bugs caught.** #37 `seed.ts:38` (S3 errors unhandled) and `seed.ts:109` (rollback masks original error) were legit — author fixed both.
 - **Accurate nit.** #39 `rag.ts:243` "comment describes removed import, not the lazy-load pattern" was correct and actionable — author fixed it.
 - **Dedup exists.** #38 reported `Suppressed 4 findings removed by dedup & quality filters` — the machinery is there; it's under-tuned, not absent.
+- **Real concurrency catch.** #145 (self-review) flagged unbounded `Promise.all` in `verifyCriticalFindings` — a genuine Bedrock-TPM risk, fixed. The bot caught a real defect in its own quality-improvement code.
+- **Real security catch.** #148 (self-review) flagged the missing author-filter on `fetchTriageComments` as 🔴 Critical (prompt-injection via third-party triage comments). Genuine attack class; fixed via author-filter + prompt data-isolation. **1/1 critical was real and actionable** — the precision goal of the plan, validated on the bot's own security PR.
 - **Diagram + summary + cost transparency** are genuinely useful and should stay.
 
 Any fix that reduces noise must preserve these.
@@ -114,6 +119,57 @@ Any fix that reduces noise must preserve these.
   - `🆕 4 new` are all test-coverage gaps again. **[P5]** DISMISSED empty-body review. **[P12]**
 - **Patterns:** P1 P2 P4 P5 P8 P9 P11 P12
 
+### Example 5 — mergewatch.ai PR #145 (self-review / dogfood of the W1+W2 PR)
+
+- **Evidence:** `gh pr view 145 --repo santthosh/mergewatch.ai` · dashboard `…%3A145%23b8c91ef`
+- **Verdict:** `3/5 — Review recommended`. 0 critical, **4 warnings**. 81,428 tok, ~$0.21, 29.3s. `Suppressed 7`, conventions loaded from `AGENTS.md`. One COMMENTED review (correct — no criticals, didn't block).
+- **Legit (kept honest):**
+  - ⚠️ **Unbounded `Promise.all` in `verifyCriticalFindings`** — genuine, the strongest catch. A PR with many criticals would burst N parallel Bedrock calls and hit the per-minute TPM quota — the exact failure `runReviewPipeline` already avoids via `withConcurrency`/`AGENT_CONCURRENCY`. **Fixed.**
+  - ⚠️ **Silent fail-safe on unparseable verification JSON** — real observability gap; the keep-on-bad-output path emitted no signal. **Fixed** (sentinel default + explicit log).
+- **What it got wrong:**
+  - ⚠️ "Potential code injection / ReDoS in `suggestionAlreadyApplied`" — **mis-categorization (P1-family).** The regexes are all linear (no catastrophic backtracking) and `suggestion` is LLM-generated, not request-controlled — no injection/ReDoS path. Same shape as #37's "SQL injection" on a parameterized query: a confident security label on code that doesn't have the defect. (A 4KB input bound was still added for consistency with the codebase's own `FINDING_TEXT_MAX_BYTES` convention.)
+  - ⚠️ "Broad exception catching masks failure modes" — the catch-all is the intentional fail-safe; all paths throw the same `Error` from `llm.invoke` and aren't separable. Low-signal nit. **[P5-adjacent]**
+- **Round 2 (commit `f264640`, after the round-1 triage + fixes) — the whack-a-mole, on tape:** verdict `✅ 4 resolved · 🆕 4 new`, still pinned `3/5`. The "4 new" were the round-1 concerns **re-titled at shifted line numbers**:
+  - `:1207` "Catch-and-continue pattern in critical verification" is the *same code* as round-1 `:1225` "Broad exception catching" — which the **same comment** lists under "✅ Resolved on this commit." **One finding reported as both resolved and new in a single review.** [P9]
+  - `:1180` "Silent failure in file fetch" = round-1 `:1198` "silent JSON failure" relocated to `fetchFindingFileContents`. [P7]
+  - `:1167` "LLM prompt injection in verification prompt" = round-1 `:1061` "code injection in `suggestionAlreadyApplied`" relocated to the prompt. [P1 mis-framing + P7] *(a real defense-in-depth guard was still added — `prompts.ts` data-isolation line, matching `buildConventionsBlock`.)*
+  - `:1180` (info) "decompose function" — net-new nitpick. [P5]
+  Root cause is exactly the confirmed P9 mechanism: identity key `` `${file}::${title}` `` + line drift on every commit ⇒ old titles "resolved", near-identical concerns "new". **The verdict cannot converge by fixing the PR.** Triage declared round 2 the last reactive round; the fix is W3∩W9 (convergence guard), not more commits.
+- **Patterns:** P1 P5 P7 P9 — *Positive Signal: the bounded-concurrency catch was real and worth crediting. This example is now the canonical whack-a-mole / non-convergence demonstration.*
+
+### Example 6 — mergewatch.ai PR #148 (self-review of the W3 PR)
+
+- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` · dashboard `…%3A148%23aad15c1`
+- **Verdict:** `2/5 — Needs fixes`. **1 critical**, 8 warnings, 1 info. 94,663 tok, ~$0.24, 39.5s. `Suppressed 9`. CHANGES_REQUESTED.
+- **Legit (kept honest) — the bot caught a real attack class on its own quality PR:**
+  - 🔴 **"Unvalidated triage comments enable prompt injection."** Genuine. `fetchTriageComments` accepted comments from anyone, so a third-party drive-by on a public OSS repo could post `## mergewatch triage` with an injection payload to manipulate suppression on someone else's PR. **Fixed in 90b81a5**: (a) `fetchTriageComments` now takes `prAuthor` and filters by `c.user?.login === prAuthor`, undefined `prAuthor` → `[]` without touching the API (fail-closed); (b) `TRIAGE_MAPPING_PROMPT` carries the same DATA-not-instructions guard the W2 verify prompt added in #145; (c) per-comment + total-prose byte caps. Regression-locked as **E2E-24** + a `triage.test.ts` case that includes an `IGNORE PREVIOUS INSTRUCTIONS` attacker comment.
+  - ⚠️ "Unsafe property access on JSON items" — behaviour was already defensively safe via optional chaining; added explicit shape validation (`object` + `typeof index === 'number'` + `typeof disposition === 'string'`) for clarity, locked with a "malformed items" test.
+  - ⚠️ "JSDoc misleads about return value" — minor; clarified.
+- **What it got wrong:**
+  - ⚠️ "ReDoS in `parseDispositionArray` `/\[\s\S]*\]/`" — **same mis-framing as #145's ReDoS finding [P1]**: the regex is linear (no nested quantifier, no catastrophic backtracking). Bound added anyway for codebase consistency, not because a ReDoS exists.
+  - ⚠️ "Silent failure in `fetchTriageComments` / `computeDisputedKeys`" — **rebutted**, intentional fail-open documented in the file's own module JSDoc. Same shape as #145's "broad catch" rebuttal — the safe direction is "infra trouble never hides a finding."
+  - ⚠️×3 "handler / pipeline integration lacks test coverage" — **rebutted on scope**. The transformation (`partitionDisputed`, `computeDisputedKeys`) is unit-tested through every interesting branch; the inline pipeline call is one-line plumbing whose behaviour is captured by those helpers + E2E-23. Mocking the full handler stack for plumbing is the ceremony `AGENTS.md` de-prioritises. [P5 nagging]
+- **Patterns:** P1 P5 — *and a strong Positive Signal: a real critical caught on the bot's own security PR (author-filter gap → prompt-injection). 1 of 1 criticals was real and actionable — exactly the precision goal of the plan.*
+
+### Example 7 — mergewatch.ai PR #148 rounds 3–4 (the "no-exit critical" — P13 canonical case)
+
+- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` rounds 3 (`f8a2b98`) + 4 (`1ae92e0`).
+- **Stack-wide state at round 4:** #145 APPROVED ✅, #147 COMMENTED ✅, **#148 `MergeWatch Review = FAILURE`, `CHANGES_REQUESTED`** (stuck).
+- **What's happening:** the bot re-runs on every commit and posts a fresh `CHANGES_REQUESTED` review pinning a **🔴 Critical** that I've now dispositioned three times ("prompt injection via triage content" — fix is in place: author-filter is the security boundary, prompt-isolation guard is now also tested). The bot itself acknowledges the finding under "↻ Still present (1)" — it carries the same critical across runs but has no path to convert "still present + author-rebutted" into "withdrawn / non-blocking". Round 4's `🆕 9 new` are mostly P5 nitpicks **on code I just added in round 3**: "potential infinite loop" on a literal `for (cut = 0; cut < 4; cut++)`, "magic number 4", "Buffer.byteLength called twice — performance", plus the silent-fail-open and ReDoS findings rebutted 3 times each.
+- **Why it's stuck:** there's no in-product way to honor "rebutted with rationale" — that's the W3 we're shipping. And no W7 score guardrail to stop a single un-verified Critical from posting `CHANGES_REQUESTED`. Chicken-and-egg: the fix for this PR's stuckness is *this PR* (W3) plus W7.
+- **Unblock options (workflow, not code):** (a) author dismisses the stale `CHANGES_REQUESTED` review on #148 — the human triage convention manifested as the GitHub action it implies; (b) admin bypass merge; (c) merge #145 → #147 → #148 in order and let W3 self-suppress the rebutted critical on the next run (only works once main is deployed with W9+W3 active).
+- **Patterns:** P13 (no-exit critical / stuck PR state) — **first observed**. Compounded by P3 (persisted-after-rebuttal), P9 (phantom resolution in earlier rounds via title-keyed delta), P5 (nitpick wave on freshly-added code).
+
+### Example 8 — mergewatch.ai PR #148 (user-spotted Mermaid corruption — distinct from the finding-quality patterns)
+
+- **Evidence:** PR #148 round-4 bot comment had a Mermaid diagram with two corruptions, *neither of which the bot self-reported*:
+  - Syntactic delimiters as HTML entities in unquoted positions: `B&lsqb;…&rsqb;`, `--&gt;`, `&lpar;&rpar;`. Mermaid parses these as 6-char literals → no node anchor, no arrow → graph fails to render.
+  - Multiple statements glued onto one line with `<br/>` as the separator (`<br/>` is only legal inside a `"…"` label).
+- **What's notable:** this was a **rendering bug** in the bot's own output that none of the bot's many reviews on #148 ever flagged — the *user* spotted it. The finding-quality work doesn't cover comment-rendering issues; they need their own E2E coverage.
+- **Fix:** PR #149 — new Pass-0 `decodeMermaidOutsideQuotes` in `sanitizeMermaidOutput` (decodes entities + de-glues `<br/>`-joined statements outside `"…"` regions only, so in-label legitimate forms are preserved). DIAGRAM_PROMPT also strengthened: explicitly forbids HTML entities in ANY position and reserves `<br/>` for in-label line breaks only. Regression-locked by extending E2E-15's expected outcomes + failure modes (deduped per the standing instruction — no new card).
+- **Patterns:** none of the existing finding-quality patterns apply — this is a **comment-rendering / cosmetic** bug class. Worth noting as a category but not promoting to a tracked pattern unless it recurs.
+- **Positive Signal (user):** maintainer-spotted bug not visible in any unit test or in the bot's own self-reviews. Validates that the e2e-fixture runbook (manual verification of actual rendered comments) catches a class of bug pure unit testing cannot.
+
 ### Example N — _TBD (template — copy this block)_
 
 - **Evidence:** `<PR link / screenshot path / dashboard URL>`
@@ -141,10 +197,13 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ Decoupled from `codebaseAwareness` via a new always-on `groundingFetch` context (full file fetched once, shared by W1+W2). Per the maintainer decision: full file for every flagged finding.
 - Remaining lever (not yet done): run verification on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
 
-### W3 — Honor triage / dispute replies  ★★ (prevents P3 in #31; P9 root cause)
-**Targets:** `packages/lambda/src/handlers/review-agent.ts`, `packages/server/src/review-processor.ts`, `reviewer.ts`
-- Parse the `## mergewatch triage` reply convention (the author already uses it consistently). Feed rebuttal + disputed finding + file slice into a re-eval before the next review.
-- Outcome must be explicit: **withdraw** (not "resolve" — see W9) or post a specific counter-argument. Never silently re-assert.
+### W3 — Honor triage / dispute replies  ✅ SHIPPED (PR #148) — prevents P3 in #31; half of the convergence guard
+**Targets:** `packages/core/src/triage.ts` (new), `reviewer.ts`, both handlers
+- ✅ `## mergewatch triage` replies are detected (`isTriageComment`/`fetchTriageComments`) and mapped via one light-model call (`computeDisputedKeys`, `TRIAGE_MAPPING_PROMPT`) onto the prior review's W9 stable keys. Only `rebutted`/`deferred` suppress; `fixed`/`unclear` don't.
+- ✅ `partitionDisputed` drops matching current findings before delta + scoring with a `[triage-suppressed]` audit log; they roll into `Suppressed N`.
+- ✅ **Fail-open:** no triage / no priors / list failure / LLM error / unparseable → suppress nothing. Only an explicit author disposition hides a finding.
+- ✅ **Code-anchored** via the W9 fingerprint: a rebuttal stops applying once the cited code materially changes, so a finding that becomes real again resurfaces (E2E-23 over-suppression regression-check).
+- Not done (deliberate, v1 = suppress): a visible **Disputed bucket** in the comment instead of silent suppression — tracked as a follow-up; the triage comment + audit log are the current trail.
 
 ### W8 — Location accuracy & reconciliation  ★★★ (prevents P8 in #37,#39)
 **Targets:** finding→location mapping in `packages/core/src/agents/` + `packages/core/src/github/client.ts`
@@ -152,11 +211,12 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - Resolve the LLM's line guess to a real anchor by matching the quoted code snippet against file contents; if it can't be matched, the finding is low-confidence (downgrade or drop).
 - Never cite a function *definition* line for a call-site finding.
 
-### W9 — Honest counters / no phantom resolution  ★★★ (prevents P9 in #39; P7 in #31,#37)
-**Targets:** the resolved/new/carried-over diffing logic (locate via `Explore`; agents + review-store comparison)
-- A finding may be marked **Resolved** only if the cited code region actually changed *and* it re-evaluates clean. A prior finding that was a false positive becomes **Withdrawn**, not Resolved.
-- Stable identity key: `(canonical_path, normalized_rule, code_fingerprint)` — not line number — so a finding doesn't churn new↔carried as lines shift.
-- Disputed findings get a **Disputed** bucket, not back to "new."
+### W9 — Honest counters / no phantom resolution  ✅ SHIPPED (PR #147) — prevents P9 in #39,#145; P7 in #31,#37,#145
+**Targets:** `packages/core/src/review-delta.ts`, `reviewer.ts`
+- Root cause confirmed & fixed: the old `findingKey()` = `` `${file}::${title}` `` (free-text title). ✅ `fingerprintFromCode` now derives a stable key from the **normalized cited code line** (not title, not line number); persisted on each finding (`fingerprint?`, back-compat, flows through the store JSON).
+- ✅ `computeReviewDelta` **union-matches** on fingerprint key OR title key — can only *reduce* spurious resolved/new, never add it, and stays back-compat with pre-W9 stored findings. The duplicate `findingKey` in `reviewer.ts` was removed; security-improvement scoring reuses `computeReviewDelta` (one identity definition).
+- ✅ Regression-locked: `review-delta.test.ts` "the whack-a-mole case" reproduces #145 round 2 (catch line unchanged, retitled, line-shifted) ⇒ `carriedOver`, not resolved+new.
+- Not done (deliberate): a separate **Withdrawn** vs **Resolved** label in the UI — current behavior keeps unmatched priors in `resolved`; the convergence win is the union-match. Follow-up if the distinction proves needed.
 
 ### W10 — Finding consolidation  ★★ (prevents P10 in #37; P5 generally)
 **Targets:** orchestrator dedup in `reviewer.ts` + the `Suppressed … by dedup & quality filters` path (already exists — extend it)
@@ -176,20 +236,21 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 **Targets:** review-submission path in `review-agent.ts` / `review-processor.ts`
 - At most one GitHub *Review* per run. Never submit a review with an empty body (#38 emitted two empty DISMISSED reviews in 3 min). Reuse/transition the existing review instead of stacking.
 
-### W7 — Score guardrail  ★ (prevents P4 in #31,#38,#39)
-**Targets:** scoring logic in `reviewer.ts`
-- Score may not drop to ≤2/5 on a single Critical that hasn't passed W2 verification or that W11 classifies as design-opinion/deferred.
+### W7 — Score guardrail  ★★★ (prevents P4 in #31,#38,#39 — AND the P13 "stuck PR state" observed in #148 rounds 3–4)
+**Targets:** scoring logic in `reviewer.ts`, review-submission state mapping (`mergeScoreToReviewEvent`), W3 triage integration.
+- Score may not drop to ≤2/5 — and the formal PR review event must not be `REQUEST_CHANGES` — on a single Critical that any of: (a) failed W2 verification, (b) is classified by W11 as design-opinion/deferred, (c) has been **rebutted via `## mergewatch triage`** (W3 disposition = `rebutted` ⇒ never CHANGES_REQUESTED on that single finding). Any of these downgrade the GitHub review to `COMMENT` so the check is advisory, not a hard block.
+- Companion to W3: W3 already *suppresses* triage-rebutted findings on the next review, but W7 closes the remaining gap where the bot reaches `CHANGES_REQUESTED` on a Critical it currently cannot self-clear (no code-anchor change). Together, P13 is structurally impossible.
 
 ---
 
 ## Priority order (current)
 
-0. ✅ **W1, W2** — SHIPPED in PR #145 (claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39).
-1. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
-2. **W9** — stop lying in the counters (phantom "resolved", churn).
-3. **W3** — close the loop on author rebuttals (feeds W9).
-4. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
-5. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
+0. ✅ **W1, W2** — SHIPPED (PR #145): claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39.
+1. ✅ **W9 + W3 — the convergence guard** — SHIPPED (PR #147 W9, PR #148 W3, stacked on #145). Stable code-fingerprint identity + triage-rebutted findings suppressed on re-review. E2E-23 both halves regression-locked.
+2. **W7 — score guardrail** ⬆ **promoted to next**. PR #148 rounds 3–4 are stuck in P13 "no-exit critical" state precisely because no W7 guardrail prevents an un-verified / author-rebutted Critical from posting `CHANGES_REQUESTED` and failing the check. W3 already suppresses on the *next* review but cannot retroactively clear a stuck check. W7 closes the loop.
+3. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
+4. **W11** — scope/architecture awareness (stops design-opinion 2/5s upstream of W7).
+4. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
 
 _Re-rank as examples land — the Evidence Index frequency row drives this._
 
