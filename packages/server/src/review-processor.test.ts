@@ -395,7 +395,12 @@ describe('processReviewJob — check runs', () => {
       );
     });
 
-    it('submits REQUEST_CHANGES with a non-empty body for low scores (critical findings)', async () => {
+    it('submits REQUEST_CHANGES with an empty body — W6 (wrapper handles the API stub)', async () => {
+      // Post-W6: the handler passes empty body for every event; submitPRReview
+      // substitutes the HTML-comment stub `<!-- mergewatch-review -->` for
+      // REQUEST_CHANGES / COMMENT to satisfy GitHub's required-body constraint
+      // while rendering as zero visible content. See client.test.ts's W6
+      // suite for the stub-substitution coverage.
       (mergeScoreToReviewEvent as any).mockReturnValue('REQUEST_CHANGES');
       (runReviewPipeline as any).mockResolvedValue({
         ...basePipelineResult,
@@ -410,13 +415,10 @@ describe('processReviewJob — check runs', () => {
       const call = (submitPRReview as any).mock.calls[0];
       const [, , , , body, event] = call;
       expect(event).toBe('REQUEST_CHANGES');
-      expect(body).toBeTruthy();
-      expect(body.length).toBeGreaterThan(0);
-      // GitHub requires a body for REQUEST_CHANGES; we point at the summary.
-      expect(body.toLowerCase()).toContain('summary comment');
+      expect(body).toBe('');
     });
 
-    it('submits COMMENT with a non-empty body for middle scores', async () => {
+    it('submits COMMENT with an empty body — W6 (wrapper handles the API stub)', async () => {
       (mergeScoreToReviewEvent as any).mockReturnValue('COMMENT');
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
@@ -424,37 +426,14 @@ describe('processReviewJob — check runs', () => {
       const call = (submitPRReview as any).mock.calls[0];
       const [, , , , body, event] = call;
       expect(event).toBe('COMMENT');
-      expect(body).toBeTruthy();
-      expect(body.length).toBeGreaterThan(0);
+      expect(body).toBe('');
     });
 
-    it('uses a critical-flavored body for REQUEST_CHANGES vs review-recommended for COMMENT', async () => {
-      // First run: REQUEST_CHANGES
-      (mergeScoreToReviewEvent as any).mockReturnValue('REQUEST_CHANGES');
-      const deps1 = makeDeps();
-      await processReviewJob(makeJob(), deps1);
-      const requestBody = (submitPRReview as any).mock.calls[0][4];
-
-      vi.clearAllMocks();
-      (getPRContext as any).mockResolvedValue(basePRContext);
-      (getPRDiff as any).mockResolvedValue('diff content');
-      (shouldSkipPR as any).mockReturnValue(null);
-      (shouldSkipByRules as any).mockReturnValue(null);
-      (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
-      (fetchRepoConfig as any).mockResolvedValue(null);
-      (addPRReaction as any).mockResolvedValue(12345);
-
-      // Second run: COMMENT
-      (mergeScoreToReviewEvent as any).mockReturnValue('COMMENT');
-      const deps2 = makeDeps();
-      await processReviewJob(makeJob(), deps2);
-      const commentBody = (submitPRReview as any).mock.calls[0][4];
-
-      expect(requestBody).not.toBe(commentBody);
-      // Critical findings are flagged in red; "review recommended" is yellow.
-      expect(requestBody).toContain('🔴');
-      expect(commentBody).toContain('🟡');
-    });
+    // Removed: "uses a critical-flavored body for REQUEST_CHANGES vs
+    // review-recommended for COMMENT". W6 (PR #155) is exactly this: the
+    // handler no longer emits flavored verdict bodies — the upserted summary
+    // issue comment is the single authoritative content surface. The old
+    // distinction is the bug that W6 eliminated.
   });
 });
 
