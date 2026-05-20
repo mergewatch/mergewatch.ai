@@ -1,6 +1,6 @@
 # Review Quality Improvement Plan
 
-**Status:** Living document — evidence-driven.
+**Status:** Living document — evidence-driven. As of 2026-05-20, every workstream W1–W11 has been implemented; W12 was largely subsumed by W6. See **Priority order** at the bottom for the shipped state.
 **Purpose:** Track real-world MergeWatch review failures, distill them into patterns, and drive concrete fixes in the pipeline.
 
 This is not a one-shot spec. We collect concrete examples of MergeWatch behaving worse than a competent human reviewer, tag each with the failure pattern(s) it exhibits, and prioritize fixes by how many examples a fix would have prevented.
@@ -197,7 +197,7 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ Decoupled from `codebaseAwareness` via a new always-on `groundingFetch` context (full file fetched once, shared by W1+W2). Per the maintainer decision: full file for every flagged finding.
 - Remaining lever (not yet done): run verification on a stronger model than the first-pass reviewer (currently sonnet-4); it only fires on Criticals so cost stays bounded.
 
-### W3 — Honor triage / dispute replies  ✅ SHIPPED (PR #148) — prevents P3 in #31; half of the convergence guard
+### W3 — Honor triage / dispute replies  ✅ SHIPPED (PR #148 stacked, landed via #150) — prevents P3 in #31; half of the convergence guard
 **Targets:** `packages/core/src/triage.ts` (new), `reviewer.ts`, both handlers
 - ✅ `## mergewatch triage` replies are detected (`isTriageComment`/`fetchTriageComments`) and mapped via one light-model call (`computeDisputedKeys`, `TRIAGE_MAPPING_PROMPT`) onto the prior review's W9 stable keys. Only `rebutted`/`deferred` suppress; `fixed`/`unclear` don't.
 - ✅ `partitionDisputed` drops matching current findings before delta + scoring with a `[triage-suppressed]` audit log; they roll into `Suppressed N`.
@@ -205,11 +205,13 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ **Code-anchored** via the W9 fingerprint: a rebuttal stops applying once the cited code materially changes, so a finding that becomes real again resurfaces (E2E-23 over-suppression regression-check).
 - Not done (deliberate, v1 = suppress): a visible **Disputed bucket** in the comment instead of silent suppression — tracked as a follow-up; the triage comment + audit log are the current trail.
 
-### W8 — Location accuracy & reconciliation  ★★★ (prevents P8 in #37,#39)
-**Targets:** finding→location mapping in `packages/core/src/agents/` + `packages/core/src/github/client.ts`
-- Single canonical path per finding (always repo-root-relative, e.g. `packages/voice-bot/src/seed.ts`). Summary table, Critical block, and inline comment must use the **same** path+line for the same finding.
-- Resolve the LLM's line guess to a real anchor by matching the quoted code snippet against file contents; if it can't be matched, the finding is low-confidence (downgrade or drop).
-- Never cite a function *definition* line for a call-site finding.
+### W8 — Location accuracy & reconciliation  ✅ SHIPPED (PR #153) — prevents P8 in #37,#39
+**Targets:** `groundFinding` snap in `packages/core/src/agents/reviewer.ts`
+- ✅ `findBestAnchorLine` walks every occurrence of every extracted identifier, classifies each as **definition** vs **use** by inspecting the chars immediately before the identifier name (`\b(function|class|interface|type|method|public|private|protected|static)\s+$` ⇒ def; everything else ⇒ use). When at least one use-site exists, definitions are dropped from the pool — a call-site finding anchored at the def line is the canonical P8 failure.
+- ✅ Within the chosen pool, picks the occurrence **closest to the LLM's original anchor**. Distance-0 wins ties, so the snap is a no-op when the LLM was already right.
+- ✅ Fallback when only def exists: keep the def-line anchor rather than dropping (better signal than nothing).
+- ✅ Regression-locked by 4 new tests including the exact PR #39 reproduction (`searchViaPostgres` def at line 1, call at line 4 → snap to 4) + the over-snap regression check (def-only file keeps the def-line anchor).
+- Inline-comment line == summary line was confirmed by tracing `buildInlineComments` — already uses `f.line` directly; no drift introduced. Lock-in via the existing client.test.ts cases.
 
 ### W9 — Honest counters / no phantom resolution  ✅ SHIPPED (PR #147) — prevents P9 in #39,#145; P7 in #31,#37,#145
 **Targets:** `packages/core/src/review-delta.ts`, `reviewer.ts`
@@ -218,39 +220,61 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 - ✅ Regression-locked: `review-delta.test.ts` "the whack-a-mole case" reproduces #145 round 2 (catch line unchanged, retitled, line-shifted) ⇒ `carriedOver`, not resolved+new.
 - Not done (deliberate): a separate **Withdrawn** vs **Resolved** label in the UI — current behavior keeps unmatched priors in `resolved`; the convergence win is the union-match. Follow-up if the distinction proves needed.
 
-### W10 — Finding consolidation  ★★ (prevents P10 in #37; P5 generally)
-**Targets:** orchestrator dedup in `reviewer.ts` + the `Suppressed … by dedup & quality filters` path (already exists — extend it)
-- Cluster findings by (root cause, file region); emit one finding with the strongest severity instead of N fragments (#37's injection/type-assertion/untrusted-JSON were one issue).
+### W10 — Finding consolidation  ✅ SHIPPED (PR #156) — prevents P10 in #37; P5 generally
+**Targets:** `packages/core/src/finding-clustering.ts` (new); wired into `runReviewPipeline` after the W11 step
+- ✅ `clusterFindings` — pure function, union-find over `(same file, |line distance| ≤ maxLineSpan, ≥ minTokenOverlap shared significant tokens across title + description)`. Transitive: A↔B↔C still groups even without a direct A↔C edge (the #37 lines 82/130/150 daisy-chain via 82↔130 = 48 and 130↔150 = 20 at default `maxLineSpan = 50`).
+- ✅ `extractSignificantTokens` — lowercased alphanumeric ≥ 5 chars minus stop words + generic finding-prose vocabulary (*"issue"*, *"potential"*, *"missing"*, *"function"*, *"value"*, *"check"*, …). The 5-char floor avoids Jaccard collisions on generic short tokens.
+- ✅ Conservative defaults: `maxLineSpan: 50, minTokenOverlap: 1, maxClusterSize: 5`. Clusters > cap pass through unmerged (over-clustering would hide distinct issues — worse than the noise it eliminates).
+- ✅ Merge keeps the strongest severity, the earliest cited line in that severity bucket, and appends a *"Related concerns clustered into this finding (W10)"* block listing each absorbed sibling — full audit trail preserved.
+- ✅ Regression-locked by 13 tests including the exact PR #37 reproduction (3 findings → 1 merged, severity warning, anchored at line 82) + the over-cluster regression check (different regions don't merge).
 
-### W11 — Scope & architecture awareness  ★★ (prevents P11 in #37,#38,#39)
-**Targets:** `packages/core/src/agents/prompts.ts`, `packages/core/src/skip-logic.ts`
-- Feed the PR description / linked task plan into the orchestrator. Respect explicit "deferred to T1.8" / "out of scope" statements; downgrade matching findings to non-blocking "tracked."
-- Layering rule in prompts: a data-access/library function that *correctly throws* is not a bug for "not handling" errors that belong to the caller. Don't emit design-opinion Criticals.
-- Context-aware test-coverage suppression: if the repo has no test harness (deps/script/CLAUDE.md), collapse N "lacks coverage" warnings into one non-blocking note.
+### W11 — Scope & architecture awareness  ✅ SHIPPED (PR #154) — prevents P11 in #37,#38,#39
+**Targets:** `packages/core/src/scope-awareness.ts` (new), `prompts.ts` (SHARED_PREAMBLE)
+- ✅ **Structural — test-coverage suppression**: `detectNoTestHarness(conventions)` scans the conventions document for explicit declarations (*"No unit test suite currently"*, *"no test harness yet"*, *"tests are out of scope"*, …). When detected, `suppressTestCoverageFindings` collapses N `category: 'test-coverage'` findings into **one** info-level aggregate note anchored at the first finding's file. Conservative — requires an explicit declaration, NOT absence of test files, so casual mentions of "tests" do not trigger. Regression-locked by 8 unit tests.
+- ✅ **Prompt-only — layering rule**: SHARED_PREAMBLE now says *"A library / data-access function that correctly THROWS on an error is NOT a bug for 'not handling' errors that belong to the caller. … Flag the actual gap (an UNHANDLED call site) instead."* — targets the orca #38 mis-framing.
+- ✅ **Prompt-only — PR-description scope**: SHARED_PREAMBLE now says *"Respect the PR description's stated SCOPE. If the description says a concern is 'out of scope', 'deferred to TX', 'tracked elsewhere', 'follow-up issue …', or 'intentionally not addressed' — and the diff does not introduce or worsen that concern — do NOT raise it as a new finding."* — targets #37/#39 carry-over nags.
 
-### W6 — Single authoritative review comment  ★★ (prevents P6 in #31,#37,#38)
-**Targets:** comment formatter + `packages/core/src/github/client.ts` (`<!-- mergewatch-review -->` upsert)
-- One upserted summary comment; fold verdict/status into it. Stop posting separate "Critical issues found" stub comments.
+### W6 — Single authoritative review comment  ✅ SHIPPED (PR #155) — prevents P6 in #31,#37,#38
+**Targets:** `submitPRReview` in `packages/core/src/github/client.ts`; handlers (`review-processor.ts`, `review-agent.ts`)
+- ✅ `submitPRReview` now handles GitHub's per-event body constraint internally: APPROVE → body field omitted; REQUEST_CHANGES / COMMENT → an HTML-comment-only stub `<!-- mergewatch-review -->` (GitHub's markdown renderer strips it, so the rendered Review body shows zero visible content; the timeline surfaces only the event label + batched inline comments).
+- ✅ Both handlers pass `reviewBody = ''` for every event; the legacy *"🔴 Critical issues found — see the full review in the summary comment above"* / *"🟡 Review recommended …"* stub strings are removed.
+- ✅ The HTML-comment stub doubles as the existing `BOT_COMMENT_MARKER` — both surfaces share one identifier so future tooling can find them by a single grep.
+- ✅ Regression-locked by 7 unit tests asserting the API payload shape across all three events + the caller-non-empty-body pass-through.
 
-### W12 — One review state transition per run; never empty-body  ★★ (prevents P12 in #37,#38,#39)
+### W12 — One review state transition per run; never empty-body  ⏭ MOSTLY SUBSUMED by W6 (PR #155)
 **Targets:** review-submission path in `review-agent.ts` / `review-processor.ts`
-- At most one GitHub *Review* per run. Never submit a review with an empty body (#38 emitted two empty DISMISSED reviews in 3 min). Reuse/transition the existing review instead of stacking.
+- ✅ The "never empty-body" half is now structural: `submitPRReview` (W6) always passes an HTML-comment stub when GitHub's API requires a body and the caller wants nothing visible. There are no empty-body DISMISSED reviews to emit any more.
+- ✅ The "at most one Review per run" half is already enforced by `dismissStaleReviews` + the single `submitPRReview` call per run (one `createReview` API call batches all inline comments under one Review event).
+- Remaining surface (deferred): the *cosmetic* P12 case where re-reviews on successive commits stack DISMISSED entries in the timeline. Each is correct in isolation; the timeline noise comes from re-running the bot, not from the bot mis-behaving. Not blocking; revisit only if observed as a real complaint.
 
-### W7 — Score guardrail  ★★★ (prevents P4 in #31,#38,#39 — AND the P13 "stuck PR state" observed in #148 rounds 3–4)
-**Targets:** scoring logic in `reviewer.ts`, review-submission state mapping (`mergeScoreToReviewEvent`), W3 triage integration.
-- Score may not drop to ≤2/5 — and the formal PR review event must not be `REQUEST_CHANGES` — on a single Critical that any of: (a) failed W2 verification, (b) is classified by W11 as design-opinion/deferred, (c) has been **rebutted via `## mergewatch triage`** (W3 disposition = `rebutted` ⇒ never CHANGES_REQUESTED on that single finding). Any of these downgrade the GitHub review to `COMMENT` so the check is advisory, not a hard block.
-- Companion to W3: W3 already *suppresses* triage-rebutted findings on the next review, but W7 closes the remaining gap where the bot reaches `CHANGES_REQUESTED` on a Critical it currently cannot self-clear (no code-anchor change). Together, P13 is structurally impossible.
+### W7 — Score guardrail  ✅ SHIPPED (PR #152) — prevents P4 in #31,#38,#39 + P13 in #148
+**Targets:** `reconcileMergeScore` in `packages/core/src/agents/reviewer.ts`, `verifyCriticalFindings` (verification tagging), `ReviewFinding.verification` (persisted)
+- ✅ `verifyCriticalFindings` now tags each surviving Critical: `verified` on explicit `valid:true`; `unverified` on LLM error / unparseable / no clear verdict (kept fail-safe but couldn't be confirmed); **no tag** when verification was skipped entirely (no file content — preserves legacy behavior for callers without `groundingFetch`).
+- ✅ Score reconciliation extracted into a pure `reconcileMergeScore` function so every tier is directly unit-testable. New tier between "net security improvement" and the orchestrator default: when **every** surviving Critical has `verification === 'unverified'` AND `orchestratorScore ≤ 2`, clamp to **3** (= `COMMENT` per `mergeScoreToReviewEvent`). Verified or mixed-with-verified sets still block at the orchestrator's full score.
+- ✅ Closes the P13 "no-exit critical" pin observed on #148 rounds 3–4: a Critical the bot itself couldn't confirm no longer posts `CHANGES_REQUESTED`. Combined with W3's triage suppression, P13 is structurally impossible going forward.
+- ✅ Regression-locked by 7 reconcileMergeScore tests covering all tier interactions + the verifyCriticalFindings tagging contract.
 
 ---
 
 ## Priority order (current)
 
-0. ✅ **W1, W2** — SHIPPED (PR #145): claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39.
-1. ✅ **W9 + W3 — the convergence guard** — SHIPPED (PR #147 W9, PR #148 W3, stacked on #145). Stable code-fingerprint identity + triage-rebutted findings suppressed on re-review. E2E-23 both halves regression-locked.
-2. **W7 — score guardrail** ⬆ **promoted to next**. PR #148 rounds 3–4 are stuck in P13 "no-exit critical" state precisely because no W7 guardrail prevents an un-verified / author-rebutted Critical from posting `CHANGES_REQUESTED` and failing the check. W3 already suppresses on the *next* review but cannot retroactively clear a stuck check. W7 closes the loop.
-3. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
-4. **W11** — scope/architecture awareness (stops design-opinion 2/5s upstream of W7).
-4. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
+| # | Workstream | Status | Lands via | E2E |
+|---|---|---|---|---|
+| 1 | **W1** — file-grounded findings + no-op-suggestion guard | ✅ SHIPPED | #145 | E2E-21 |
+| 2 | **W2** — claim-aware critical verification pass | ✅ SHIPPED | #145 | E2E-22 |
+| 3 | **W9** — stable finding identity (code fingerprint) | ✅ SHIPPED | #147 → #150 | E2E-23 (a) |
+| 4 | **W3** — triage-aware convergence guard | ✅ SHIPPED | #148 → #150 | E2E-23 (b), E2E-24 |
+| 5 | **W7** — score guardrail (no-exit critical fix) | ✅ SHIPPED | #152 | E2E-25 |
+| 6 | **W8** — location accuracy (call-site-preferring snap) | ✅ SHIPPED | #153 | E2E-26 |
+| 7 | **W11** — scope/architecture awareness | ✅ SHIPPED | #154 | E2E-27 |
+| 8 | **W6** — single authoritative review comment | ✅ SHIPPED | #155 | E2E-28 |
+| 9 | **W10** — finding consolidation (clustering) | ✅ SHIPPED | #156 | E2E-29 |
+| — | Mermaid sanitizer (user-spotted comment-rendering bug) | ✅ SHIPPED | #149 | E2E-15 (extended) |
+| — | **W12** — never empty-body / one review per run | ⏭ SUBSUMED by W6 | #155 | — |
+
+**Net shipped:** every numbered workstream W1–W11 plus the Mermaid sanitizer. The plan started with seven failure patterns (P1–P7); two more (P8, P9) emerged with the first batch of examples; three more (P10–P12) with the next; and the final P13 was discovered live on the bot's own quality PR (#148 rounds 3–4). All thirteen patterns are now either structurally prevented or have a regression-locked fixture in the runbook.
+
+**What's next** isn't another workstream — it's running the e2e suite end-to-end (E2E-01 through E2E-29) against a deployed build to confirm the patterns stay dead on real PRs, and adding new Examples here as more real-world reviews land.
 
 _Re-rank as examples land — the Evidence Index frequency row drives this._
 
