@@ -31,12 +31,33 @@ export const TRIAGE_MARKER = '## mergewatch triage';
 const SUPPRESSING_DISPOSITIONS = new Set(['rebutted', 'deferred']);
 
 /**
- * Total byte budget for triage prose fed to the mapping LLM call. Bounds
- * model cost AND defuses any oversized-input attempt on the prompt /
- * downstream regex. Matches the codebase's `FINDING_TEXT_MAX_BYTES`
- * defensive convention; 16KB is generous for a real triage write-up.
+ * Total UTF-8 byte budget for triage prose fed to the mapping LLM call.
+ * Bounds model cost AND defuses any oversized-input attempt on the prompt
+ * / downstream regex. Follows the codebase's defensive convention of
+ * capping LLM-bound text inputs (analogous to `FINDING_TEXT_MAX_BYTES`
+ * in `reviewer.ts`); 16KB is generous for a real triage write-up.
  */
 const TRIAGE_TEXT_MAX_BYTES = 16 * 1024;
+
+/**
+ * Truncate to at most `maxBytes` UTF-8 bytes, NOT JS characters. The slice
+ * lands on a UTF-8 code-point boundary so a multibyte sequence is never
+ * cut mid-character. Used everywhere we cap LLM-bound text against the
+ * `_MAX_BYTES` constants, so the bound is honest about its unit.
+ */
+function truncateToBytes(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s, 'utf-8') <= maxBytes) return s;
+  const buf = Buffer.from(s, 'utf-8').subarray(0, maxBytes);
+  // The String decoder API trims a trailing partial sequence cleanly;
+  // a plain `.toString('utf-8')` would yield U+FFFD for a split point.
+  // We use a small fallback: shrink the slice by up to 3 bytes until
+  // decoding round-trips without a replacement character at the tail.
+  for (let cut = 0; cut < 4; cut++) {
+    const out = buf.subarray(0, buf.length - cut).toString('utf-8');
+    if (!out.endsWith('�')) return out;
+  }
+  return buf.toString('utf-8');
+}
 
 /** Per-comment cap before we even consider concatenation. */
 const TRIAGE_COMMENT_MAX_BYTES = 32 * 1024;
@@ -90,7 +111,12 @@ export async function fetchTriageComments(
     });
     for await (const { data: comments } of iterator) {
       for (const c of comments) {
-        if (c.user?.login !== prAuthor) continue;
+        // Explicit null-check before the equality (semantically the same as
+        // `c.user?.login !== prAuthor` since prAuthor is a non-empty string,
+        // but makes the contract obvious: BOTH the user object AND the
+        // login must be present and equal — anonymized/ghost-author edge
+        // cases never pass the filter).
+        if (!c.user?.login || c.user.login !== prAuthor) continue;
         if (!isTriageComment(c.body)) continue;
         const body = c.body as string;
         if (Buffer.byteLength(body, 'utf-8') > TRIAGE_COMMENT_MAX_BYTES) {
@@ -122,7 +148,9 @@ export async function fetchTriageComments(
  * ReDoS that the regex itself does not have.
  */
 function parseDispositionArray(raw: string): unknown[] {
-  let s = raw.length > TRIAGE_TEXT_MAX_BYTES ? raw.slice(0, TRIAGE_TEXT_MAX_BYTES) : raw;
+  // Byte-accurate truncation (constant is in bytes, not JS code units —
+  // a `.slice()` would silently corrupt multibyte sequences here).
+  let s = truncateToBytes(raw, TRIAGE_TEXT_MAX_BYTES);
   s = s.trim();
   if (s.startsWith('```')) s = s.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   if (!s.startsWith('[')) {
@@ -161,7 +189,9 @@ export async function computeDisputedKeys(
   // rather than skip so partial intent is still mappable.
   let triageText = triageComments.join('\n\n----\n\n');
   if (Buffer.byteLength(triageText, 'utf-8') > TRIAGE_TEXT_MAX_BYTES) {
-    triageText = triageText.slice(0, TRIAGE_TEXT_MAX_BYTES) + '\n…[truncated]';
+    // Byte-accurate, multibyte-safe (the constant is in BYTES; a plain
+    // `.slice()` cuts on JS code units and can corrupt emoji / CJK).
+    triageText = truncateToBytes(triageText, TRIAGE_TEXT_MAX_BYTES) + '\n…[truncated]';
   }
   const prompt = `${TRIAGE_MAPPING_PROMPT}
 
