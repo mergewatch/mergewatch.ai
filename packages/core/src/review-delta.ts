@@ -45,9 +45,16 @@ export interface ReviewDelta {
 export function fingerprintFromCode(codeLine: string | undefined): string {
   if (!codeLine) return '';
   const norm = codeLine.replace(/\s+/g, ' ').trim();
-  // Strip a leading line-comment marker so a finding doesn't get a different
+  // Strip a trailing line-comment so a finding doesn't get a different
   // identity just because a trailing comment was added/removed on its line.
-  const codeOnly = norm.replace(/\s*\/\/.*$/, '').trim();
+  // Uses indexOf rather than `/\s*\/\/.*$/` to avoid CodeQL's polynomial-
+  // ReDoS scanner: the `\s*` upstream of `\/\/` is benign here (norm is
+  // already whitespace-collapsed, so it matches ≤1 char) but the static
+  // analyser can't see that — indexOf is O(n) and makes the linearity
+  // unambiguous. Same semantics: drop everything from the first `//`
+  // onward (leading whitespace before the comment is dropped by `.trim()`).
+  const commentIdx = norm.indexOf('//');
+  const codeOnly = (commentIdx >= 0 ? norm.slice(0, commentIdx) : norm).trim();
   const sig = codeOnly.length >= 6 ? codeOnly : norm;
   if (sig.replace(/[^A-Za-z0-9]/g, '').length < 4) return ''; // too generic (`}`, `});`, …)
   return sig.slice(0, 200);
