@@ -652,20 +652,14 @@ export async function handler(
 
     // ── Step C: Surface verdict + inline findings ──────────────────────────
     // Branching policy:
-    //   APPROVE (score 4-5) → submit a Review with NO body so the timeline
-    //     shows a clean "approved these changes" event. Inline comments are
-    //     bundled under the Review.
-    //   REQUEST_CHANGES / COMMENT (score 1-3) → submit a Review with a
-    //     minimal one-line body pointing at the summary comment. GitHub
-    //     requires a body for these events; a single sentence is far less
-    //     noisy than the multi-section verdict block we had before #132
-    //     and consolidates inline comments into a SINGLE Review event
-    //     (rather than N×COMMENTED reviews from standalone inline comments).
-    const reviewBody = reviewEvent === 'APPROVE'
-      ? ''
-      : reviewEvent === 'REQUEST_CHANGES'
-        ? '🔴 Critical issues found — see the full review in the summary comment above.'
-        : '🟡 Review recommended — see the full review in the summary comment above.';
+    // W6 — single authoritative review comment. Pass an empty body for
+    // every event; submitPRReview handles the GitHub API constraint
+    // (APPROVE → body omitted; REQUEST_CHANGES / COMMENT → an HTML-
+    // comment-only stub that renders as nothing). The paired upserted
+    // summary comment is the sole place the verdict / findings / etc. live;
+    // the formal Review object now only carries the event label + the
+    // batched inline comments — no duplicate "Critical issues found" body.
+    const reviewBody = '';
     try {
       await dismissStaleReviews(octokit, owner, repo, prNumber);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);

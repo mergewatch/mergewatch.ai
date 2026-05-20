@@ -7,6 +7,7 @@ import {
   parseRepoConfigYaml,
   addPRReaction,
   removePRReaction,
+  submitPRReview,
 } from './client.js';
 import type { Octokit } from '@octokit/rest';
 
@@ -528,5 +529,73 @@ describe('removePRReaction', () => {
     await expect(removePRReaction(octokit, 'o', 'r', 42, 12345)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// submitPRReview — W6 single-authoritative-comment body handling
+// ---------------------------------------------------------------------------
+
+describe('submitPRReview body handling (W6)', () => {
+  // Mock just enough Octokit surface to capture the createReview payload.
+  function captureCall() {
+    const calls: Array<Record<string, unknown>> = [];
+    const octokit = {
+      pulls: { createReview: vi.fn(async (args: Record<string, unknown>) => { calls.push(args); return { data: {} }; }) },
+    } as unknown as Octokit;
+    return { octokit, calls };
+  }
+
+  it('APPROVE with empty body → body field omitted entirely', async () => {
+    const { octokit, calls } = captureCall();
+    await submitPRReview(octokit, 'o', 'r', 1, '', 'APPROVE');
+    expect(calls).toHaveLength(1);
+    expect('body' in calls[0]).toBe(false);
+    expect(calls[0].event).toBe('APPROVE');
+  });
+
+  it('REQUEST_CHANGES with empty body → HTML-comment stub (GitHub requires body for this event)', async () => {
+    const { octokit, calls } = captureCall();
+    await submitPRReview(octokit, 'o', 'r', 1, '', 'REQUEST_CHANGES');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body).toBe('<!-- mergewatch-review -->');
+    expect(calls[0].event).toBe('REQUEST_CHANGES');
+  });
+
+  it('COMMENT with empty body → HTML-comment stub (GitHub requires body for this event)', async () => {
+    const { octokit, calls } = captureCall();
+    await submitPRReview(octokit, 'o', 'r', 1, '', 'COMMENT');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body).toBe('<!-- mergewatch-review -->');
+    expect(calls[0].event).toBe('COMMENT');
+  });
+
+  it('caller-supplied non-empty body is passed through unchanged (forward-compat)', async () => {
+    const { octokit, calls } = captureCall();
+    const body = 'A future tier may want this verbatim.';
+    await submitPRReview(octokit, 'o', 'r', 1, body, 'COMMENT');
+    expect(calls[0].body).toBe(body);
+  });
+
+  it('whitespace-only body is treated as empty for every event', async () => {
+    const { octokit, calls } = captureCall();
+    await submitPRReview(octokit, 'o', 'r', 1, '   \n\t  ', 'APPROVE');
+    await submitPRReview(octokit, 'o', 'r', 1, '   ', 'REQUEST_CHANGES');
+    expect('body' in calls[0]).toBe(false);
+    expect(calls[1].body).toBe('<!-- mergewatch-review -->');
+  });
+
+  it('passes inline comments through unchanged, batched in one API call', async () => {
+    const { octokit, calls } = captureCall();
+    const inline = [{ path: 'a.ts', line: 10, side: 'RIGHT', body: 'finding' }];
+    await submitPRReview(octokit, 'o', 'r', 1, '', 'REQUEST_CHANGES', inline);
+    expect(calls).toHaveLength(1); // single createReview call
+    expect(calls[0].comments).toEqual(inline);
+  });
+
+  it('omits the `comments` field when no inline comments are passed', async () => {
+    const { octokit, calls } = captureCall();
+    await submitPRReview(octokit, 'o', 'r', 1, '', 'COMMENT');
+    expect('comments' in calls[0]).toBe(false);
   });
 });

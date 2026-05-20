@@ -381,17 +381,38 @@ export async function submitPRReview(
   event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
   comments?: Array<{ path: string; line: number; side: string; body: string }>,
 ): Promise<void> {
-  // GitHub treats `body` as optional for APPROVE but required for
-  // REQUEST_CHANGES and COMMENT. When callers want a clean "approved these
-  // changes" timeline entry without a trailing comment block, they pass an
-  // empty body — omit the field entirely to keep the rendered Review
-  // body-less.
-  const omitBody = event === 'APPROVE' && (!body || body.trim().length === 0);
+  // W6 — single authoritative review comment. The paired upserted issue
+  // comment (carrying `BOT_COMMENT_MARKER`) is the canonical place for the
+  // verdict, findings, diagram, etc. The formal PR Review object only
+  // exists to carry (a) the APPROVE / REQUEST_CHANGES / COMMENT event and
+  // (b) the inline comments. Its body should add NO duplicate content.
+  //
+  // GitHub's API constraints differ by event:
+  //   - APPROVE        → body is optional. Omit the field entirely.
+  //   - REQUEST_CHANGES / COMMENT → body is REQUIRED. We pass an HTML-
+  //     comment-only stub (`<!-- mergewatch-review -->`); GitHub's markdown
+  //     renderer strips HTML comments, so the Review object renders with
+  //     no visible body text and the timeline shows only the event label
+  //     ("requested changes" / "left a comment") plus the inline comments.
+  //
+  // A caller may still pass real body text — we pass it through unchanged
+  // for forward-compatibility (e.g., a future tier that genuinely wants a
+  // verbatim Review body).
+  const trimmed = (body ?? '').trim();
+  let effectiveBody: string | undefined;
+  if (trimmed) {
+    effectiveBody = body;
+  } else if (event === 'APPROVE') {
+    effectiveBody = undefined;
+  } else {
+    effectiveBody = '<!-- mergewatch-review -->';
+  }
+
   await octokit.pulls.createReview({
     owner,
     repo,
     pull_number: prNumber,
-    ...(omitBody ? {} : { body }),
+    ...(effectiveBody === undefined ? {} : { body: effectiveBody }),
     event,
     ...(comments && comments.length > 0 ? { comments } : {}),
   });
