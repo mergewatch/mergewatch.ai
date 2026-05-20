@@ -39,6 +39,7 @@ import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
 import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
+import { clusterFindings } from '../finding-clustering.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -1670,6 +1671,28 @@ export async function runReviewPipeline(
         suppressedCount === 1 ? '' : 's',
       );
       orchestratorResult.findings = collapsed;
+    }
+  }
+
+  // W10 — finding consolidation: cluster fragmented findings about the
+  // same code region (same file, lines within ±maxLineSpan, ≥1 shared
+  // significant token across title+description) into one finding with
+  // the strongest severity. Canonical case is voice-bot PR #37 where one
+  // "validate parsed S3 chunk file structure" concern was emitted as
+  // three separate findings at lines 82 / 130 / 150. Conservative defaults
+  // and a cluster-size cap keep over-clustering risk low. The absorbed
+  // count rolls into the downstream suppressedCount math.
+  {
+    const { findings: clustered, clusteredCount } = clusterFindings(
+      orchestratorResult.findings,
+    );
+    if (clusteredCount > 0) {
+      console.warn(
+        '[clustering] merged %d related finding%s into existing clusters',
+        clusteredCount,
+        clusteredCount === 1 ? '' : 's',
+      );
+      orchestratorResult.findings = clustered;
     }
   }
 

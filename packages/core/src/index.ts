@@ -129,6 +129,10 @@ export type { TriagePriorFinding } from './triage.js';
 // ─── Scope/architecture awareness (W11) ─────────────────────────────────────
 export { detectNoTestHarness, suppressTestCoverageFindings } from './scope-awareness.js';
 
+// ─── Finding consolidation (W10) ────────────────────────────────────────────
+export { clusterFindings, extractSignificantTokens } from './finding-clustering.js';
+export type { ClusterableFinding, ClusterOptions } from './finding-clustering.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,
