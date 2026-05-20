@@ -160,6 +160,16 @@ Any fix that reduces noise must preserve these.
 - **Unblock options (workflow, not code):** (a) author dismisses the stale `CHANGES_REQUESTED` review on #148 — the human triage convention manifested as the GitHub action it implies; (b) admin bypass merge; (c) merge #145 → #147 → #148 in order and let W3 self-suppress the rebutted critical on the next run (only works once main is deployed with W9+W3 active).
 - **Patterns:** P13 (no-exit critical / stuck PR state) — **first observed**. Compounded by P3 (persisted-after-rebuttal), P9 (phantom resolution in earlier rounds via title-keyed delta), P5 (nitpick wave on freshly-added code).
 
+### Example 8 — mergewatch.ai PR #148 (user-spotted Mermaid corruption — distinct from the finding-quality patterns)
+
+- **Evidence:** PR #148 round-4 bot comment had a Mermaid diagram with two corruptions, *neither of which the bot self-reported*:
+  - Syntactic delimiters as HTML entities in unquoted positions: `B&lsqb;…&rsqb;`, `--&gt;`, `&lpar;&rpar;`. Mermaid parses these as 6-char literals → no node anchor, no arrow → graph fails to render.
+  - Multiple statements glued onto one line with `<br/>` as the separator (`<br/>` is only legal inside a `"…"` label).
+- **What's notable:** this was a **rendering bug** in the bot's own output that none of the bot's many reviews on #148 ever flagged — the *user* spotted it. The finding-quality work doesn't cover comment-rendering issues; they need their own E2E coverage.
+- **Fix:** PR #149 — new Pass-0 `decodeMermaidOutsideQuotes` in `sanitizeMermaidOutput` (decodes entities + de-glues `<br/>`-joined statements outside `"…"` regions only, so in-label legitimate forms are preserved). DIAGRAM_PROMPT also strengthened: explicitly forbids HTML entities in ANY position and reserves `<br/>` for in-label line breaks only. Regression-locked by extending E2E-15's expected outcomes + failure modes (deduped per the standing instruction — no new card).
+- **Patterns:** none of the existing finding-quality patterns apply — this is a **comment-rendering / cosmetic** bug class. Worth noting as a category but not promoting to a tracked pattern unless it recurs.
+- **Positive Signal (user):** maintainer-spotted bug not visible in any unit test or in the bot's own self-reviews. Validates that the e2e-fixture runbook (manual verification of actual rendered comments) catches a class of bug pure unit testing cannot.
+
 ### Example N — _TBD (template — copy this block)_
 
 - **Evidence:** `<PR link / screenshot path / dashboard URL>`
