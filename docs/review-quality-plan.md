@@ -27,7 +27,7 @@ Reviewing model observed in evidence: **claude-sonnet-4** (per the "Review detai
 | 3 | orca #38 | kbStore.searchCandidates + test | 3/5 Review rec. | P4 P5 P6 P11 P12 |
 | 4 | orca #39 | KB_BACKEND s3\|postgres switch | 2/5 Needs fixes | P1 P2 P4 P5 P8 P9 P11 P12 |
 
-Pattern frequency (6 examples): **P1×5, P5×5, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P8×2, P9×2, P3×1, P10×1.
+Pattern frequency (7 examples): **P5×6, P1×5, P4×3, P6×3, P7×3, P11×3, P12×3**, P2×2, P3×2, P8×2, P9×2, P10×1, **P13×1 (new — and the highest user-visible severity: it leaves a PR structurally stuck at the GitHub level until a human dismisses the bot's review).**
 
 > **Whack-a-mole / non-convergence** (P7+P9 compounded) is now the headline failure: PR #145's own re-review reported the *same finding as both "✅ resolved" and "🆕 new"* in one comment. Every fix commit shifts lines and regenerates ~4 "new" warnings, so the verdict never converges. This is the single highest-leverage thing to fix — see **W3∩W9 convergence guard**.
 
@@ -51,6 +51,7 @@ Pattern frequency (6 examples): **P1×5, P5×5, P4×3, P6×3, P7×3, P11×3, P12
 | **P10** | Fragmented duplicate findings | One underlying concern emitted as several separate findings at different lines/severities. |
 | **P11** | Scope / architecture blindness | Flags work the PR's plan explicitly defers to a later task, or treats a correctly-throwing data-access function as a bug (ignores layering & stated task decomposition). |
 | **P12** | Review spam / empty-body reviews | Multiple GitHub *Reviews* per run, some with empty bodies; pure timeline/email noise. |
+| **P13** | "No-exit" critical / stuck PR state | A Critical the bot re-asserts every commit on a finding the author has dispositioned (often a design point with no code-level resolution), pinning `reviewDecision=CHANGES_REQUESTED` and check `FAILURE`. The PR is structurally blocked at the GitHub level because nothing in the product honors "rebutted with rationale" (W3) and no W7 score guardrail stops a single un-verified Critical from posting `CHANGES_REQUESTED`. User-visible manifestation of P3 compounded by missing W7. |
 
 ---
 
@@ -150,6 +151,15 @@ Any fix that reduces noise must preserve these.
   - ⚠️×3 "handler / pipeline integration lacks test coverage" — **rebutted on scope**. The transformation (`partitionDisputed`, `computeDisputedKeys`) is unit-tested through every interesting branch; the inline pipeline call is one-line plumbing whose behaviour is captured by those helpers + E2E-23. Mocking the full handler stack for plumbing is the ceremony `AGENTS.md` de-prioritises. [P5 nagging]
 - **Patterns:** P1 P5 — *and a strong Positive Signal: a real critical caught on the bot's own security PR (author-filter gap → prompt-injection). 1 of 1 criticals was real and actionable — exactly the precision goal of the plan.*
 
+### Example 7 — mergewatch.ai PR #148 rounds 3–4 (the "no-exit critical" — P13 canonical case)
+
+- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` rounds 3 (`f8a2b98`) + 4 (`1ae92e0`).
+- **Stack-wide state at round 4:** #145 APPROVED ✅, #147 COMMENTED ✅, **#148 `MergeWatch Review = FAILURE`, `CHANGES_REQUESTED`** (stuck).
+- **What's happening:** the bot re-runs on every commit and posts a fresh `CHANGES_REQUESTED` review pinning a **🔴 Critical** that I've now dispositioned three times ("prompt injection via triage content" — fix is in place: author-filter is the security boundary, prompt-isolation guard is now also tested). The bot itself acknowledges the finding under "↻ Still present (1)" — it carries the same critical across runs but has no path to convert "still present + author-rebutted" into "withdrawn / non-blocking". Round 4's `🆕 9 new` are mostly P5 nitpicks **on code I just added in round 3**: "potential infinite loop" on a literal `for (cut = 0; cut < 4; cut++)`, "magic number 4", "Buffer.byteLength called twice — performance", plus the silent-fail-open and ReDoS findings rebutted 3 times each.
+- **Why it's stuck:** there's no in-product way to honor "rebutted with rationale" — that's the W3 we're shipping. And no W7 score guardrail to stop a single un-verified Critical from posting `CHANGES_REQUESTED`. Chicken-and-egg: the fix for this PR's stuckness is *this PR* (W3) plus W7.
+- **Unblock options (workflow, not code):** (a) author dismisses the stale `CHANGES_REQUESTED` review on #148 — the human triage convention manifested as the GitHub action it implies; (b) admin bypass merge; (c) merge #145 → #147 → #148 in order and let W3 self-suppress the rebutted critical on the next run (only works once main is deployed with W9+W3 active).
+- **Patterns:** P13 (no-exit critical / stuck PR state) — **first observed**. Compounded by P3 (persisted-after-rebuttal), P9 (phantom resolution in earlier rounds via title-keyed delta), P5 (nitpick wave on freshly-added code).
+
 ### Example N — _TBD (template — copy this block)_
 
 - **Evidence:** `<PR link / screenshot path / dashboard URL>`
@@ -216,18 +226,20 @@ Prioritized by ROI = (examples prevented) × (severity). Each names the file(s) 
 **Targets:** review-submission path in `review-agent.ts` / `review-processor.ts`
 - At most one GitHub *Review* per run. Never submit a review with an empty body (#38 emitted two empty DISMISSED reviews in 3 min). Reuse/transition the existing review instead of stacking.
 
-### W7 — Score guardrail  ★ (prevents P4 in #31,#38,#39)
-**Targets:** scoring logic in `reviewer.ts`
-- Score may not drop to ≤2/5 on a single Critical that hasn't passed W2 verification or that W11 classifies as design-opinion/deferred.
+### W7 — Score guardrail  ★★★ (prevents P4 in #31,#38,#39 — AND the P13 "stuck PR state" observed in #148 rounds 3–4)
+**Targets:** scoring logic in `reviewer.ts`, review-submission state mapping (`mergeScoreToReviewEvent`), W3 triage integration.
+- Score may not drop to ≤2/5 — and the formal PR review event must not be `REQUEST_CHANGES` — on a single Critical that any of: (a) failed W2 verification, (b) is classified by W11 as design-opinion/deferred, (c) has been **rebutted via `## mergewatch triage`** (W3 disposition = `rebutted` ⇒ never CHANGES_REQUESTED on that single finding). Any of these downgrade the GitHub review to `COMMENT` so the check is advisory, not a hard block.
+- Companion to W3: W3 already *suppresses* triage-rebutted findings on the next review, but W7 closes the remaining gap where the bot reaches `CHANGES_REQUESTED` on a Critical it currently cannot self-clear (no code-anchor change). Together, P13 is structurally impossible.
 
 ---
 
 ## Priority order (current)
 
 0. ✅ **W1, W2** — SHIPPED (PR #145): claim-aware grounding + no-op guard; the systemic missing-await false positive from #31/#39.
-1. ✅ **W9 + W3 — the convergence guard** — SHIPPED (PR #147 W9, PR #148 W3, stacked on #145). Stable code-fingerprint identity (no more "resolved + new" for one issue) + triage-rebutted findings suppressed on re-review. E2E-23 both halves now regression-locked.
-2. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition). ← next.
-3. **W11, W7** — scope awareness + score sanity (stops the design-opinion 2/5s).
+1. ✅ **W9 + W3 — the convergence guard** — SHIPPED (PR #147 W9, PR #148 W3, stacked on #145). Stable code-fingerprint identity + triage-rebutted findings suppressed on re-review. E2E-23 both halves regression-locked.
+2. **W7 — score guardrail** ⬆ **promoted to next**. PR #148 rounds 3–4 are stuck in P13 "no-exit critical" state precisely because no W7 guardrail prevents an un-verified / author-rebutted Critical from posting `CHANGES_REQUESTED` and failing the check. W3 already suppresses on the *next* review but cannot retroactively clear a stuck check. W7 closes the loop.
+3. **W8** — location accuracy (P8: same finding cited at 4 places; line points at the function definition).
+4. **W11** — scope/architecture awareness (stops design-opinion 2/5s upstream of W7).
 4. **W6, W10, W12** — noise/clutter polish (preserve the Positive Signals while doing this).
 
 _Re-rank as examples land — the Evidence Index frequency row drives this._
