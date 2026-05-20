@@ -1322,8 +1322,11 @@ describe('groundFinding', () => {
     expect(groundFinding(f, file)).toEqual(f);
   });
 
-  it('keeps the finding when the cited line is within ±5 of the identifier', () => {
-    // anchor line 5, identifier at line 7 — within window
+  it('snaps to the actual call line even when the anchor is within ±5 of the identifier (W8)', () => {
+    // anchor line 5 (a comment line), the actual call is at line 7 — within
+    // window. Pre-W8 grounded conservatively (kept anchor at 5 because the
+    // identifier WAS near the anchor); W8 always picks the best use-site, so
+    // the finding moves to line 7 where the code actually lives.
     const file = [
       'function handle() {',
       '  // line 2',
@@ -1336,6 +1339,19 @@ describe('groundFinding', () => {
       '}',
     ].join('\n');
     const f = { ...baseFinding, line: 5 };
+    const result = groundFinding(f, file);
+    expect(result).not.toBeNull();
+    expect(result!.line).toBe(7);
+  });
+
+  it('keeps the anchor when the cited line IS the call site (distance 0 wins the tie)', () => {
+    // The LLM was right; no snap needed.
+    const file = [
+      'function handle() {',
+      '  await createChatSession();',
+      '}',
+    ].join('\n');
+    const f = { ...baseFinding, line: 2 };
     expect(groundFinding(f, file)).toEqual(f);
   });
 
@@ -1396,6 +1412,101 @@ describe('groundFinding', () => {
       suggestion: 'Add await before migrationRunner: const run = await migrationRunner({',
     };
     expect(groundFinding(f, file)).toBeNull();
+  });
+
+  // ─── W8: snap prefers call site over definition ───────────────────────────
+
+  it('W8 — snaps a call-site finding off the function definition line and onto the call site (PR #39 case)', () => {
+    // Mimics the PR #39 failure: the model cited line 1 (the function
+    // definition) for a finding that's really about the call site at line 4.
+    // Before W8 the snap returned the first occurrence (the def). W8 walks
+    // every occurrence, drops definitions when any use-site exists, and
+    // picks the closest remaining one to the anchor.
+    const file = [
+      'export async function searchViaPostgres(q: string) {',
+      '  return db.query(q);',
+      '}',
+      'return await searchViaPostgres(queryEmbedding);',
+    ].join('\n');
+    const f = {
+      ...baseFinding,
+      line: 1,
+      title: 'Missing await on async `searchViaPostgres` call',
+      description: 'The call to `searchViaPostgres` returns a Promise that may be unawaited.',
+      suggestion: 'Ensure the result is awaited.',
+    };
+    const result = groundFinding(f, file);
+    expect(result).not.toBeNull();
+    expect(result!.line).toBe(4); // the actual call site, not the def at line 1
+  });
+
+  it('W8 — falls back to the definition line when NO use-site exists in the file', () => {
+    // The file only declares the function and never calls it (e.g., a
+    // module that exports for an external caller). The def is the only
+    // signal we have, so the snap lands there rather than dropping the
+    // finding — better something than nothing on a real concern.
+    const file = [
+      'export async function searchViaPostgres(q: string) {',
+      '  return db.query(q);',
+      '}',
+    ].join('\n');
+    const f = {
+      ...baseFinding,
+      line: 1,
+      title: 'Exported `searchViaPostgres` should validate input',
+      description: 'The function `searchViaPostgres` accepts q without validation.',
+    };
+    const result = groundFinding(f, file);
+    expect(result).not.toBeNull();
+    expect(result!.line).toBe(1);
+  });
+
+  it('W8 — among multiple call sites, picks the one closest to the LLM\'s anchor', () => {
+    // Two distinct call sites; the LLM was approximately right but pointed
+    // a few lines off. We should land on the closer call.
+    const lines = [
+      'function handle() {',        // 1
+      '  doThing();',                // 2  ← call site A (distance from anchor 8 = 6)
+      '  // …',                      // 3
+      '  // …',                      // 4
+      '  // …',                      // 5
+      '  // …',                      // 6
+      '  // …',                      // 7
+      '  // anchor was here',        // 8  ← LLM's anchor
+      '  // …',                      // 9
+      '  doThing();',                // 10 ← call site B (distance 2)
+      '}',                           // 11
+    ];
+    const f = {
+      ...baseFinding,
+      line: 8,
+      title: 'Duplicate `doThing` invocation',
+      description: 'The call `doThing` runs twice within `handle`.',
+    };
+    const result = groundFinding(f, lines.join('\n'));
+    expect(result).not.toBeNull();
+    expect(result!.line).toBe(10);
+  });
+
+  it('W8 — does NOT mis-classify a use-site as a definition (return / await / assignment)', () => {
+    // Stress the "before the identifier name" definition heuristic against
+    // common JS/TS surface forms. None should be classified as defs, so
+    // the snap targets the call site, not the def at line 1.
+    const file = [
+      'export async function createChatSession(): Promise<{ id: string }> {', // def at line 1
+      '  return { id: "x" };',
+      '}',
+      'const session = await createChatSession();', // use at line 4
+    ].join('\n');
+    const f = {
+      ...baseFinding,
+      line: 2,
+      title: 'await on `createChatSession`',
+      description: 'The call `createChatSession` returns a Promise.',
+    };
+    const result = groundFinding(f, file);
+    expect(result).not.toBeNull();
+    expect(result!.line).toBe(4);
   });
 });
 
