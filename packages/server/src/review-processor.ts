@@ -348,6 +348,17 @@ export async function processReviewJob(
           maxRounds: config.maxFileRequestRounds,
         }
       : undefined;
+    // Grounding/verification fetch context — always available, independent of
+    // the codebaseAwareness feature flag. maxRounds is irrelevant here (no
+    // agentic loop); these stages just read the cited files once.
+    const groundingFetch: FileFetchOptions = {
+      octokit,
+      owner,
+      repo,
+      ref,
+      maxContextKB: config.maxContextKB,
+      maxRounds: 0,
+    };
 
     // Fetch previous reviews before pipeline (used for diagram consistency + delta computation)
     let prevComplete: typeof prevReviewsResult[number] | undefined;
@@ -387,6 +398,7 @@ export async function processReviewJob(
           diagram: instSettings.summary?.diagram !== false,
         },
         fileFetchOptions,
+        groundingFetch,
         customAgents: config.customAgents,
         tone: config.ux.tone,
         customPricing: config.pricing,

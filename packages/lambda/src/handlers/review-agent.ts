@@ -468,6 +468,17 @@ export async function handler(
           maxRounds: runtimeConfig.maxFileRequestRounds,
         }
       : undefined;
+    // Grounding/verification fetch context — always available, independent of
+    // the codebaseAwareness feature flag. maxRounds is irrelevant here (no
+    // agentic loop); these stages just read the cited files once.
+    const groundingFetch: FileFetchOptions = {
+      octokit,
+      owner,
+      repo,
+      ref: headSha,
+      maxContextKB: runtimeConfig.maxContextKB,
+      maxRounds: 0,
+    };
 
     // Fetch previous reviews before pipeline (used for diagram consistency + delta computation)
     let prevReviews: ReviewItem[] = [];
@@ -506,6 +517,7 @@ export async function handler(
         ? { security: false, bugs: false, style: false, summary: true, diagram: false, errorHandling: false, testCoverage: false, commentAccuracy: false }
         : { ...runtimeConfig.agents, diagram: instSettings.summary.diagram },
       fileFetchOptions,
+      groundingFetch,
       customAgents: runtimeConfig.customAgents,
       tone: runtimeConfig.ux.tone,
       customPricing: runtimeConfig.pricing,

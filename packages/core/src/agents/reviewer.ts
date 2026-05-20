@@ -27,6 +27,7 @@ import {
   PREVIOUS_FINDINGS_PLACEHOLDER,
   CONVENTIONS_PLACEHOLDER,
   DELTA_CAPTION_PROMPT,
+  CRITICAL_VERIFICATION_PROMPT,
   CUSTOM_AGENT_RESPONSE_FORMAT,
   TONE_DIRECTIVES,
   TONE_PLACEHOLDER,
@@ -810,6 +811,14 @@ export interface ReviewPipelineOptions {
   };
   /** Agentic file fetching options — when provided, review agents can request files from the repo */
   fileFetchOptions?: FileFetchOptions;
+  /**
+   * File-fetch context used by the grounding (W1) and critical-verification
+   * (W2) defense-in-depth stages. Unlike `fileFetchOptions`, this is NOT
+   * gated behind the `codebaseAwareness` feature flag — verifying a critical
+   * against the real file is always worth the read, independent of whether
+   * agents get agentic context. Falls back to `fileFetchOptions` when unset.
+   */
+  groundingFetch?: FileFetchOptions;
   /** User-defined custom review agents */
   customAgents?: CustomAgentDef[];
   /** Tone for review findings */
@@ -963,6 +972,70 @@ export function extractFindingIdentifiers(text: string): string[] {
 }
 
 /**
+ * Minimum normalized length for a suggestion segment to be considered a
+ * concrete code change (vs. an English instruction). Below this, a match
+ * against file content is too likely to be coincidental to act on.
+ */
+const MIN_NOOP_CANDIDATE_LEN = 12;
+
+/**
+ * Collapse all runs of whitespace to a single space and trim. Lets us
+ * compare a suggested code line against a source line without being thrown
+ * by indentation or reflowed spacing. Case is preserved — code is
+ * case-sensitive.
+ */
+function normalizeCode(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Detect the "the fix is already the code" false positive: an LLM suggestion
+ * whose concrete code is *already present* in the file (e.g. flagging
+ * "missing await" while citing `const x = await foo()` and then suggesting
+ * `const x = await foo()`). These are pure noise and the single most
+ * trust-destroying class of finding.
+ *
+ * Approach: split the suggestion into candidate code segments (newlines and
+ * `:`-delimited clauses, fenced blocks unwrapped), keep only the segments
+ * that actually look like code (contain an extractable identifier and clear
+ * the length floor), and report a no-op when EVERY such segment already
+ * appears verbatim (whitespace-normalized) on some line of the file. The
+ * "every qualifying segment" rule keeps multi-line suggestions (e.g. a
+ * try/catch the code doesn't yet have) from being misread as already-applied.
+ *
+ * Conservative by construction: a suggestion with no code-shaped segment
+ * returns false (let grounding / verification decide).
+ */
+export function suggestionAlreadyApplied(
+  suggestion: string,
+  fileContent: string,
+): boolean {
+  if (!suggestion || !fileContent) return false;
+  // Bound the input before regex work. The regexes below are linear (no
+  // catastrophic backtracking), so this is consistency with the codebase's
+  // FINDING_TEXT_MAX_BYTES convention, not a fix for an actual ReDoS — and
+  // a >4KB "suggestion" is never a realistic "fix already applied" case.
+  if (suggestion.length > FINDING_TEXT_MAX_BYTES) return false;
+
+  const unfenced = suggestion.replace(/```[a-zA-Z]*\n?|```/g, '\n');
+  const segments = unfenced
+    .split(/\n|(?<=:)\s/)
+    .map((s) => s.replace(/^[`'"\s]+|[`'"\s.]+$/g, ''))
+    .map(normalizeCode)
+    .filter((s) => s.length >= MIN_NOOP_CANDIDATE_LEN);
+
+  const codeSegments = segments.filter(
+    (s) => extractFindingIdentifiers(s).length > 0,
+  );
+  if (codeSegments.length === 0) return false;
+
+  const normalizedLines = fileContent.split('\n').map(normalizeCode);
+  return codeSegments.every((seg) =>
+    normalizedLines.some((line) => line.includes(seg)),
+  );
+}
+
+/**
  * Verify a single finding against the actual file contents at the PR head.
  * Returns null when the finding can't be grounded (drop critical / warning;
  * keep info pass-through when no identifiers were extractable so we don't
@@ -992,6 +1065,11 @@ export function groundFinding(
     if (f.severity === 'warning') return { ...f, severity: 'info' };
     return null;
   }
+
+  // No-op-suggestion guard: the suggested fix is already present in the
+  // file. This is a hallucinated finding regardless of severity (the model
+  // proposed the code that already exists). Drop it outright.
+  if (suggestionAlreadyApplied(f.suggestion, fileContent)) return null;
 
   const identifiers = extractFindingIdentifiers(`${f.title} ${f.description} ${f.suggestion}`);
   if (identifiers.length === 0) return f; // No identifier to verify against — pass through.
@@ -1036,11 +1114,30 @@ export async function groundFindings(
   fileFetchOptions: FileFetchOptions | undefined,
 ): Promise<OrchestratedFinding[]> {
   if (!fileFetchOptions || findings.length === 0) return findings;
+  const fileContents = await fetchFindingFileContents(findings, fileFetchOptions);
+  return findings
+    .map((f) => groundFinding(f, fileContents[f.file]))
+    .filter((f): f is OrchestratedFinding => f !== null);
+}
 
+/**
+ * Fetch the full current contents of every file referenced by a finding set.
+ * Shared by grounding (W1) and the critical-verification pass (W2) so the
+ * files are fetched once per review, not once per stage.
+ *
+ * Best-effort by design: no fetch options (e.g. self-hosted without an
+ * octokit) or a transient GitHub failure returns {} — callers treat a
+ * missing file as "couldn't verify, keep the finding". A monitoring hiccup
+ * must never silently delete findings.
+ */
+export async function fetchFindingFileContents(
+  findings: { file: string }[],
+  fileFetchOptions: FileFetchOptions | undefined,
+): Promise<Record<string, string>> {
+  if (!fileFetchOptions || findings.length === 0) return {};
   const uniqueFiles = Array.from(new Set(findings.map((f) => f.file)));
-  let fileContents: Record<string, string> = {};
   try {
-    fileContents = await fetchFileContents(
+    return await fetchFileContents(
       fileFetchOptions.octokit,
       fileFetchOptions.owner,
       fileFetchOptions.repo,
@@ -1049,12 +1146,6 @@ export async function groundFindings(
       fileFetchOptions.maxContextKB,
     );
   } catch (err) {
-    // Deliberate catch-all: grounding is best-effort defense-in-depth. A
-    // transient GitHub API failure (network, rate limit, auth refresh
-    // mid-review) must NOT silently delete findings — passing them
-    // through unchanged is the safe fallback. The warning surfaces in
-    // CloudWatch / stdout for triage; we include enough context (repo,
-    // ref, file count) for monitoring filters to spot a real outage.
     console.warn(
       'Finding grounding: file fetch failed — passing %d findings through unchanged for %s/%s@%s (%d unique files)',
       findings.length,
@@ -1064,12 +1155,99 @@ export async function groundFindings(
       uniqueFiles.length,
       err,
     );
-    return findings;
+    return {};
   }
+}
 
-  return findings
-    .map((f) => groundFinding(f, fileContents[f.file]))
-    .filter((f): f is OrchestratedFinding => f !== null);
+/**
+ * Claim-aware verification of CRITICAL findings (W2). The diff-only agents
+ * produce the highest-trust-damage class of false positive: a confident
+ * critical derived from a truncated hunk (the classic "missing await" on a
+ * line that is already `const x = await f()`). Structural grounding can't
+ * catch these — the identifier IS present near the anchor — so each
+ * surviving critical is re-checked by the light model against the COMPLETE
+ * file, and dropped if the model can't confirm the defect actually exists.
+ *
+ * Scope & cost: criticals only (0–2 on a typical PR), light model, one call
+ * each, run concurrently. Warnings/info are untouched — they don't gate the
+ * verdict and the cost/benefit doesn't justify it.
+ *
+ * Fail-safe: a missing file (couldn't fetch) or any LLM/parse error keeps
+ * the finding. This pass only ever *removes* a critical on an explicit,
+ * parseable `valid: false` — infrastructure trouble must not silently
+ * suppress a real critical.
+ */
+export async function verifyCriticalFindings(
+  findings: OrchestratedFinding[],
+  fileContents: Record<string, string>,
+  modelId: string,
+  llm: ILLMProvider,
+): Promise<OrchestratedFinding[]> {
+  // Bounded concurrency, not Promise.all: a pathological PR with many
+  // criticals would otherwise burst N parallel Bedrock InvokeModel calls and
+  // hit the per-minute TPM quota (same reason runReviewPipeline uses
+  // AGENT_CONCURRENCY). withConcurrency preserves input order, so the
+  // verdicts[i] ↔ findings[i] alignment below still holds.
+  const verdicts = await withConcurrency<boolean>(
+    findings.map((f) => async () => {
+      if (f.severity !== 'critical') return true;
+      const content = fileContents[f.file];
+      if (!content) return true; // Couldn't fetch the file — can't disprove it.
+
+      const prompt = `${CRITICAL_VERIFICATION_PROMPT}
+
+--- Finding ---
+File: ${f.file}
+Line: ${f.line}
+Title: ${f.title}
+Description: ${f.description}
+Suggestion: ${f.suggestion}
+
+--- Complete current file: ${f.file} ---
+${content}`;
+
+      try {
+        const raw = normalizeLLMResult(
+          await llm.invoke(modelId, prompt, undefined, { temperature: 0 }),
+        ).text;
+        // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
+        // or verdict-less response is distinguishable from an explicit
+        // pass — the fail-safe "keep" is then logged, not silent.
+        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
+        if (parsed.valid === false) {
+          console.warn(
+            '[critical-verify] dropped false-positive critical "%s" (%s:%d): %s',
+            f.title,
+            f.file,
+            f.line,
+            (parsed.reason ?? '').slice(0, 200),
+          );
+          return false;
+        }
+        if (parsed.valid !== true) {
+          console.warn(
+            '[critical-verify] no usable verdict for "%s" (%s:%d) — keeping finding (fail-safe)',
+            f.title,
+            f.file,
+            f.line,
+          );
+        }
+        return true;
+      } catch (err) {
+        console.warn(
+          '[critical-verify] verification call failed for "%s" (%s:%d) — keeping finding:',
+          f.title,
+          f.file,
+          f.line,
+          err,
+        );
+        return true;
+      }
+    }),
+    AGENT_CONCURRENCY,
+  );
+
+  return findings.filter((_, i) => verdicts[i]);
 }
 
 /**
@@ -1089,6 +1267,7 @@ export async function runReviewPipeline(
     maxFindings,
     enabledAgents,
     fileFetchOptions,
+    groundingFetch,
     customAgents = [],
     tone,
     customPricing,
@@ -1191,11 +1370,29 @@ export async function runReviewPipeline(
   ];
   const enabledAgentCount = findingAgentFlags.filter(Boolean).length + enabledCustomAgents.length;
 
-  // Ground each finding against the actual file at the PR head, dropping
-  // hallucinated criticals whose cited line doesn't contain the code they
-  // describe. Runs before the line-proximity filter so snapped lines benefit
-  // from filtering too.
-  const groundedFindings = await groundFindings(orchestratorResult.findings, fileFetchOptions);
+  // Defense-in-depth against false positives, using the COMPLETE file at the
+  // PR head (fetched once, shared by both stages). Not gated behind
+  // codebaseAwareness — verifying a critical is always worth the read.
+  //   1. groundFinding   — structural: anchor in range, identifier present,
+  //                         no-op-suggestion guard (W1).
+  //   2. verifyCritical… — claim-aware: light model re-checks each surviving
+  //                         critical against the full file and drops the
+  //                         confidently-wrong ones (W2).
+  // Runs before the line-proximity filter so snapped lines benefit from it.
+  const groundingContext = groundingFetch ?? fileFetchOptions;
+  const groundingFileContents = await fetchFindingFileContents(
+    orchestratorResult.findings,
+    groundingContext,
+  );
+  const structurallyGrounded = orchestratorResult.findings
+    .map((f) => groundFinding(f, groundingFileContents[f.file]))
+    .filter((f): f is OrchestratedFinding => f !== null);
+  const groundedFindings = await verifyCriticalFindings(
+    structurallyGrounded,
+    groundingFileContents,
+    lightModelId,
+    llm,
+  );
 
   // Filter findings to only those on or near actually changed lines
   const changedLines = extractChangedLines(diff);
