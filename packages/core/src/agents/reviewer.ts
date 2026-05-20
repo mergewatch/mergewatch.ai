@@ -38,6 +38,7 @@ import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
+import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -1650,6 +1651,27 @@ export async function runReviewPipeline(
     conventions,
     agentAuthored,
   );
+
+  // W11 — scope/architecture awareness: when the repo's conventions
+  // document explicitly declares no test harness, collapse the per-
+  // function "lacks coverage" findings into a single info-level note.
+  // This kills the P5 nag-wave observed on infra/enablement PRs in repos
+  // whose own CLAUDE.md/AGENTS.md says tests aren't part of the project
+  // yet (voice-bot #31, orca #37/#38/#39). The suppressed count rolls
+  // into the existing `suppressedCount` calculation downstream.
+  if (detectNoTestHarness(conventions)) {
+    const { findings: collapsed, suppressedCount } = suppressTestCoverageFindings(
+      orchestratorResult.findings,
+    );
+    if (suppressedCount > 0) {
+      console.warn(
+        '[scope-awareness] suppressed %d test-coverage finding%s (repo conventions declare no test harness)',
+        suppressedCount,
+        suppressedCount === 1 ? '' : 's',
+      );
+      orchestratorResult.findings = collapsed;
+    }
+  }
 
   // Count enabled finding agents (exclude summary + diagram)
   const findingAgentFlags = [
