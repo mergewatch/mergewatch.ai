@@ -27,7 +27,7 @@ import {
   PREVIOUS_FINDINGS_PLACEHOLDER,
   CONVENTIONS_PLACEHOLDER,
   DELTA_CAPTION_PROMPT,
-  CRITICAL_VERIFICATION_PROMPT,
+  FINDING_VERIFICATION_PROMPT,
   CUSTOM_AGENT_RESPONSE_FORMAT,
   TONE_DIRECTIVES,
   TONE_PLACEHOLDER,
@@ -65,7 +65,8 @@ export interface AgentFinding {
    */
   fingerprint?: string;
   /**
-   * Result of the W2 critical-verification pass (W7 score guardrail input):
+   * Result of the W2 / FP-E claim-aware verification pass (W7 score
+   * guardrail input):
    *   - `verified`   — model explicitly confirmed the defect against the
    *                    full file content (parsed.valid === true).
    *   - `unverified` — verification was inconclusive (missing file, LLM
@@ -73,7 +74,11 @@ export interface AgentFinding {
    *                    finding was kept fail-safe but couldn't be confirmed,
    *                    so it must not by itself BLOCK the PR (W7 clamps the
    *                    score to ≥3 when all surviving Criticals are unverified).
-   * Absent for non-critical findings (verification only runs on criticals).
+   * Runs on critical AND warning severities (FP-E extended the scope —
+   * an agent can no longer dodge verification by downgrading Critical →
+   * Warning). Absent for info-only findings (no verification needed).
+   * The W7 score-clamp itself still only inspects criticals; the tag on
+   * warnings is informational + used downstream by delta/UX.
    */
   verification?: 'verified' | 'unverified';
 }
@@ -1440,45 +1445,59 @@ export async function fetchFindingFileContents(
 }
 
 /**
- * Claim-aware verification of CRITICAL findings (W2). The diff-only agents
- * produce the highest-trust-damage class of false positive: a confident
- * critical derived from a truncated hunk (the classic "missing await" on a
- * line that is already `const x = await f()`). Structural grounding can't
- * catch these — the identifier IS present near the anchor — so each
- * surviving critical is re-checked by the light model against the COMPLETE
- * file, and dropped if the model can't confirm the defect actually exists.
+ * Claim-aware verification of CRITICAL and WARNING findings (W2 + FP-E).
+ * The diff-only agents produce the highest-trust-damage class of false
+ * positive: a confident finding derived from a truncated hunk (the classic
+ * "missing await" on a line that is already `const x = await f()`).
+ * Structural grounding can't catch these — the identifier IS present near
+ * the anchor — so each surviving critical/warning is re-checked by the
+ * light model against the COMPLETE file, and dropped if the model can't
+ * confirm the defect actually exists.
  *
- * Scope & cost: criticals only (0–2 on a typical PR), light model, one call
- * each, run concurrently. Warnings/info are untouched — they don't gate the
- * verdict and the cost/benefit doesn't justify it.
+ * Scope & cost: criticals + warnings (typical PR: 0–2 criticals + 2–3
+ * warnings), light model, one call each, run concurrently. Info-level
+ * findings are still untouched — they're advisory by definition and the
+ * cost/benefit doesn't justify it. FP-E extended this from criticals-only
+ * to also cover warnings: warnings can be false positives too, and an
+ * agent could otherwise dodge verification by downgrading Critical →
+ * Warning (severity-shopping).
  *
  * Fail-safe: a missing file (couldn't fetch) or any LLM/parse error keeps
- * the finding. This pass only ever *removes* a critical on an explicit,
+ * the finding. This pass only ever *removes* a finding on an explicit,
  * parseable `valid: false` — infrastructure trouble must not silently
- * suppress a real critical.
+ * suppress a real defect.
+ *
+ * Note: the W7 score-clamp (in `reconcileMergeScore`) still only inspects
+ * `verification: 'unverified'` on CRITICAL findings. Tagging warnings is
+ * useful for downstream delta/UX surfaces but does not by itself change
+ * the merge score.
  */
-export async function verifyCriticalFindings(
+export async function verifyFindings(
   findings: OrchestratedFinding[],
   fileContents: Record<string, string>,
   modelId: string,
   llm: ILLMProvider,
 ): Promise<OrchestratedFinding[]> {
   // Each task returns the disposition for one finding:
-  //   - { keep: true }                            — pass-through (non-critical).
+  //   - { keep: true }                            — pass-through (info-only).
   //   - { keep: true,  verification: 'verified' } — model confirmed the defect.
   //   - { keep: true,  verification: 'unverified' } — kept fail-safe; W7
   //                                                   will treat this as
-  //                                                   advisory in scoring.
+  //                                                   advisory in scoring
+  //                                                   (criticals only).
   //   - { keep: false }                           — model said valid:false, drop.
   // Bounded concurrency, not Promise.all: a pathological PR with many
-  // criticals would otherwise burst N parallel Bedrock InvokeModel calls and
-  // hit the per-minute TPM quota (same reason runReviewPipeline uses
+  // findings would otherwise burst N parallel Bedrock InvokeModel calls
+  // and hit the per-minute TPM quota (same reason runReviewPipeline uses
   // AGENT_CONCURRENCY). withConcurrency preserves input order, so the
   // verdicts[i] ↔ findings[i] alignment below still holds.
   type Verdict = { keep: boolean; verification?: 'verified' | 'unverified' };
   const verdicts = await withConcurrency<Verdict>(
     findings.map((f) => async () => {
-      if (f.severity !== 'critical') return { keep: true };
+      // FP-E: verify both criticals and warnings; skip only info-level.
+      if (f.severity !== 'critical' && f.severity !== 'warning') {
+        return { keep: true };
+      }
       const content = fileContents[f.file];
       if (!content) {
         // No file content for this path — verification was SKIPPED (not
@@ -1489,11 +1508,12 @@ export async function verifyCriticalFindings(
         return { keep: true };
       }
 
-      const prompt = `${CRITICAL_VERIFICATION_PROMPT}
+      const prompt = `${FINDING_VERIFICATION_PROMPT}
 
 --- Finding ---
 File: ${f.file}
 Line: ${f.line}
+Severity: ${f.severity}
 Title: ${f.title}
 Description: ${f.description}
 Suggestion: ${f.suggestion}
@@ -1511,7 +1531,8 @@ ${content}`;
         const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
         if (parsed.valid === false) {
           console.warn(
-            '[critical-verify] dropped false-positive critical "%s" (%s:%d): %s',
+            '[finding-verify] dropped false-positive %s "%s" (%s:%d): %s',
+            f.severity,
             f.title,
             f.file,
             f.line,
@@ -1524,7 +1545,8 @@ ${content}`;
         }
         // Ambiguous: parsed but no usable verdict.
         console.warn(
-          '[critical-verify] no usable verdict for "%s" (%s:%d) — keeping finding (unverified, advisory)',
+          '[finding-verify] no usable verdict for %s "%s" (%s:%d) — keeping finding (unverified, advisory)',
+          f.severity,
           f.title,
           f.file,
           f.line,
@@ -1532,7 +1554,8 @@ ${content}`;
         return { keep: true, verification: 'unverified' };
       } catch (err) {
         console.warn(
-          '[critical-verify] verification call failed for "%s" (%s:%d) — keeping finding (unverified, advisory):',
+          '[finding-verify] verification call failed for %s "%s" (%s:%d) — keeping finding (unverified, advisory):',
+          f.severity,
           f.title,
           f.file,
           f.line,
@@ -1881,12 +1904,12 @@ export async function runReviewPipeline(
 
   // Defense-in-depth against false positives, using the COMPLETE file at the
   // PR head (fetched once, shared by both stages). Not gated behind
-  // codebaseAwareness — verifying a critical is always worth the read.
-  //   1. groundFinding   — structural: anchor in range, identifier present,
-  //                         no-op-suggestion guard (W1).
-  //   2. verifyCritical… — claim-aware: light model re-checks each surviving
-  //                         critical against the full file and drops the
-  //                         confidently-wrong ones (W2).
+  // codebaseAwareness — verifying a finding is always worth the read.
+  //   1. groundFinding  — structural: anchor in range, identifier present,
+  //                        no-op-suggestion guard (W1).
+  //   2. verifyFindings — claim-aware: light model re-checks each surviving
+  //                        critical AND warning against the full file and
+  //                        drops the confidently-wrong ones (W2 + FP-E).
   // Runs before the line-proximity filter so snapped lines benefit from it.
   const groundingContext = groundingFetch ?? fileFetchOptions;
   const groundingFileContents = await fetchFindingFileContents(
@@ -1896,7 +1919,7 @@ export async function runReviewPipeline(
   const structurallyGrounded = orchestratorResult.findings
     .map((f) => groundFinding(f, groundingFileContents[f.file]))
     .filter((f): f is OrchestratedFinding => f !== null);
-  const groundedFindings = await verifyCriticalFindings(
+  const groundedFindings = await verifyFindings(
     structurallyGrounded,
     groundingFileContents,
     lightModelId,

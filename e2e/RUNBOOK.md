@@ -160,7 +160,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B |
 | [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C |
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
-| [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings-target) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) — **TARGET** | 2m | 60s | FP-E |
+| [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory-target) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) — **TARGET** | 3m | 90s | FP-F |
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent-target) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) — **TARGET** | 2m | 60s | FP-G |
 
@@ -1367,11 +1367,15 @@ To force the failure path, inject a Mermaid diagram referencing `src/db.ts` (or 
 
 ---
 
-### E2E-34: FP-E — W2 verification extended to warnings — TARGET
+### E2E-34: FP-E — W2 verification extended to warnings
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-E](./../docs/false-positive-reduction-plan.md#fp-e--extend-w2-verification-to-warnings--).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-E](./../docs/false-positive-reduction-plan.md#fp-e--extend-w2-verification-to-warnings--shipped).
 
-**Behavior (intended, once FP-E ships):** the W2 critical-verification pass extends to `warning` severity too. Each warning gets verified against the full file content; the `verification: 'verified' | 'unverified'` tag is set; the same fail-open semantics apply. Closes the "downgrade Critical to Warning to dodge verification" loophole and reduces warning-level FPs.
+**Behavior:** `verifyFindings` in `packages/core/src/agents/reviewer.ts` (renamed from `verifyCriticalFindings`) now also processes `warning`-severity findings, using the same `FINDING_VERIFICATION_PROMPT` (renamed from `CRITICAL_VERIFICATION_PROMPT`), the same fail-safe semantics (missing file content → no LLM call, no tag; LLM error / parse error / no verdict → keep + `verification: 'unverified'`; explicit `valid: false` → drop; explicit `valid: true` → keep + `verification: 'verified'`). Info-severity findings continue to pass through untouched.
+
+The W7 score-clamp in `reconcileMergeScore` still only inspects criticals — extending it to warnings was deferred per the original plan ("separate decision; not in this opportunity"). The `verification` tag on warnings is informational + used by downstream delta/UX surfaces.
+
+Closes the severity-shopping loophole (downgrading a Critical to Warning to dodge verification).
 
 **Setup**
 
@@ -1392,14 +1396,17 @@ export function parseChunks(raw: unknown[]): unknown[] {
 
 **Expected outcomes**
 
-- [ ] Each surviving warning carries a `verification: 'verified' | 'unverified'` tag in the persisted review record
-- [ ] If the verification pass says `valid: false`, the warning is dropped (same as criticals today)
-- [ ] If the W7 score-guardrail policy is extended to warnings (separate decision), the formal Review event downgrades when every surviving warning is `unverified`
-- [ ] Tokens / cost on the Review details collapsible reflect the additional LLM calls (one per warning)
+- [x] Each surviving warning carries a `verification: 'verified' | 'unverified'` tag in the persisted review record
+- [x] If the verification pass says `valid: false`, the warning is dropped (same as criticals today)
+- [x] Info-severity findings pass through untouched (no verification call, no tag)
+- [x] **Regression check**: criticals continue to be verified with identical semantics — the same set of unit cases still pass
+- [x] **Regression check**: missing file content for a warning skips the call entirely (no LLM cost spike)
+- [x] Tokens / cost on the Review details collapsible reflect the additional LLM calls (one per warning)
+- [ ] If the W7 score-guardrail policy is extended to warnings later (separate decision), the formal Review event downgrades when every surviving warning is `unverified` — explicitly out of scope for FP-E
 
 **Failure modes**
 - ❌ A warning still has no `verification` field in the stored record post-FP-E
-- ❌ A legitimately-warning-flagged issue gets dropped because the verifier model is biased toward `valid: false` on warning-severity prompts (mitigation: same `CRITICAL_VERIFICATION_PROMPT` re-used; the prompt is severity-agnostic)
+- ❌ A legitimately-warning-flagged issue gets dropped because the verifier model is biased toward `valid: false` on warning-severity prompts (mitigation: shared `FINDING_VERIFICATION_PROMPT` was rewritten to be severity-neutral; the `severity` field is included in the verifier input so the model can still consider it when judging)
 
 ---
 
