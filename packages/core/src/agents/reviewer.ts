@@ -335,6 +335,7 @@ export async function runDiagramAgent(
   modelId: string,
   llm: ILLMProvider,
   previousDiagram?: string,
+  changedFiles?: string[],
 ): Promise<DiagramResult> {
   // Inject previous diagram for consistency or strip the placeholder.
   // When previousDiagram exists and is non-empty, replaces PREVIOUS_DIAGRAM_PLACEHOLDER
@@ -360,7 +361,7 @@ ${previousDiagram}
   const raw = normalizeLLMResult(
     await llm.invoke(modelId, prompt, undefined, { temperature: 0.2 }),
   ).text;
-  return parseDiagramResponse(raw);
+  return parseDiagramResponse(raw, changedFiles);
 }
 
 /**
@@ -591,8 +592,96 @@ export function isValidMermaidDiagram(diagram: string): boolean {
   return MERMAID_DIAGRAM_TYPES.has(firstWord.toLowerCase());
 }
 
+/**
+ * FP-D — extract every file-path-shaped token from a Mermaid diagram.
+ *
+ * "Path-shaped" = at least one `/` separator AND a trailing `.ext` (1–8
+ * alphanumerics). Optional surrounding backticks are stripped before
+ * matching so labels like `` `src/foo.ts` `` are handled. The character
+ * class is deliberately conservative — we don't want to capture URLs
+ * (those usually contain `://`), edge tokens, or label content with
+ * extension-shaped suffixes that aren't real paths (e.g. `v1.2.3`).
+ *
+ * Returned values are de-duplicated and preserve their original casing.
+ */
+export function extractDiagramFilePaths(diagram: string): string[] {
+  if (!diagram) return [];
+  // Strip backticks first — they only ever wrap a token, never appear inside one.
+  const stripped = diagram.replace(/`/g, '');
+  // Path token: starts with an alphanumeric or `_`/`.`, then any mix of those
+  // plus `/` and `-`, must contain at least one `/`, must end in `.ext`.
+  // The `[A-Za-z0-9]{1,8}` extension cap keeps us from greedy-grabbing trailing
+  // sentence punctuation; the leading character class avoids matching a
+  // leading `/` (rare but causes false positives on URLs / regex literals).
+  const PATH_RE = /[A-Za-z0-9_.][A-Za-z0-9_./-]*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}/g;
+  const seen = new Set<string>();
+  for (const m of stripped.matchAll(PATH_RE)) {
+    // Skip URL captures. The regex starts AFTER the `://` separator (because
+    // `:` and `/` aren't in the leading-char class), so the model's
+    // `https://example.com/path.html` arrives here as just
+    // `example.com/path.html`. Detect it by checking the three characters
+    // immediately before the match — if they're `://`, this is the
+    // post-scheme portion of a URL, not a repo-relative path.
+    const idx = m.index ?? 0;
+    const before = stripped.slice(Math.max(0, idx - 3), idx);
+    if (before === '://') continue;
+    seen.add(m[0]);
+  }
+  return Array.from(seen);
+}
+
+/**
+ * FP-D — verify every file path cited by a Mermaid diagram corresponds to a
+ * file that was actually changed in the PR.
+ *
+ * Match rules per cited path:
+ *   1. Exact match against `changedFiles` → OK.
+ *   2. A changed file ends with `/cited` → OK (model emitted a shortened /
+ *      basename-style path for a file deeper in the tree, e.g. cited `db.ts`
+ *      while the real file is `packages/server/src/db.ts`).
+ *   3. The cited path ends with `/changedFile` → OK (model emitted an absolute-
+ *      ish path for a file that the diff lists relative to the repo root).
+ *
+ * If any cited path matches none of those, the diagram is considered to cite
+ * a hallucinated file. The caller (`parseDiagramResponse`) drops the diagram
+ * entirely in that case — a confidently-rendered diagram pointing at files
+ * the PR didn't touch is more misleading than no diagram at all.
+ *
+ * Fail-open semantics: when `changedFiles` is undefined or empty, the function
+ * returns `ok: true` — we don't have the information needed to validate, so
+ * we defer to the existing Mermaid-validity gate.
+ */
+export function validateDiagramPaths(
+  diagram: string,
+  changedFiles?: string[],
+): { ok: boolean; invalidPaths: string[] } {
+  if (!changedFiles || changedFiles.length === 0) {
+    return { ok: true, invalidPaths: [] };
+  }
+  const cited = extractDiagramFilePaths(diagram);
+  if (cited.length === 0) {
+    return { ok: true, invalidPaths: [] };
+  }
+  const changedSet = new Set(changedFiles);
+  const invalid: string[] = [];
+  for (const path of cited) {
+    if (changedSet.has(path)) continue;
+    // Either side may be a suffix of the other — handles both basename-only
+    // and absolute-ish-relative-path framings the model emits.
+    const suffixOfReal = changedFiles.some((f) => f.endsWith('/' + path));
+    if (suffixOfReal) continue;
+    const realIsSuffixOfCited = changedFiles.some((f) => path.endsWith('/' + f));
+    if (realIsSuffixOfCited) continue;
+    invalid.push(path);
+  }
+  return { ok: invalid.length === 0, invalidPaths: invalid };
+}
+
 /** Parse raw Mermaid response: extract caption from leading %% comment. */
-function parseDiagramResponse(raw: string): DiagramResult {
+function parseDiagramResponse(
+  raw: string,
+  changedFiles?: string[],
+): DiagramResult {
   let cleaned = raw.trim();
   // Strip markdown code fences if the model wraps them anyway
   if (cleaned.startsWith('```')) {
@@ -612,6 +701,20 @@ function parseDiagramResponse(raw: string): DiagramResult {
   // Reject output that isn't a valid Mermaid diagram (e.g. LLM hallucination,
   // PGP keys, prose, or other non-diagram content)
   if (!isValidMermaidDiagram(diagram)) {
+    return { diagram: '', caption: '' };
+  }
+
+  // FP-D — drop the diagram if it cites any file that isn't in the PR's
+  // changed-files set. The DIAGRAM_PROMPT already tells the model to only
+  // reference files in the diff; this enforces it deterministically.
+  const pathCheck = validateDiagramPaths(diagram, changedFiles);
+  if (!pathCheck.ok) {
+    console.warn(
+      '[fp-d] dropping diagram — cites %d file%s not in the PR diff: %s',
+      pathCheck.invalidPaths.length,
+      pathCheck.invalidPaths.length === 1 ? '' : 's',
+      pathCheck.invalidPaths.join(', '),
+    );
     return { diagram: '', caption: '' };
   }
 
@@ -1582,6 +1685,13 @@ export async function runReviewPipeline(
   const accumulator = new TokenAccumulator();
   const llm = new TrackingLLMProvider(deps.llm, accumulator);
 
+  // Extract the changed-file set once, up front. Used for:
+  //   - FP-D diagram path validation (passed into runDiagramAgent below).
+  //   - Line-proximity grounding filter further down the pipeline.
+  // extractChangedLines is a cheap regex pass over the diff — no LLM call.
+  const changedLines = extractChangedLines(diff);
+  const changedFiles = Array.from(changedLines.keys());
+
   // Launch all enabled agents with bounded concurrency (see AGENT_CONCURRENCY).
   // Note: summary and diagram agents don't get file fetching (they benefit less from deep context)
   const [
@@ -1611,7 +1721,7 @@ export async function runReviewPipeline(
       ? runSummaryAgent(diff, context, lightModelId, llm, conventions, agentAuthored)
       : Promise.resolve(''),
     () => enabledAgents.diagram
-      ? runDiagramAgent(diff, context, lightModelId, llm, previousDiagram)
+      ? runDiagramAgent(diff, context, lightModelId, llm, previousDiagram, changedFiles)
       : Promise.resolve({ diagram: '', caption: '' } as DiagramResult),
   ], AGENT_CONCURRENCY) as [
     AgentFinding[], AgentFinding[], AgentFinding[],
@@ -1779,8 +1889,8 @@ export async function runReviewPipeline(
     llm,
   );
 
-  // Filter findings to only those on or near actually changed lines
-  const changedLines = extractChangedLines(diff);
+  // Filter findings to only those on or near actually changed lines.
+  // `changedLines` was already computed up-front (used by FP-D too).
   const CHANGED_LINE_TOLERANCE = 3;
   const onChangedLines = withCodeFingerprints(
     groundedFindings.filter(

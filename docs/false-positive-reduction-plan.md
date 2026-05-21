@@ -76,16 +76,18 @@ W3's `partitionDisputed` runs **after** the orchestrator. So the orchestrator ha
 
 ---
 
-### FP-D — Diagram path validation  ★★
+### FP-D — Diagram path validation  ✅ SHIPPED
 
-**Where the gap lives:** `DIAGRAM_PROMPT` (`packages/core/src/agents/prompts.ts`) explicitly says *"Every node that references a file path MUST point to a file that actually appears in the diff."* Pure prompt — no enforcement. A diagram citing `src/utils/index.ts` when that file isn't in the diff renders confidently and misleads readers about what the PR touched.
+**Where the gap lived:** `DIAGRAM_PROMPT` (`packages/core/src/agents/prompts.ts`) explicitly says *"Every node that references a file path MUST point to a file that actually appears in the diff."* Pure prompt — no enforcement. A diagram citing `src/utils/index.ts` when that file isn't in the diff renders confidently and misleads readers about what the PR touched.
 
-**The fix:** post-process in `parseDiagramResponse` (`packages/core/src/agents/reviewer.ts`). After the existing `sanitizeMermaidOutput` step, scan the diagram for backticked + unquoted path-shaped tokens (`src/.../*.ts`, `packages/.../*.py`, etc.); intersect with `prContext.files`; if any cited path is NOT in the changed-files set, **drop the diagram** entirely (the existing empty-diagram fail path handles the comment-formatter side gracefully).
+**The fix:** post-process inside `parseDiagramResponse` (`packages/core/src/agents/reviewer.ts`). After `sanitizeMermaidOutput` and `isValidMermaidDiagram`, run a new `validateDiagramPaths(diagram, changedFiles)` helper. It extracts every path-shaped token (`<seg>/<…>.ext`, 1–8-char extension, surrounding backticks stripped, URL captures detected via the immediately-preceding `://` and skipped). Each cited path is accepted if it (a) exactly matches a changed file, (b) is a trailing-segment suffix of a changed file (model emitted a shortened path), or (c) has a changed file as its own trailing suffix (model emitted an absolute-ish form). Any cited path that matches none → the **entire diagram** is dropped (`{ diagram: '', caption: '' }`) and the comment-formatter's existing empty-diagram path renders without a Mermaid block.
 
-`prContext.files` is already available at `runDiagramAgent`'s caller (`runReviewPipeline`); pass it through to `parseDiagramResponse`.
+`runDiagramAgent` gained an optional `changedFiles?` arg. `runReviewPipeline` hoists `extractChangedLines(diff)` up front (cheap regex, no LLM call), derives `changedFiles = [...changedLines.keys()]`, and feeds both the diagram agent and the existing W2/line-proximity stages — no double-extraction, no API surface change for the handlers.
 
-**Code targets:** `packages/core/src/agents/reviewer.ts` (`parseDiagramResponse`, `runDiagramAgent`).
-**E2E target:** [E2E-33](./../e2e/RUNBOOK.md#e2e-33-fp-d--diagram-path-validation-target).
+**Fail-open:** when `changedFiles` is undefined or empty, `validateDiagramPaths` returns `ok: true`. Older direct callers of `runDiagramAgent` (tests, external integrations) keep working unchanged.
+
+**Code targets (final):** `packages/core/src/agents/reviewer.ts` (new exported `extractDiagramFilePaths`, `validateDiagramPaths`; wired into `parseDiagramResponse` + `runDiagramAgent` + `runReviewPipeline`), `packages/core/src/index.ts` (exports).
+**E2E target:** [E2E-33](./../e2e/RUNBOOK.md#e2e-33-fp-d--diagram-path-validation).
 
 ---
 
@@ -146,12 +148,12 @@ Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected i
 | **FP-A** | Hard confidence-floor filter | tiny | one filter call | ✅ SHIPPED |
 | **FP-B** | Pre-filter `previousFindings` by disputedKeys | tiny | two handlers, ~10 lines | ✅ SHIPPED |
 | **FP-C** | Pre-orchestrator same-file-same-line dedup | small | reuses W10's helper | ✅ SHIPPED |
-| **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ★★ |
+| **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ✅ SHIPPED |
 | **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ★ |
 | **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ★ |
 | **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ★ |
 
-**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR. Then FP-E / FP-F / FP-G as individual polish PRs in any order.
+**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped). Then FP-E / FP-F / FP-G as individual polish PRs in any order.
 
 ---
 

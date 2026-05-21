@@ -159,7 +159,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) | 1m | 60s | FP-A |
 | [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B |
 | [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C |
-| [E2E-33](#e2e-33-fp-d--diagram-path-validation-target) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) — **TARGET** | 1m | 60s | FP-D |
+| [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings-target) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) — **TARGET** | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory-target) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) — **TARGET** | 3m | 90s | FP-F |
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent-target) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) — **TARGET** | 2m | 60s | FP-G |
@@ -1329,13 +1329,13 @@ export function run(userCmd: string): Promise<void> {
 
 ---
 
-### E2E-33: FP-D — diagram path validation — TARGET
+### E2E-33: FP-D — diagram path validation
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-D](./../docs/false-positive-reduction-plan.md#fp-d--diagram-path-validation--).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-D](./../docs/false-positive-reduction-plan.md#fp-d--diagram-path-validation--shipped).
 
-**Behavior (intended, once FP-D ships):** the diagram agent's output is post-processed against `prContext.files` (the actual changed files of the PR). If the diagram cites any file path that is NOT in the changed-files set, the diagram is dropped entirely — the comment-formatter's existing empty-diagram path renders without a Mermaid block.
+**Behavior:** `parseDiagramResponse` in `packages/core/src/agents/reviewer.ts` post-processes every Mermaid diagram against the PR's changed-file set (derived once up-front from `extractChangedLines(diff)` in `runReviewPipeline`). The validator extracts every path-shaped token (`*/*.ext`, 1–8-char extension, URLs stripped) and accepts each one if it exactly matches a changed file, is a trailing-segment suffix of one (`db.ts` → `packages/server/src/db.ts`), or has a changed file as its own trailing suffix (`abs/path/foo.ts` → `path/foo.ts`). Any cited path that matches none of those → the **entire** diagram is dropped (`{ diagram: '', caption: '' }`) and the comment-formatter renders no Mermaid block.
 
-The DIAGRAM_PROMPT already says *"Every node that references a file path MUST point to a file that actually appears in the diff."* FP-D enforces it.
+The DIAGRAM_PROMPT already says *"Every node that references a file path MUST point to a file that actually appears in the diff."* FP-D enforces it deterministically. Fail-open: when `changedFiles` is undefined/empty, the validator returns `ok: true` — older direct callers of `runDiagramAgent` (e.g. some tests) keep working unchanged.
 
 **Setup**
 
@@ -1349,18 +1349,21 @@ export class UserRepo {
 }
 ```
 
-To force the failure pre-FP-D, inject a Mermaid diagram referencing `src/db.ts` into the diagram-agent response and confirm the rendered comment shows a hallucinated node.
+To force the failure path, inject a Mermaid diagram referencing `src/db.ts` (or any file not in the diff) into the diagram-agent response and confirm the rendered comment has **no Mermaid block**.
 
 **Expected outcomes**
 
-- [ ] If a diagram is emitted, every path it cites is in `prContext.files`
-- [ ] If the diagram cites a hallucinated path, the rendered comment has **no Mermaid block** (silent drop, no parse error)
-- [ ] Agent log includes `[diagram-validation] dropped diagram — references file(s) not in changed set: src/db.ts`
-- [ ] **Regression check**: a diagram referencing only real changed files renders normally
+- [x] If a diagram is emitted, every path it cites is in the PR's changed-files set
+- [x] If the diagram cites a hallucinated path, the rendered comment has **no Mermaid block** (silent drop, no parse error)
+- [x] Agent log includes `[fp-d] dropping diagram — cites N file(s) not in the PR diff: src/db.ts`
+- [x] **Regression check**: a diagram referencing only real changed files renders normally
+- [x] **Regression check**: a diagram with no path-shaped tokens at all (sequence/state diagrams) renders normally
+- [x] **Regression check**: a diagram containing a `https://example.com/page.html` URL inside a label does NOT trigger a drop
 
 **Failure modes**
 - ❌ The rendered comment shows a Mermaid node whose label is a path not in the PR
 - ❌ A legitimate diagram gets dropped because the path-extraction regex over-matches (e.g. picks up part of a function name and treats it as a file)
+- ❌ A URL inside a diagram label triggers a false-positive drop
 
 ---
 
