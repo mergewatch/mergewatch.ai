@@ -608,24 +608,38 @@ export function extractDiagramFilePaths(diagram: string): string[] {
   if (!diagram) return [];
   // Strip backticks first — they only ever wrap a token, never appear inside one.
   const stripped = diagram.replace(/`/g, '');
-  // Path token: starts with an alphanumeric or `_`/`.`, then any mix of those
-  // plus `/` and `-`, must contain at least one `/`, must end in `.ext`.
-  // The `[A-Za-z0-9]{1,8}` extension cap keeps us from greedy-grabbing trailing
-  // sentence punctuation; the leading character class avoids matching a
-  // leading `/` (rare but causes false positives on URLs / regex literals).
-  const PATH_RE = /[A-Za-z0-9_.][A-Za-z0-9_./-]*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}/g;
+
+  // Two-step tokenize-then-validate. The previous single combined regex used
+  // adjacent character classes that both matched `.`, which CodeQL flagged
+  // for polynomial backtracking on long dot runs (PR #160 alert). Here we
+  // first split on any character that can't appear inside a path token, then
+  // validate each candidate using simple substring checks (no quantifier
+  // ambiguity). Worst case is linear in the input length.
+  const TOKEN_RE = /[A-Za-z0-9_./-]+/g;
   const seen = new Set<string>();
-  for (const m of stripped.matchAll(PATH_RE)) {
-    // Skip URL captures. The regex starts AFTER the `://` separator (because
-    // `:` and `/` aren't in the leading-char class), so the model's
-    // `https://example.com/path.html` arrives here as just
-    // `example.com/path.html`. Detect it by checking the three characters
-    // immediately before the match — if they're `://`, this is the
-    // post-scheme portion of a URL, not a repo-relative path.
+  for (const m of stripped.matchAll(TOKEN_RE)) {
+    const token = m[0];
     const idx = m.index ?? 0;
-    const before = stripped.slice(Math.max(0, idx - 3), idx);
-    if (before === '://') continue;
-    seen.add(m[0]);
+
+    // Skip URL post-scheme captures. For `https://example.com/path.html`
+    // tokenizing on `:` (the boundary char) yields `//example.com/path.html`
+    // here, so the char immediately before the token is `:`. That's enough
+    // to identify URL tails — repo-relative paths in Mermaid labels are
+    // never preceded by `:` (label punctuation is `"` or `[`).
+    if (idx > 0 && stripped[idx - 1] === ':') continue;
+
+    // Must look like a path: at least one `/`, a trailing `.ext` of 1–8
+    // alphanumeric chars, and at least one actual alphanumeric somewhere
+    // (filters out pure-punctuation tokens like `..`, `/./`, etc.).
+    if (!token.includes('/')) continue;
+    const dotIdx = token.lastIndexOf('.');
+    if (dotIdx <= 0 || dotIdx === token.length - 1) continue;
+    const ext = token.slice(dotIdx + 1);
+    if (ext.length < 1 || ext.length > 8) continue;
+    if (!/^[A-Za-z0-9]+$/.test(ext)) continue;
+    if (!/[A-Za-z0-9]/.test(token)) continue;
+
+    seen.add(token);
   }
   return Array.from(seen);
 }
