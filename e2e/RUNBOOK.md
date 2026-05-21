@@ -156,6 +156,13 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 |
 | [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 |
 | [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 |
+| [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter-target) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) — **TARGET** | 1m | 60s | FP-A |
+| [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys-target) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) — **TARGET** | 2m | 60s | FP-B |
+| [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup-target) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) — **TARGET** | 1m | 60s | FP-C |
+| [E2E-33](#e2e-33-fp-d--diagram-path-validation-target) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) — **TARGET** | 1m | 60s | FP-D |
+| [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings-target) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) — **TARGET** | 2m | 60s | FP-E |
+| [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory-target) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) — **TARGET** | 3m | 90s | FP-F |
+| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent-target) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) — **TARGET** | 2m | 60s | FP-G |
 
 ---
 
@@ -1226,6 +1233,226 @@ The bait: bug / security / style / error-handling agents each have a distinct an
 - ❌ The merged finding's body lost the audit trail (the "Related concerns" list is missing or truncated)
 
 **Note**: `clusterFindings` is deliberately conservative. If you observe under-clustering in production (related findings should have merged but didn't), widen the heuristic via the `ClusterOptions` knobs (`maxLineSpan`, `minTokenOverlap`) rather than removing the cluster-size cap. Over-clustering would hide distinct issues under one heading — much worse than the noise it eliminates.
+
+---
+
+### E2E-30: FP-A — hard confidence-floor filter — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-A](./../docs/false-positive-reduction-plan.md#fp-a--hard-confidence-floor-filter--).
+
+**Behavior (intended, once FP-A ships):** the orchestrator's prompt rule #5 (*"Drop any finding with confidence below 75"*) is enforced **deterministically** in code. Any finding whose `confidence < 75` is dropped post-orchestrator regardless of what the model returns. Findings with no `confidence` field default to 100 (no suppression).
+
+**Setup**
+
+Branch: `fixture/30-confidence-floor`. The trigger is "the model emits a finding with low confidence." Stochastic on a real LLM — a reliable way to force one is a small file with a subtle issue the model isn't sure about:
+
+```ts
+// src/maybe.ts — designed to draw a low-confidence finding
+export function lookupByPattern(rows: Array<{ id: number; name: string }>, q: string): unknown {
+  // The model often says "consider escaping `q` to avoid pattern injection" with confidence ~60.
+  return rows.find((r) => new RegExp(q).test(r.name));
+}
+```
+
+To force the suppression deterministically in a self-hosted run, inject `{ ...finding, confidence: 60 }` into the orchestrator response.
+
+**Expected outcomes**
+
+- [ ] No finding with `confidence < 75` appears in the rendered comment
+- [ ] Agent log includes `[confidence-floor] dropped N finding(s) with confidence < 75`
+- [ ] `Suppressed N` in the Review details collapsible reflects the drop
+- [ ] A finding with `confidence === 75` (boundary) is **kept** — the filter is `< 75`, not `<= 75`
+- [ ] A finding with NO `confidence` field is **kept** (defaults to 100; no surprise suppression of legacy / pre-FP-A stored findings)
+
+**Failure modes**
+- ❌ A finding rendered with `confidence < 75` in the persisted review record
+- ❌ A finding without a `confidence` field gets dropped (default-to-100 contract regressed)
+- ❌ The drop happens BEFORE the orchestrator runs (would lose the model's deduplication signal — the floor must apply to the orchestrator's OUTPUT, not its INPUT)
+
+---
+
+### E2E-31: FP-B — pre-filter previousFindings by disputedKeys — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-B](./../docs/false-positive-reduction-plan.md#fp-b--pre-filter-previousfindings-by-disputedkeys--).
+
+**Behavior (intended, once FP-B ships):** prior findings whose stable identity key is in `disputedKeys` (the W3 author-rebutted set computed from `## mergewatch triage` comments) are **excluded from the orchestrator's `previousFindings` block entirely**. Today they're passed through and the orchestrator prompt encourages it to "carry forward" them; W3's suppression then runs downstream. After FP-B, the orchestrator never sees them — saves prompt tokens and eliminates the small set of re-emissions that slip past W3's stable-key match because the model reframed the finding.
+
+**Setup**
+
+Branch: `fixture/31-prev-disputed-prefilter`. Two-commit sequence:
+
+1. **Step 1** — open a PR where the bot raises a critical (a textbook design-opinion finding the author will rebut, e.g. *"DB query lacks error handling"* on a data-access function).
+2. **Step 2** — post a `## mergewatch triage` comment rebutting the finding by design (mirrors voice-bot triage convention). Push a small no-op commit.
+
+**Expected outcomes**
+
+- [ ] On the step-2 review, the agent log shows a SMALLER `previousFindings` payload than would otherwise have been computed — the rebutted critical is missing
+- [ ] No `[triage-suppressed]` log line for the rebutted critical (it never reached the suppression step — the orchestrator never re-emitted it)
+- [ ] Verdict converges on step 2 (no `🆕 new` row for the rebutted concern)
+- [ ] **Regression check**: a prior critical that was NOT rebutted is still passed through as `previousFindings` and behaves the same as before FP-B
+
+**Failure modes**
+- ❌ Rebutted finding is still in the `previousFindings` block (the pre-filter didn't apply)
+- ❌ A non-rebutted prior finding gets wrongly excluded (over-filter — the pre-filter must scope to `disputedKeys` only)
+
+---
+
+### E2E-32: FP-C — pre-orchestrator cross-agent dedup — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-C](./../docs/false-positive-reduction-plan.md#fp-c--pre-orchestrator-same-file-same-line-dedup--).
+
+**Behavior (intended, once FP-C ships):** when two or more agents flag the same `(file, line)` with overlapping titles, the duplicates are merged **before** the orchestrator's LLM call. Reuses W10's `extractSignificantTokens` for title-similarity. Strongest severity wins; absorbed siblings recorded.
+
+This is distinct from W10's clustering (which runs *post-orchestrator* on a wider line region). FP-C handles the exact-`file:line` case that W10's `maxLineSpan` is unnecessarily wide for.
+
+**Setup**
+
+Branch: `fixture/32-cross-agent-dedup`. Add a file that reliably draws multiple agents' attention to the SAME line:
+
+```ts
+// src/exec.ts — designed for security + bug + error-handling agents to all flag line 3.
+export function run(userCmd: string): Promise<void> {
+  return require('child_process').exec(userCmd);  // line 3 — security, bug, AND error-handling each have an angle
+}
+```
+
+**Expected outcomes**
+
+- [ ] The orchestrator's input `taggedFindings` was deduplicated (agent log shows count reduction)
+- [ ] The rendered comment has **one** finding for the `src/exec.ts:3` concern, not 2-3
+- [ ] The merged finding's body lists the absorbed siblings (mirrors W10's audit-trail format)
+- [ ] **Regression check**: if two agents flag the same file but DIFFERENT lines (e.g. `:3` and `:50`), they pass through to the orchestrator independently — FP-C only merges exact-line matches
+
+**Failure modes**
+- ❌ Same `(file, line)` from two agents appears as two rows in "Requires your attention"
+- ❌ Two findings on DIFFERENT lines of the same file get merged (over-dedup — FP-C must require exact line match)
+
+---
+
+### E2E-33: FP-D — diagram path validation — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-D](./../docs/false-positive-reduction-plan.md#fp-d--diagram-path-validation--).
+
+**Behavior (intended, once FP-D ships):** the diagram agent's output is post-processed against `prContext.files` (the actual changed files of the PR). If the diagram cites any file path that is NOT in the changed-files set, the diagram is dropped entirely — the comment-formatter's existing empty-diagram path renders without a Mermaid block.
+
+The DIAGRAM_PROMPT already says *"Every node that references a file path MUST point to a file that actually appears in the diff."* FP-D enforces it.
+
+**Setup**
+
+Branch: `fixture/33-diagram-hallucinated-path`. A PR that touches `src/a.ts` only, but where the diagram is likely to invent a related file. The most reliable trigger is a single-file refactor that *implies* a larger module structure:
+
+```ts
+// src/a.ts — the only file changed
+export class UserRepo {
+  // diagram agent often invents `src/db.ts`, `src/types/user.ts`, etc.
+  async findById(id: number) { /* … */ }
+}
+```
+
+To force the failure pre-FP-D, inject a Mermaid diagram referencing `src/db.ts` into the diagram-agent response and confirm the rendered comment shows a hallucinated node.
+
+**Expected outcomes**
+
+- [ ] If a diagram is emitted, every path it cites is in `prContext.files`
+- [ ] If the diagram cites a hallucinated path, the rendered comment has **no Mermaid block** (silent drop, no parse error)
+- [ ] Agent log includes `[diagram-validation] dropped diagram — references file(s) not in changed set: src/db.ts`
+- [ ] **Regression check**: a diagram referencing only real changed files renders normally
+
+**Failure modes**
+- ❌ The rendered comment shows a Mermaid node whose label is a path not in the PR
+- ❌ A legitimate diagram gets dropped because the path-extraction regex over-matches (e.g. picks up part of a function name and treats it as a file)
+
+---
+
+### E2E-34: FP-E — W2 verification extended to warnings — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-E](./../docs/false-positive-reduction-plan.md#fp-e--extend-w2-verification-to-warnings--).
+
+**Behavior (intended, once FP-E ships):** the W2 critical-verification pass extends to `warning` severity too. Each warning gets verified against the full file content; the `verification: 'verified' | 'unverified'` tag is set; the same fail-open semantics apply. Closes the "downgrade Critical to Warning to dodge verification" loophole and reduces warning-level FPs.
+
+**Setup**
+
+Branch: `fixture/34-warning-verification`. A PR with a textbook warning-FP bait — a "type assertion without runtime validation" warning on code that *does* validate just upstream (the validation is in a different function call), à la voice-bot #37:
+
+```ts
+// src/parse.ts
+function validateChunk(c: unknown): c is { id: string } {
+  return typeof c === 'object' && c !== null && 'id' in c;
+}
+export function parseChunks(raw: unknown[]): unknown[] {
+  for (const c of raw) {
+    if (!validateChunk(c)) throw new Error('bad chunk');  // the validation
+  }
+  return raw as { id: string }[];  // warning bait: "type assertion without runtime validation"
+}
+```
+
+**Expected outcomes**
+
+- [ ] Each surviving warning carries a `verification: 'verified' | 'unverified'` tag in the persisted review record
+- [ ] If the verification pass says `valid: false`, the warning is dropped (same as criticals today)
+- [ ] If the W7 score-guardrail policy is extended to warnings (separate decision), the formal Review event downgrades when every surviving warning is `unverified`
+- [ ] Tokens / cost on the Review details collapsible reflect the additional LLM calls (one per warning)
+
+**Failure modes**
+- ❌ A warning still has no `verification` field in the stored record post-FP-E
+- ❌ A legitimately-warning-flagged issue gets dropped because the verifier model is biased toward `valid: false` on warning-severity prompts (mitigation: same `CRITICAL_VERIFICATION_PROMPT` re-used; the prompt is severity-agnostic)
+
+---
+
+### E2E-35: FP-F — inline-reply resolve memory — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-F](./../docs/false-positive-reduction-plan.md#fp-f--inline-reply-resolve-memory--disputedkeys--).
+
+**Behavior (intended, once FP-F ships):** when a human posts an inline-thread reply matching `detectResolveIntent` (*"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"*), the finding's stable identity key is **persisted** to the review record. The next full review unions that set with the W3 `disputedKeys` and partitions the matching findings out before they hit the comment. Extends W3 from `## mergewatch triage` top-level comments to inline-thread resolutions.
+
+**Setup**
+
+Branch: `fixture/35-inline-resolve`. Two-commit sequence:
+
+1. **Step 1** — open a PR that draws an inline-comment-eligible Critical (any score-1-2 finding). Wait for the bot to render an inline-thread on that finding.
+2. **Step 2** — as the PR author, reply *"resolved"* in the inline thread. Confirm the thread shows resolved. Push a small no-op commit to trigger a re-review.
+
+**Expected outcomes**
+
+- [ ] The next review's rendered comment does **not** re-raise the resolved Critical (no row in "Requires your attention" for it)
+- [ ] Agent log shows the resolved-finding's key being passed to `partitionDisputed` (alongside any W3 keys)
+- [ ] **Regression check**: a follow-up commit that materially changes the resolved code (fingerprint changes) re-raises the finding (the resolution is code-anchored via W9's fingerprint, not permanent)
+
+**Failure modes**
+- ❌ The resolved finding re-appears on the next review under a slightly different framing (FP-F's stable-key persistence missed the framing change — likely a W9 fingerprint coverage gap surfaced via this path)
+- ❌ An unrelated finding gets suppressed (the resolve key was over-broad)
+
+---
+
+### E2E-36: FP-G — linter-aware style agent — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--).
+
+**Behavior (intended, once FP-G ships):** at the conventions-load step, scan the repo for known linter marker files (`.eslintrc*`, `eslint.config.{js,ts,mjs,cjs}`, `biome.json`, `ruff.toml`, `pyproject.toml [tool.ruff]`, `.flake8`, `clippy.toml`, `.golangci.yml`, `.stylelintrc*`). When detected, inject a `LINTER_AWARE_DIRECTIVE` into the **style agent's** prompt only: *"Repository has these linters configured: ${list}. Defer all formatting / lint-equivalent findings to them and do NOT emit them. Code-smell and architecture findings remain in scope."*
+
+**Setup**
+
+Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present / absent":
+
+- **Linter-present fixture**: a PR in a repo that has `eslint.config.mjs` at the root. The diff introduces missing-semicolon or unused-import style violations — things eslint catches.
+- **No-linter fixture**: same diff, but the eslint config is removed. The style agent should still report.
+
+**Expected outcomes — linter-present**
+
+- [ ] The style agent prompt (visible in agent logs / dashboard "view full details") includes the `LINTER_AWARE_DIRECTIVE` block listing `eslint`
+- [ ] The rendered comment has **no** semicolon / unused-import / formatting-style findings — the style agent deferred to the (assumed) linter
+- [ ] Code-smell findings (god functions, deep nesting, magic numbers) DO still appear — only lint-equivalent ones are deferred
+
+**Expected outcomes — no-linter**
+
+- [ ] No `LINTER_AWARE_DIRECTIVE` in the prompt (placeholder stripped)
+- [ ] Style findings (including lint-equivalent ones) are emitted as before
+
+**Failure modes**
+- ❌ Linter-present repo still gets *"missing semicolon"* / *"unused import"* findings
+- ❌ Code-smell findings (god functions, nesting) are also suppressed (over-defer — only lint-equivalent should defer)
+- ❌ Detection false-positive: a `.eslintrc.json` in a `node_modules/` subdirectory triggers the directive (the scan must be repo-root only)
 
 ---
 
