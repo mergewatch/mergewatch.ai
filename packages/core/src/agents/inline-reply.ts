@@ -34,8 +34,10 @@ import {
   resolveReviewThread,
   findReviewThreadIdForComment,
   INLINE_BOT_COMMENT_MARKER,
+  extractInlineCommentTitle,
   type ReviewThreadComment,
 } from '../github/client.js';
+import { findingMatchKeys } from '../review-delta.js';
 import type { Octokit } from '@octokit/rest';
 
 /** Max number of bot replies permitted in a single thread before we stop engaging. */
@@ -96,9 +98,44 @@ export interface InlineReplyResult {
   recommendation?: 'resolve' | 'keep' | 'needs_info';
   /** Populated when `action === 'replied'`. */
   botCommentId?: number;
+  /**
+   * FP-F — Stable identity keys for the finding the developer resolved.
+   * Populated only when `action === 'resolved'` AND the root inline
+   * comment carried a recoverable file path + finding title. The
+   * server / lambda handler unions these into the persisted
+   * `inlineResolvedKeys` on the latest review record so the next full
+   * review won't re-emit the same finding under a different framing.
+   * Empty/undefined if the path was missing (older bot-comment shape)
+   * or the title couldn't be parsed (defensive — never crashes resolve).
+   */
+  resolvedFindingKeys?: string[];
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number | null;
+}
+
+/**
+ * FP-F — recover the resolved finding's stable identity keys from the
+ * thread root. The root MergeWatch inline comment is anchored to a file
+ * path on GitHub's side (`path` on the comment object) and its body
+ * carries the finding title in `**🔴 <title>**` form. With both we can
+ * synthesise `findingMatchKeys({ file, title })` and persist them as
+ * the "don't re-raise" memory for the next review.
+ *
+ * Returns `[]` (rather than throwing) when either piece is missing:
+ * resolving the thread itself must NOT depend on FP-F succeeding —
+ * the worst case is a future review re-raises the same concern, which
+ * is no worse than pre-FP-F behavior.
+ */
+function deriveResolvedFindingKeys(root: ReviewThreadComment): string[] {
+  if (!root.path) return [];
+  const title = extractInlineCommentTitle(root.body);
+  if (!title) return [];
+  // `findingMatchKeys` reads only `file`, `title`, and `fingerprint`. The
+  // `line: 0` placeholder satisfies the FindingLike shape without affecting
+  // the emitted keys — the title key is `file::T::title`, which is exactly
+  // what we want here (no fingerprint is recoverable from the comment body).
+  return findingMatchKeys({ file: root.path, line: 0, title });
 }
 
 /** Parsed JSON response from the inline reply agent. */
@@ -212,7 +249,20 @@ export async function handleInlineReply(
       );
       if (threadNodeId) {
         await resolveReviewThread(deps.octokit, threadNodeId);
-        return { action: 'resolved', reason: 'explicit resolve intent', inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+        // FP-F — surface the resolved finding's stable identity keys so
+        // the caller can persist them onto the review record. Best-effort
+        // (deriveResolvedFindingKeys returns [] when the root is missing
+        // the file path or the title is unparseable); resolution itself
+        // already succeeded above.
+        const resolvedFindingKeys = deriveResolvedFindingKeys(root);
+        return {
+          action: 'resolved',
+          reason: 'explicit resolve intent',
+          resolvedFindingKeys: resolvedFindingKeys.length > 0 ? resolvedFindingKeys : undefined,
+          inputTokens: 0,
+          outputTokens: 0,
+          estimatedCostUsd: 0,
+        };
       }
       return { action: 'skipped', reason: 'could not locate review thread id', inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
     }

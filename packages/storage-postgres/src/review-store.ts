@@ -148,6 +148,9 @@ export class PostgresReviewStore implements IReviewStore {
       ...(row.reactions ? { reactions: row.reactions as any } : {}),
       ...(row.installationId ? { installationId: row.installationId } : {}),
       ...(row.settingsUsed ? { settingsUsed: row.settingsUsed as any } : {}),
+      ...(Array.isArray(row.inlineResolvedKeys) && row.inlineResolvedKeys.length > 0
+        ? { inlineResolvedKeys: row.inlineResolvedKeys as string[] }
+        : {}),
     }));
   }
 }

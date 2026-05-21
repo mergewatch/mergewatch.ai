@@ -108,16 +108,24 @@ The same fail-safe semantics apply at both severities: missing file content → 
 
 ---
 
-### FP-F — Inline-reply resolve memory → `disputedKeys`  ★
+### FP-F — Inline-reply resolve memory → `disputedKeys`  ✅ SHIPPED
 
-**Where the gap lives:** `packages/core/src/agents/inline-reply.ts:65` (`detectResolveIntent`) parses *"resolved"* / *"please resolve"* / *"mergewatch resolve"* from inline-thread replies and marks the GitHub thread resolved. But the finding's stable key (`findingMatchKeys`) is **not** added to any "don't re-raise" set — the next full review can re-emit that finding under a slightly different framing.
+**Where the gap lived:** `detectResolveIntent` parses *"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"* from inline-thread replies and marks the GitHub thread resolved. But the finding's stable key (`findingMatchKeys`) was **not** added to any "don't re-raise" set — the next full review could re-emit that finding under a slightly-different framing. Same logical bug as the original W3 problem, manifested on inline threads instead of top-level `## mergewatch triage` comments.
 
-Same logical bug as the original W3 problem (model re-asserting rebutted findings), manifested on inline threads instead of top-level `## mergewatch triage` comments.
+**The fix:**
 
-**The fix:** when `detectResolveIntent` fires in `handleInlineReply`, persist the resolved-finding's `findingMatchKeys` to a new per-PR "inline-disputed" set on the review record (alongside the existing `disputedFindingKeys` if added — otherwise as its own field). Union with the W3 disputedKeys when fetching them at the next review run.
+- `ReviewThreadComment` (in `packages/core/src/github/client.ts`) gained an optional `path` field, populated from GitHub's review-comment `path` so the inline-resolve handler can recover the anchored file.
+- `handleInlineReply` derives the resolved finding's `findingMatchKeys` from the thread root (`{ file: root.path, line: 0, title: extractInlineCommentTitle(root.body) }`) and surfaces them on `InlineReplyResult.resolvedFindingKeys`. Fail-safe: missing `path` or unparseable title returns `[]`; resolution itself still succeeds, just no key memory is surfaced.
+- The handlers (`packages/server/src/review-processor.ts` and `packages/lambda/src/handlers/review-agent.ts`) append the keys onto the latest review record's new `inlineResolvedKeys` field (dedup + cap 500), persisted via the existing `updateStatus` extra-fields path. Log lines: `[fp-f] persisted N inline-resolved key(s) on …`.
+- On the next full review (same handlers), `prevComplete.inlineResolvedKeys` is unioned with the live-computed W3 `disputedKeys` before being passed to `runReviewPipeline`. Log lines: `[fp-f] unioned N inline-resolved key(s) into disputedKeys (now N total)`. The downstream FP-B previousFindings pre-filter and W3 `partitionDisputed` already operate on the full union — no behaviour divergence vs the W3 path.
 
-**Code targets:** `packages/core/src/agents/inline-reply.ts`, `packages/core/src/triage.ts` (or a new `inline-resolutions.ts`), `packages/core/src/types/db.ts` (new optional field on `ReviewItem`).
-**E2E target:** [E2E-35](./../e2e/RUNBOOK.md#e2e-35-fp-f--inline-reply-resolve-memory-target).
+**Schema:**
+- `ReviewItem.inlineResolvedKeys?: string[]` — added to `packages/core/src/types/db.ts`.
+- Postgres `reviews.inline_resolved_keys` jsonb column + Drizzle migration `0002_bouncy_sally_floyd.sql` (using `ADD COLUMN IF NOT EXISTS` per CLAUDE.md guidance). DynamoDB is schemaless so no DDL change needed.
+- `queryByPR` on the Postgres review-store maps the column back through to the typed `ReviewItem`.
+
+**Code targets (final):** `packages/core/src/types/db.ts` (field), `packages/core/src/github/client.ts` (`ReviewThreadComment.path`), `packages/core/src/agents/inline-reply.ts` (`deriveResolvedFindingKeys` helper + result surface), `packages/server/src/review-processor.ts` + `packages/lambda/src/handlers/review-agent.ts` (persist on resolve + union on review), `packages/storage-postgres/src/schema.ts` + `drizzle/0002_*.sql` + `review-store.ts` output mapping.
+**E2E target:** [E2E-35](./../e2e/RUNBOOK.md#e2e-35-fp-f--inline-reply-resolve-memory).
 
 ---
 
@@ -151,7 +159,7 @@ Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected i
 | **FP-C** | Pre-orchestrator same-file-same-line dedup | small | reuses W10's helper | ✅ SHIPPED |
 | **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ✅ SHIPPED |
 | **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ✅ SHIPPED |
-| **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ★ |
+| **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ✅ SHIPPED |
 | **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ★ |
 
 **Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped). Then FP-E / FP-F / FP-G as individual polish PRs in any order.

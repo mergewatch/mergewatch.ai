@@ -66,6 +66,8 @@ function makeOctokitMock(comments: Array<{
   user: { login: string; type: 'User' | 'Bot' };
   in_reply_to_id?: number;
   created_at?: string;
+  /** FP-F: optional file path the inline review comment is anchored to. */
+  path?: string;
 }>): { octokit: Octokit; calls: MockOctokitCalls } {
   const calls: MockOctokitCalls = {
     listReviewComments: vi.fn(async () => ({ data: comments })),
@@ -275,5 +277,85 @@ describe('handleInlineReply', () => {
       { octokit, llm, lightModelId: 'light' },
     )).rejects.toThrow('boom');
     expect(calls.deleteForPullRequestComment).toHaveBeenCalled();
+  });
+
+  // ─── FP-F — surface stable identity keys for the resolved finding ─────────
+
+  it('FP-F — returns resolvedFindingKeys when the root inline comment has a path + title', async () => {
+    // Root body uses the canonical inline-finding shape (`<!-- mergewatch-inline -->`
+    // + `**🔴 <title>**`) so extractInlineCommentTitle can recover the title.
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Missing try/catch around this call**\n\nWrap fetch() so a network error doesn\'t crash the worker.',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'packages/server/src/worker.ts',
+    };
+    const { octokit } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: 'looks fine to me', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+      { id: 102, body: '/resolve', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 101, created_at: '2026-04-01T02:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 102 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('resolved');
+    expect(result.resolvedFindingKeys).toEqual([
+      'packages/server/src/worker.ts::T::Missing try/catch around this call',
+    ]);
+  });
+
+  it('FP-F — leaves resolvedFindingKeys undefined when the root has no path (older inline comments)', async () => {
+    // No `path` on the root → can't derive the file portion of the match key.
+    // Resolution itself still succeeds; just no key memory is surfaced.
+    const { octokit } = makeOctokitMock([
+      { id: 100, body: '<!-- mergewatch-inline -->\n**🔴 Title here**\n\nDesc.', user: { login: 'mergewatch[bot]', type: 'Bot' as const }, created_at: '2026-04-01T00:00:00Z' },
+      { id: 101, body: '/resolve', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('resolved');
+    expect(result.resolvedFindingKeys).toBeUndefined();
+  });
+
+  it('FP-F — leaves resolvedFindingKeys undefined when the body has no `**🔴 …**` title', async () => {
+    // Body has the marker but pre-W6 / non-finding shape → no recoverable title.
+    const { octokit } = makeOctokitMock([
+      { id: 100, body: '<!-- mergewatch-inline -->\nFreeform note without the bold-red-emoji title.', user: { login: 'mergewatch[bot]', type: 'Bot' as const }, path: 'a.ts', created_at: '2026-04-01T00:00:00Z' },
+      { id: 101, body: '/resolve', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('resolved');
+    expect(result.resolvedFindingKeys).toBeUndefined();
+  });
+
+  it('FP-F — keys are NOT emitted on non-resolve replies (only on the explicit-resolve fast path)', async () => {
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Some title**\n\nDesc.',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'src/a.ts',
+    };
+    const { octokit } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: 'not a resolve reply — just a discussion', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM(JSON.stringify({ reply: 'ack', recommendation: 'keep' }));
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('replied');
+    expect(result.resolvedFindingKeys).toBeUndefined();
   });
 });

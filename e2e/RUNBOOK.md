@@ -161,7 +161,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C |
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
-| [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory-target) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) — **TARGET** | 3m | 90s | FP-F |
+| [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent-target) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) — **TARGET** | 2m | 60s | FP-G |
 
 ---
@@ -1410,11 +1410,13 @@ export function parseChunks(raw: unknown[]): unknown[] {
 
 ---
 
-### E2E-35: FP-F — inline-reply resolve memory — TARGET
+### E2E-35: FP-F — inline-reply resolve memory
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-F](./../docs/false-positive-reduction-plan.md#fp-f--inline-reply-resolve-memory--disputedkeys--).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-F](./../docs/false-positive-reduction-plan.md#fp-f--inline-reply-resolve-memory--disputedkeys--shipped).
 
-**Behavior (intended, once FP-F ships):** when a human posts an inline-thread reply matching `detectResolveIntent` (*"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"*), the finding's stable identity key is **persisted** to the review record. The next full review unions that set with the W3 `disputedKeys` and partitions the matching findings out before they hit the comment. Extends W3 from `## mergewatch triage` top-level comments to inline-thread resolutions.
+**Behavior:** when a human posts an inline-thread reply matching `detectResolveIntent` (*"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"*), `handleInlineReply` recovers the finding's stable identity keys from the thread root (file `path` from the GitHub review-comment object + title parsed via `extractInlineCommentTitle` → `findingMatchKeys`) and returns them in the result. The server / lambda handlers append the keys to the latest review record's new `inlineResolvedKeys` field (dedup, cap 500). The next full review unions `prevComplete.inlineResolvedKeys` with the live-computed W3 `disputedKeys` and feeds the union into both FP-B's previousFindings pre-filter and the downstream W3 `partitionDisputed` suppression. Same identity scheme (W9 union-matching) as W3 itself.
+
+Fail-safe: if the root inline comment is missing `path` (pre-FP-F comment shape) or the title can't be parsed (`**🔴 …**` format absent), the keys derivation returns `[]` and resolution proceeds normally — pre-FP-F behavior is preserved.
 
 **Setup**
 
@@ -1425,13 +1427,17 @@ Branch: `fixture/35-inline-resolve`. Two-commit sequence:
 
 **Expected outcomes**
 
-- [ ] The next review's rendered comment does **not** re-raise the resolved Critical (no row in "Requires your attention" for it)
-- [ ] Agent log shows the resolved-finding's key being passed to `partitionDisputed` (alongside any W3 keys)
-- [ ] **Regression check**: a follow-up commit that materially changes the resolved code (fingerprint changes) re-raises the finding (the resolution is code-anchored via W9's fingerprint, not permanent)
+- [x] The next review's rendered comment does **not** re-raise the resolved Critical (no row in "Requires your attention" for it)
+- [x] Agent log shows `[fp-f] persisted N inline-resolved key(s) on …` after the inline-resolve, and `[fp-f] unioned N inline-resolved key(s) into disputedKeys (now N total)` on the next review
+- [x] The resolved-finding's key flows into the same `partitionDisputed` machinery that W3 uses (no separate suppression path → no risk of behaviour divergence)
+- [x] **Regression check**: a follow-up commit that materially changes the resolved code (fingerprint changes) re-raises the finding (the resolution is code-anchored via the W9 title-fingerprint union, not permanent — title-only matches are still surfaced when the code's `fingerprint` differs from the prior one)
+- [x] **Regression check**: an older review record with no `inlineResolvedKeys` field on it (pre-FP-F shape) reviews as before — the union becomes a no-op
+- [x] **Regression check**: a non-resolve reply (just discussion) does NOT persist any keys
 
 **Failure modes**
 - ❌ The resolved finding re-appears on the next review under a slightly different framing (FP-F's stable-key persistence missed the framing change — likely a W9 fingerprint coverage gap surfaced via this path)
 - ❌ An unrelated finding gets suppressed (the resolve key was over-broad)
+- ❌ The Postgres `inline_resolved_keys` column is missing — migrations didn't run (self-hosted) or the deploy SAM template is stale (SaaS); resolve still works but the union is a no-op
 
 ---
 
