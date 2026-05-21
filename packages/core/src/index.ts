@@ -36,6 +36,8 @@ export {
   runDeltaCaptionAgent,
   runCustomAgent,
   isValidMermaidDiagram,
+  extractDiagramFilePaths,
+  validateDiagramPaths,
 } from './agents/reviewer.js';
 export {
   handleInlineReply,

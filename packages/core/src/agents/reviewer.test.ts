@@ -3,6 +3,8 @@ import type { ILLMProvider } from '../llm/types.js';
 import type { CustomAgentDef } from '../config/defaults.js';
 import {
   isValidMermaidDiagram,
+  extractDiagramFilePaths,
+  validateDiagramPaths,
   runSecurityAgent,
   runBugAgent,
   runStyleAgent,
@@ -439,6 +441,180 @@ describe('runDiagramAgent', () => {
     expect(result.diagram).toContain('line one&lt;br/&gt;line two');
     // And the diagram is still a single statement per line (not split mid-label).
     expect(result.diagram.split('\n').filter((l) => l.trim().startsWith('A['))).toHaveLength(1);
+  });
+
+  // ─── FP-D — diagram path validation ───────────────────────────────────────
+
+  it('FP-D — keeps the diagram when every cited path is in changedFiles (exact match)', async () => {
+    const mermaid = 'flowchart TD\n    A["packages/server/src/app.ts"] --> B["uses helper"]';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      /* previousDiagram */ undefined,
+      /* changedFiles */ ['packages/server/src/app.ts'],
+    );
+    expect(result.diagram).toContain('flowchart TD');
+    expect(result.diagram).toContain('packages/server/src/app.ts');
+  });
+
+  it('FP-D — keeps the diagram when a cited basename is a suffix of a real changed path', async () => {
+    // Model labelled the node with just `db.ts` while the real file is
+    // packages/server/src/db.ts. Common case; should NOT trigger a drop.
+    const mermaid = 'flowchart TD\n    A["db.ts"] --> B["query()"]';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      undefined,
+      ['packages/server/src/db.ts'],
+    );
+    expect(result.diagram).toContain('flowchart TD');
+  });
+
+  it('FP-D — drops the diagram entirely when a cited path is NOT in changedFiles', async () => {
+    // The PR didn't touch src/db.ts but the model invented it. FP-D drops the
+    // whole diagram — better no diagram than a confidently-wrong one.
+    const mermaid = 'flowchart TD\n    A["packages/server/src/app.ts"] --> B["src/db.ts"]';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      undefined,
+      ['packages/server/src/app.ts'],
+    );
+    expect(result.diagram).toBe('');
+    expect(result.caption).toBe('');
+  });
+
+  it('FP-D — fails open when changedFiles is empty or undefined (back-compat)', async () => {
+    // No info about what the PR changed → can't validate → keep.
+    const mermaid = 'flowchart TD\n    A["wild/guess.ts"] --> B["???"]';
+    const llmA = createMockLLM([mermaid]);
+    const resultA = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llmA, undefined, []);
+    expect(resultA.diagram).toContain('flowchart TD');
+
+    const llmB = createMockLLM([mermaid]);
+    const resultB = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llmB);
+    expect(resultB.diagram).toContain('flowchart TD');
+  });
+
+  it('FP-D — keeps the diagram when it contains no path-shaped tokens at all', async () => {
+    const mermaid = 'sequenceDiagram\n    Client->>API: request\n    API->>Auth: validate';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      undefined,
+      ['packages/server/src/app.ts'],
+    );
+    expect(result.diagram).toContain('sequenceDiagram');
+  });
+
+  it('FP-D — ignores URLs even when they look path-shaped', async () => {
+    // `https://example.com/some/page.html` would otherwise match the path
+    // regex but shouldn't be validated against the diff.
+    const mermaid = 'flowchart TD\n    A["packages/server/src/app.ts"] -.->|docs| D["https://example.com/some/page.html"]';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      undefined,
+      ['packages/server/src/app.ts'],
+    );
+    expect(result.diagram).toContain('flowchart TD');
+  });
+});
+
+// ─── extractDiagramFilePaths / validateDiagramPaths (FP-D helpers) ──────────
+
+describe('extractDiagramFilePaths (FP-D)', () => {
+  it('extracts file-path-shaped tokens with at least one slash and a 1-8 char extension', () => {
+    const diagram = 'flowchart TD\n    A["src/app.ts"] --> B["packages/server/src/db.ts"]';
+    const paths = extractDiagramFilePaths(diagram);
+    expect(paths).toContain('src/app.ts');
+    expect(paths).toContain('packages/server/src/db.ts');
+  });
+
+  it('strips surrounding backticks before matching', () => {
+    const diagram = 'flowchart TD\n    A["`src/app.ts`"] --> B["plain"]';
+    const paths = extractDiagramFilePaths(diagram);
+    expect(paths).toContain('src/app.ts');
+  });
+
+  it('skips bare basenames without a slash (avoids false positives on node.js / index.js)', () => {
+    const diagram = 'flowchart TD\n    A["node.js"] --> B["index.js"]';
+    const paths = extractDiagramFilePaths(diagram);
+    expect(paths).toHaveLength(0);
+  });
+
+  it('skips URLs with a scheme', () => {
+    const diagram = 'flowchart TD\n    A["https://example.com/path.html"]';
+    const paths = extractDiagramFilePaths(diagram);
+    expect(paths).toHaveLength(0);
+  });
+
+  it('de-duplicates repeated paths', () => {
+    const diagram = 'flowchart TD\n    A["src/app.ts"] --> B["src/app.ts"]';
+    const paths = extractDiagramFilePaths(diagram);
+    expect(paths).toEqual(['src/app.ts']);
+  });
+
+  it('returns [] on empty input', () => {
+    expect(extractDiagramFilePaths('')).toEqual([]);
+  });
+});
+
+describe('validateDiagramPaths (FP-D)', () => {
+  it('returns ok:true when changedFiles is undefined (fail open)', () => {
+    const r = validateDiagramPaths('flowchart TD\n    A["wild/guess.ts"]');
+    expect(r.ok).toBe(true);
+    expect(r.invalidPaths).toEqual([]);
+  });
+
+  it('returns ok:true when changedFiles is empty (fail open)', () => {
+    const r = validateDiagramPaths('flowchart TD\n    A["wild/guess.ts"]', []);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts an exact match', () => {
+    const r = validateDiagramPaths(
+      'flowchart TD\n    A["packages/server/src/app.ts"]',
+      ['packages/server/src/app.ts'],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a cited path that is a trailing-segment suffix of a real changed file', () => {
+    // cited = "src/db.ts", real = "packages/server/src/db.ts" → real ends with "/" + cited
+    const r = validateDiagramPaths(
+      'flowchart TD\n    A["src/db.ts"]',
+      ['packages/server/src/db.ts'],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a cited path where the real file is a suffix of the cited path', () => {
+    // cited = "/abs/repo/packages/server/src/app.ts", real = "packages/server/src/app.ts"
+    const r = validateDiagramPaths(
+      'flowchart TD\n    A["abs/repo/packages/server/src/app.ts"]',
+      ['packages/server/src/app.ts'],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects when any cited path matches neither rule', () => {
+    const r = validateDiagramPaths(
+      'flowchart TD\n    A["packages/server/src/app.ts"] --> B["src/hallucinated.ts"]',
+      ['packages/server/src/app.ts'],
+    );
+    expect(r.ok).toBe(false);
+    expect(r.invalidPaths).toContain('src/hallucinated.ts');
+    expect(r.invalidPaths).not.toContain('packages/server/src/app.ts');
+  });
+
+  it('returns ok:true for a diagram with no path-shaped tokens at all', () => {
+    const r = validateDiagramPaths(
+      'sequenceDiagram\n    Client->>API: request',
+      ['packages/server/src/app.ts'],
+    );
+    expect(r.ok).toBe(true);
+    expect(r.invalidPaths).toEqual([]);
   });
 });
 
