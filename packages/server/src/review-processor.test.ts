@@ -806,3 +806,93 @@ describe('processReviewJob — FP-B previousFindings pre-filter', () => {
     expect(opts.disputedKeys).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FP-F — inline-resolve memory unioned into disputedKeys
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — FP-F inline-resolve memory', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (addPRReaction as any).mockResolvedValue(12345);
+    // Same triage-mock reset rationale as FP-B (vi.clearAllMocks preserves
+    // mockResolvedValue across tests; explicit resets keep them isolated).
+    (fetchTriageComments as any).mockResolvedValue([]);
+    (computeDisputedKeys as any).mockResolvedValue([]);
+  });
+
+  it('unions persisted inlineResolvedKeys with the live W3 disputedKeys before passing them downstream', async () => {
+    const inlineKey = 'src/worker.ts::T::Missing try/catch around fetch';
+    const triageKey = 'src/db.ts::T::Type assertion without runtime validation';
+    const priorFindings = [
+      { file: 'src/worker.ts', line: 10, severity: 'critical', category: 'security', title: 'Missing try/catch around fetch', description: '', suggestion: '' },
+      { file: 'src/db.ts',     line: 20, severity: 'warning',  category: 'bug',      title: 'Type assertion without runtime validation', description: '', suggestion: '' },
+    ];
+    const deps = makeDeps();
+    (deps.reviewStore.queryByPR as any).mockResolvedValue([
+      {
+        status: 'complete',
+        prNumberCommitSha: '42#OLD_SHA',
+        findings: priorFindings,
+        inlineResolvedKeys: [inlineKey],
+      },
+    ]);
+    // Author also rebutted the OTHER prior finding via top-level triage.
+    (fetchTriageComments as any).mockResolvedValue(['## mergewatch triage\n\nrebutting the warning']);
+    (computeDisputedKeys as any).mockResolvedValue([triageKey]);
+
+    await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
+
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    // Union: both keys present (order isn't guaranteed — assert as a set).
+    expect(new Set(opts.disputedKeys)).toEqual(new Set([triageKey, inlineKey]));
+    // FP-B pre-filter then drops BOTH from previousFindings.
+    expect(opts.previousFindings).toEqual([]);
+  });
+
+  it('uses the inline-resolve memory alone when there is no triage comment', async () => {
+    const inlineKey = 'src/worker.ts::T::Missing try/catch around fetch';
+    const priorFindings = [
+      { file: 'src/worker.ts', line: 10, severity: 'critical', category: 'security', title: 'Missing try/catch around fetch', description: '', suggestion: '' },
+    ];
+    const deps = makeDeps();
+    (deps.reviewStore.queryByPR as any).mockResolvedValue([
+      {
+        status: 'complete',
+        prNumberCommitSha: '42#OLD_SHA',
+        findings: priorFindings,
+        inlineResolvedKeys: [inlineKey],
+      },
+    ]);
+    // No triage → live W3 disputedKeys stays empty.
+    await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
+
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.disputedKeys).toEqual([inlineKey]);
+    // FP-B drops the inline-resolved prior finding from previousFindings.
+    expect(opts.previousFindings).toEqual([]);
+  });
+
+  it('is a no-op when the prior review has no inlineResolvedKeys field (back-compat)', async () => {
+    const priorFindings = [
+      { file: 'src/a.ts', line: 1, severity: 'warning', category: 'style', title: 'X', description: '', suggestion: '' },
+    ];
+    const deps = makeDeps();
+    (deps.reviewStore.queryByPR as any).mockResolvedValue([
+      { status: 'complete', prNumberCommitSha: '42#OLD_SHA', findings: priorFindings },
+      // ↑ no inlineResolvedKeys key on the prior record — pre-FP-F shape.
+    ]);
+
+    await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
+
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.disputedKeys).toEqual([]);
+    expect(opts.previousFindings).toEqual(priorFindings);
+  });
+});

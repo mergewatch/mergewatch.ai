@@ -571,6 +571,14 @@ export interface ReviewThreadComment {
   isBot: boolean;
   createdAt: string;
   inReplyToId?: number;
+  /**
+   * File path this inline comment is anchored to (the `path` field on
+   * GitHub's review-comment object). Present on review-comment threads;
+   * absent on PR-level threads / older callers that pre-date FP-F.
+   * Used by `handleInlineReply` to derive the resolved finding's
+   * `findingMatchKeys` for the inline-resolve memory.
+   */
+  path?: string;
 }
 
 /**
@@ -606,6 +614,9 @@ export async function fetchReviewCommentThread(
       isBot: c.user?.type === 'Bot',
       createdAt: c.created_at,
       inReplyToId: c.in_reply_to_id,
+      // FP-F — preserve the anchored file path so inline-resolve can
+      // recover the finding's stable match keys.
+      path: c.path,
     });
   }
 

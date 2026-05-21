@@ -210,6 +210,32 @@ async function handleInlineReplyMode(
       ).catch((err) => console.warn('Failed to roll up inline reply cost:', err));
     }
 
+    // FP-F — persist inline-resolve memory; mirrors the server handler. See
+    // packages/server/src/review-processor.ts for the rationale.
+    if (
+      latestReview &&
+      result.action === 'resolved' &&
+      result.resolvedFindingKeys &&
+      result.resolvedFindingKeys.length > 0
+    ) {
+      const existing = new Set(latestReview.inlineResolvedKeys ?? []);
+      for (const k of result.resolvedFindingKeys) existing.add(k);
+      const merged = Array.from(existing).slice(0, 500);
+      await reviewStore.updateStatus(
+        repoFullName,
+        latestReview.prNumberCommitSha as string,
+        latestReview.status as 'complete',
+        { inlineResolvedKeys: merged },
+      ).catch((err) => console.warn('[fp-f] failed to persist inline-resolve keys:', err));
+      console.log(
+        '[fp-f] persisted %d inline-resolved key%s on %s#%d',
+        result.resolvedFindingKeys.length,
+        result.resolvedFindingKeys.length === 1 ? '' : 's',
+        repoFullName,
+        prNumber,
+      );
+    }
+
     console.log(
       'Inline reply %s for %s#%d (reply=%d, cost=$%s)',
       result.action,
@@ -511,6 +537,23 @@ export async function handler(
           prevComplete.findings,
           llm,
           lightModelId,
+        );
+      }
+    }
+    // FP-F — union with the persisted inline-resolve memory; mirrors the
+    // server handler. Findings the developer explicitly resolved on inline
+    // threads shouldn't be re-raised under a slightly-different framing.
+    if (prevComplete?.inlineResolvedKeys && prevComplete.inlineResolvedKeys.length > 0) {
+      const merged = new Set(disputedKeys);
+      for (const k of prevComplete.inlineResolvedKeys) merged.add(k);
+      const before = disputedKeys.length;
+      disputedKeys = Array.from(merged);
+      if (disputedKeys.length > before) {
+        console.log(
+          '[fp-f] unioned %d inline-resolved key%s into disputedKeys (now %d total)',
+          disputedKeys.length - before,
+          disputedKeys.length - before === 1 ? '' : 's',
+          disputedKeys.length,
         );
       }
     }

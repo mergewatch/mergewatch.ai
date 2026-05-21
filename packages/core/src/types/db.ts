@@ -325,6 +325,25 @@ export interface ReviewItem {
   outputTokens?: number;
   /** Estimated cost in USD for this review. Stored as string in Postgres to avoid float precision issues. */
   estimatedCostUsd?: number;
+
+  /**
+   * FP-F — Stable `findingMatchKeys` for findings the author resolved by
+   * replying `/resolve` (or equivalent) on an inline review-comment thread.
+   *
+   * Persisted on the LATEST complete review for the PR; the union of this
+   * set with the live-computed W3 `disputedKeys` becomes the per-review
+   * "don't re-raise" set. Same logical mechanism as W3, scoped to inline
+   * threads instead of top-level `## mergewatch triage` comments — when a
+   * developer explicitly resolves an inline thread, the next full review
+   * must not re-emit the same finding under a slightly-different framing
+   * (which W3's stable-key match would otherwise catch on the triage path
+   * but couldn't see on the inline-resolve path before FP-F).
+   *
+   * Keys use the W9 union form (`file::T::<title>` always, `file::F::<fp>`
+   * when a fingerprint is available). De-duplicated; capped at a sane
+   * upper bound by the handler to keep the field small.
+   */
+  inlineResolvedKeys?: string[];
 }
 
 /** A single finding stored on a ReviewItem (matches comment-formatter Finding). */
