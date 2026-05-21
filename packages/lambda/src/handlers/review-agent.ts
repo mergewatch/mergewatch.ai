@@ -41,6 +41,7 @@ import {
   fetchRepoConfig,
   fetchConventions,
   detectLinters,
+  type DetectedLinter,
   handleInlineReply,
   fetchTriageComments,
   computeDisputedKeys,
@@ -584,8 +585,14 @@ export async function handler(
     const [conventionsResult, detectedLinters] = await Promise.all([
       fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions),
       detectLinters(octokit, owner, repo, headSha).catch((err) => {
-        console.warn('[fp-g] linter detection failed:', err);
-        return [] as string[];
+        // Fail-open by design — see server/review-processor.ts for the
+        // rationale. Surface the status code when available so post-
+        // mortem grep can distinguish 404 / 403 / 5xx at a glance.
+        const status = (err && typeof err === 'object' && 'status' in err)
+          ? (err as { status?: number }).status
+          : undefined;
+        console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
+        return [] as DetectedLinter[];
       }),
     ]);
     if (conventionsResult) {

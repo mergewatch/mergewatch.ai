@@ -7,7 +7,7 @@ import {
   DEFAULT_CONFIG, mergeConfig,
   BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, mergeScoreToReviewEvent,
   buildInlineComments, extractInlineCommentTitle,
-  fetchRepoConfig, fetchConventions, detectLinters,
+  fetchRepoConfig, fetchConventions, detectLinters, type DetectedLinter,
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
@@ -470,8 +470,16 @@ export async function processReviewJob(
     const [conventionsResult, detectedLinters] = await Promise.all([
       fetchConventions(octokit, owner, repo, ref, config.conventions),
       detectLinters(octokit, owner, repo, ref).catch((err) => {
-        console.warn('[fp-g] linter detection failed:', err);
-        return [] as string[];
+        // Fail-open by design: linter detection is best-effort and a
+        // transient infra issue (rate-limit, 5xx, network blip) must not
+        // block the review. Surface the status code when available so
+        // post-mortem grep can distinguish 404 (ref gone) from 403 (token
+        // scope) from 5xx (GitHub-side) without rifling through Sentry.
+        const status = (err && typeof err === 'object' && 'status' in err)
+          ? (err as { status?: number }).status
+          : undefined;
+        console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
+        return [] as DetectedLinter[];
       }),
     ]);
     if (conventionsResult) {

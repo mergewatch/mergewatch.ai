@@ -134,6 +134,17 @@ export type DetectedLinter =
  * not enough (most Python projects have one), we additionally probe for a
  * `[tool.ruff]` section.
  */
+/**
+ * Regex that recognises a ruff configuration section in `pyproject.toml`.
+ * Matches the literal `[tool.ruff]` table OR any `[tool.ruff.<subtable>]`
+ * (e.g. `[tool.ruff.lint]`, `[tool.ruff.format]`). Anchored to line start
+ * via the `m` flag so a `]` mid-line in a description can't trigger it.
+ *
+ * Note: simple anchored regex, no nested quantifiers, no overlapping char
+ * classes — no ReDoS concern even on adversarial input.
+ */
+const RUFF_SECTION_PATTERN = /^\[tool\.ruff(?:\.|\])/m;
+
 const LINTER_MARKERS: Record<Exclude<DetectedLinter, 'ruff'>, string[]> & { ruff: string[] } = {
   eslint: [
     '.eslintrc',
@@ -217,7 +228,7 @@ export async function detectLinters(
   // pyproject.toml but DON'T already match `ruff.toml`/`.ruff.toml`.
   if (!detected.has('ruff') && present.has('pyproject.toml')) {
     const content = await fetchFileAt(octokit, owner, repo, 'pyproject.toml', ref);
-    if (content && /^\[tool\.ruff(?:\.|\])/m.test(content)) {
+    if (content && RUFF_SECTION_PATTERN.test(content)) {
       detected.add('ruff');
     }
   }
