@@ -20,7 +20,7 @@ import {
   extractFindingIdentifiers,
   groundFinding,
   suggestionAlreadyApplied,
-  verifyCriticalFindings,
+  verifyFindings,
   reconcileMergeScore,
   type ReviewContext,
   type AgentFinding,
@@ -1814,9 +1814,9 @@ describe('suggestionAlreadyApplied', () => {
   });
 });
 
-// ─── verifyCriticalFindings (W2) ────────────────────────────────────────────
+// ─── verifyFindings (W2 + FP-E) ─────────────────────────────────────────────
 
-describe('verifyCriticalFindings', () => {
+describe('verifyFindings', () => {
   const critical = {
     file: 'src/rag.ts',
     line: 410,
@@ -1832,13 +1832,13 @@ describe('verifyCriticalFindings', () => {
     const llm = createMockLLM([
       '{"valid": false, "confidence": 0.95, "reason": "line 1 already awaits searchViaPostgres"}',
     ]);
-    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([]);
   });
 
   it('keeps a critical the model confirms — tags it `verified` (W7 input)', async () => {
     const llm = createMockLLM(['{"valid": true, "confidence": 0.9, "reason": "genuine defect"}']);
-    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([{ ...critical, verification: 'verified' }]);
   });
 
@@ -1847,7 +1847,7 @@ describe('verifyCriticalFindings', () => {
     // Leaving the field unset preserves legacy behavior (no W7 clamp on this
     // critical) so callers without `groundingFetch` aren't surprised.
     const llm = createMockLLM(['{"valid": false}']);
-    const result = await verifyCriticalFindings([critical], {}, 'light', llm);
+    const result = await verifyFindings([critical], {}, 'light', llm);
     expect(result).toEqual([critical]); // unchanged object, no verification field
     expect(llm.calls).toHaveLength(0);
   });
@@ -1858,13 +1858,13 @@ describe('verifyCriticalFindings', () => {
         throw new Error('bedrock throttled');
       },
     };
-    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 
   it('keeps the finding on unparseable LLM output — tags it `unverified`', async () => {
     const llm = createMockLLM(['not json at all']);
-    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 
@@ -1872,17 +1872,71 @@ describe('verifyCriticalFindings', () => {
     // Model returned valid JSON but no `valid` field (or some other shape).
     // Fail-safe keep, tagged unverified so W7 scoring can downgrade.
     const llm = createMockLLM(['{"confidence": 0.5, "reason": "hard to tell"}']);
-    const result = await verifyCriticalFindings([critical], fileContents, 'light', llm);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 
-  it('only verifies criticals — warnings/info pass through with NO verification tag', async () => {
+  // ─── FP-E — warnings now go through verification too ─────────────────────
+
+  it('FP-E — drops a warning the model judges invalid', async () => {
     const warning = { ...critical, severity: 'warning' as const };
+    const llm = createMockLLM([
+      '{"valid": false, "confidence": 0.9, "reason": "the file already validates this upstream"}',
+    ]);
+    const result = await verifyFindings([warning], fileContents, 'light', llm);
+    expect(result).toEqual([]);
+  });
+
+  it('FP-E — keeps a warning the model confirms — tags it `verified`', async () => {
+    const warning = { ...critical, severity: 'warning' as const };
+    const llm = createMockLLM(['{"valid": true, "confidence": 0.85, "reason": "genuine smell"}']);
+    const result = await verifyFindings([warning], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...warning, verification: 'verified' }]);
+  });
+
+  it('FP-E — keeps a warning the model can\'t verdict on — tags it `unverified`', async () => {
+    const warning = { ...critical, severity: 'warning' as const };
+    const llm = createMockLLM(['{"confidence": 0.4}']);
+    const result = await verifyFindings([warning], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...warning, verification: 'unverified' }]);
+  });
+
+  it('FP-E — keeps a warning when the file couldn\'t be fetched — no verification tag (verify didn\'t run)', async () => {
+    // Same fail-safe semantics as criticals: missing content = skip, don't
+    // synthesise an `unverified` tag from infrastructure trouble.
+    const warning = { ...critical, severity: 'warning' as const };
+    const llm = createMockLLM(['{"valid": false}']);
+    const result = await verifyFindings([warning], {}, 'light', llm);
+    expect(result).toEqual([warning]);
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('FP-E — info-level findings still pass through untouched (no verification, no LLM call)', async () => {
+    // Info is advisory; the cost/benefit of LLM verification doesn't apply.
     const info = { ...critical, severity: 'info' as const };
     const llm = createMockLLM(['{"valid": false}']);
-    const result = await verifyCriticalFindings([warning, info], fileContents, 'light', llm);
-    expect(result).toEqual([warning, info]); // no verification field added
+    const result = await verifyFindings([info], fileContents, 'light', llm);
+    expect(result).toEqual([info]);
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('FP-E — mixed batch: critical + warning both get LLM-verified; info skipped', async () => {
+    // Verifies the per-finding routing logic and that ordering is preserved.
+    const c = { ...critical }; // verify
+    const w = { ...critical, severity: 'warning' as const, title: 'maybe-leak' }; // verify
+    const i = { ...critical, severity: 'info' as const, title: 'nit' }; // pass through
+    // First call (critical) → valid; second call (warning) → invalid.
+    const llm = createMockLLM([
+      '{"valid": true, "confidence": 0.9, "reason": "real bug"}',
+      '{"valid": false, "confidence": 0.95, "reason": "already handled"}',
+    ]);
+    const result = await verifyFindings([c, w, i], fileContents, 'light', llm);
+    expect(result).toEqual([
+      { ...c, verification: 'verified' },
+      // w dropped (invalid)
+      i, // pass-through, no tag
+    ]);
+    expect(llm.calls).toHaveLength(2);
   });
 });
 

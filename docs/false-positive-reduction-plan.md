@@ -91,19 +91,20 @@ W3's `partitionDisputed` runs **after** the orchestrator. So the orchestrator ha
 
 ---
 
-### FP-E — Extend W2 verification to warnings  ★
+### FP-E — Extend W2 verification to warnings  ✅ SHIPPED
 
-**Where the gap lives:** `verifyCriticalFindings` (`packages/core/src/agents/reviewer.ts:1353`):
-> `if (f.severity !== 'critical') return { keep: true };`
+**Where the gap lived:** `verifyCriticalFindings` (the old name) had a hard-coded `if (f.severity !== 'critical') return { keep: true };`. The W2 claim-aware verification pass ran **only** on `critical` findings. Warnings can be false positives too — and there was a perverse incentive: an agent could downgrade a Critical to Warning to dodge verification. Closing that loophole reduces warning-level FPs and removes the severity-shopping incentive.
 
-Currently the W2 claim-aware verification pass runs **only** on `critical` findings. Warnings can be false positives too — and there's a perverse incentive: an agent can downgrade a Critical to Warning to dodge today's verification. Closing that loophole reduces warning-level FPs and removes the severity-shopping incentive.
+**The fix:** the function was renamed to `verifyFindings` and the severity gate widened to `severity === 'critical' || severity === 'warning'`. Info-level findings continue to pass through untouched. The shared verifier prompt was renamed `CRITICAL_VERIFICATION_PROMPT` → `FINDING_VERIFICATION_PROMPT`, its title generalised ("a code-review finding" rather than "a CRITICAL code-review finding"), and a sentence added explaining that the same failure mode happens at both severities. The verifier input also now includes the finding's `severity` so the model can still consider it when judging. Log prefix changed from `[critical-verify]` to `[finding-verify]` (and includes the severity in every line).
 
-**The fix:** extend the loop to verify `warning` findings with the same prompt + same fail-open semantics + same `verification` tag persisted. The W7 score guardrail then naturally extends — an *all-unverified-warnings* set could clamp the score upward too (separate decision; not in this opportunity).
+The same fail-safe semantics apply at both severities: missing file content → no LLM call, no `verification` tag; LLM error / parse error / no verdict → keep + `unverified` tag; explicit `valid: false` → drop; explicit `valid: true` → keep + `verified` tag.
 
-**Cost:** typical PR has 2–3 warnings, ~$0.01/each on light model → +$0.02–0.03 per review.
+**W7 score-clamp scope (intentionally unchanged):** `reconcileMergeScore` still only inspects criticals for the W7 unverified-only clamp. Per the original opportunity, extending the clamp to warnings is a separate decision and explicitly out of scope here. The `verification` tag on warnings is informational + used by downstream delta/UX.
 
-**Code targets:** `packages/core/src/agents/reviewer.ts` (`verifyCriticalFindings`; consider renaming to `verifyFindings`). Pure change to the severity-skip line + the verification scoring scope check.
-**E2E target:** [E2E-34](./../e2e/RUNBOOK.md#e2e-34-fp-e--w2-verification-extended-to-warnings-target).
+**Cost:** typical PR has 2–3 warnings, ~$0.01/each on light model → +$0.02–0.03 per review. Confirmed against current pricing.
+
+**Code targets (final):** `packages/core/src/agents/reviewer.ts` (renamed `verifyFindings` + widened severity gate + updated docs + updated logging), `packages/core/src/agents/prompts.ts` (renamed `FINDING_VERIFICATION_PROMPT` + generalised prompt body).
+**E2E target:** [E2E-34](./../e2e/RUNBOOK.md#e2e-34-fp-e--w2-verification-extended-to-warnings).
 
 ---
 
@@ -149,7 +150,7 @@ Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected i
 | **FP-B** | Pre-filter `previousFindings` by disputedKeys | tiny | two handlers, ~10 lines | ✅ SHIPPED |
 | **FP-C** | Pre-orchestrator same-file-same-line dedup | small | reuses W10's helper | ✅ SHIPPED |
 | **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ✅ SHIPPED |
-| **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ★ |
+| **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ✅ SHIPPED |
 | **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ★ |
 | **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ★ |
 
