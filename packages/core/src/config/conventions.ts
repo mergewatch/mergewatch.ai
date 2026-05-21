@@ -110,3 +110,117 @@ export async function fetchConventions(
 
   return null;
 }
+
+// ─── FP-G — linter detection ───────────────────────────────────────────────
+
+/**
+ * Known linters MergeWatch can defer to. Used by the style agent prompt to
+ * suppress lint-equivalent findings (semicolons, quote style, import order,
+ * unused imports, etc.) when one of these is configured.
+ */
+export type DetectedLinter =
+  | 'eslint' | 'biome'
+  | 'ruff'   | 'flake8'
+  | 'clippy'
+  | 'golangci'
+  | 'stylelint';
+
+/**
+ * Root-level marker files per linter. Order within a linter doesn't matter
+ * (any single hit detects it). Kept flat-and-explicit rather than using
+ * glob patterns so the detection list is greppable and easy to extend.
+ *
+ * `pyproject.toml` for ruff is handled separately — its presence alone is
+ * not enough (most Python projects have one), we additionally probe for a
+ * `[tool.ruff]` section.
+ */
+const LINTER_MARKERS: Record<Exclude<DetectedLinter, 'ruff'>, string[]> & { ruff: string[] } = {
+  eslint: [
+    '.eslintrc',
+    '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.mjs',
+    '.eslintrc.json', '.eslintrc.yml', '.eslintrc.yaml',
+    'eslint.config.js', 'eslint.config.ts',
+    'eslint.config.mjs', 'eslint.config.cjs',
+  ],
+  biome:    ['biome.json', 'biome.jsonc'],
+  ruff:     ['ruff.toml', '.ruff.toml'], // pyproject.toml handled with content inspection
+  flake8:   ['.flake8'],
+  clippy:   ['clippy.toml', '.clippy.toml'],
+  golangci: ['.golangci.yml', '.golangci.yaml', '.golangci.toml'],
+  stylelint: [
+    '.stylelintrc',
+    '.stylelintrc.json', '.stylelintrc.js', '.stylelintrc.cjs',
+    '.stylelintrc.yml',  '.stylelintrc.yaml',
+    'stylelint.config.js', 'stylelint.config.cjs',
+  ],
+};
+
+/**
+ * List the file/folder entries at the repo's root for a given ref. Returns
+ * `null` on any non-404 error; an empty list on 404 (most likely the repo
+ * doesn't exist or the ref is bad — caller treats that as "no detection").
+ */
+async function listRepoRoot(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref: string | undefined,
+): Promise<string[] | null> {
+  try {
+    const { data } = await octokit.repos.getContent({
+      owner, repo, path: '', ...(ref ? { ref } : {}),
+    });
+    if (!Array.isArray(data)) return [];
+    return data.map((entry) => entry.name);
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+      return [];
+    }
+    console.warn('[detect-linters] failed to list %s/%s root contents:', owner, repo, err);
+    return null;
+  }
+}
+
+/**
+ * FP-G — detect which linters the repo has configured. Used by the style
+ * agent prompt to enumerate "defer to these" tools so the LLM stops
+ * conservatively re-reporting lint-equivalent concerns (semicolons,
+ * `prefer const`, import order, unused imports, …).
+ *
+ * Single root-listing API call + at most one extra fetch when a
+ * `pyproject.toml` is present (to inspect for `[tool.ruff]`). Returns
+ * `[]` on any non-recoverable error — the prompt path is fully
+ * back-compatible with "no linters detected" (no directive injected).
+ *
+ * Returned linter names are sorted lexicographically so the directive
+ * is deterministic across calls (helps with prompt caching downstream).
+ */
+export async function detectLinters(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref: string | undefined,
+): Promise<DetectedLinter[]> {
+  const rootNames = await listRepoRoot(octokit, owner, repo, ref);
+  if (!rootNames || rootNames.length === 0) return [];
+  const present = new Set(rootNames);
+  const detected = new Set<DetectedLinter>();
+
+  for (const linter of Object.keys(LINTER_MARKERS) as DetectedLinter[]) {
+    if (LINTER_MARKERS[linter].some((m) => present.has(m))) {
+      detected.add(linter);
+    }
+  }
+
+  // pyproject.toml — only counts toward ruff when a `[tool.ruff]` section
+  // is present. Costs one extra fetch on Python repos that have a
+  // pyproject.toml but DON'T already match `ruff.toml`/`.ruff.toml`.
+  if (!detected.has('ruff') && present.has('pyproject.toml')) {
+    const content = await fetchFileAt(octokit, owner, repo, 'pyproject.toml', ref);
+    if (content && /^\[tool\.ruff(?:\.|\])/m.test(content)) {
+      detected.add('ruff');
+    }
+  }
+
+  return Array.from(detected).sort();
+}

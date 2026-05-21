@@ -24,6 +24,34 @@ export const TONE_PLACEHOLDER = '{{TONE_DIRECTIVE}}';
 export const CONVENTIONS_PLACEHOLDER = '{{CONVENTIONS}}';
 
 /**
+ * FP-G — placeholder in STYLE_REVIEWER_PROMPT for the linter-aware
+ * directive. Replaced with a list-bearing directive when linters are
+ * detected at the conventions-load step (see `detectLinters` in
+ * `packages/core/src/config/conventions.ts`); stripped otherwise so
+ * back-compat with "no linters detected" is exact (the prompt text
+ * matches the pre-FP-G shape byte-for-byte).
+ */
+export const LINTER_AWARE_PLACEHOLDER = '{{LINTERS_DETECTED}}';
+
+/**
+ * FP-G — render the linter-aware directive for the style agent. Returns
+ * the empty string when no linters were detected so the placeholder
+ * gets stripped cleanly.
+ */
+export function buildLinterAwareDirective(linters: readonly string[]): string {
+  if (!linters || linters.length === 0) return '';
+  const list = [...linters].sort().join(', ');
+  return `This repository has the following linters configured: ${list}.
+Defer ALL formatting and lint-equivalent findings to them — including
+semicolons, trailing commas, quote style, import order, unused imports,
+prefer-const, prefer-arrow-callback, no-var, eqeqeq, and similar
+rule-shaped style nits. Do NOT emit those findings; the linter will
+catch them in CI. Code-smell and architecture findings (god functions,
+deep nesting, duplicate logic, misleading names, performance anti-
+patterns) remain in scope.`;
+}
+
+/**
  * Placeholder substituted at runtime with AGENT_MODE_SUFFIX when the diff is
  * known to be agent-authored (e.g. via the MCP server pre-commit path, or the
  * webhook path when source detection flips to 'agent'). Stripped otherwise.
@@ -143,6 +171,8 @@ DO NOT report:
 - Minor formatting preferences (semicolons, trailing commas, quote style)
 - Import ordering
 - Anything already enforced by a linter
+
+${LINTER_AWARE_PLACEHOLDER}
 
 CUSTOM_RULES_PLACEHOLDER
 

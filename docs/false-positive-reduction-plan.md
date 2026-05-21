@@ -129,24 +129,36 @@ The same fail-safe semantics apply at both severities: missing file content → 
 
 ---
 
-### FP-G — Linter-aware style agent  ★
+### FP-G — Linter-aware style agent  ✅ SHIPPED
 
-**Where the gap lives:** `STYLE_REVIEWER_PROMPT` (`packages/core/src/agents/prompts.ts:138`) says *"Anything already enforced by a linter"* should not be reported — but the model has no way to know what linters the repo has configured. It conservatively reports things like *"missing semicolon"* / *"prefer const"* / *"unused import"* because it doesn't trust that a linter would catch them. False-positive surface = the gap between *"what the linter actually does"* and *"what the model assumes the linter does."*
+**Where the gap lived:** `STYLE_REVIEWER_PROMPT` said *"Anything already enforced by a linter"* should not be reported — but the model had no way to know what linters the repo had configured. It conservatively reported things like *"missing semicolon"* / *"prefer const"* / *"unused import"* because it didn't trust that a linter would catch them. False-positive surface = the gap between *"what the linter actually does"* and *"what the model assumes the linter does."*
 
-**The fix:** lightweight detection at the conventions-load step (`fetchConventions` path). Look for marker files:
+**The fix:**
 
-| Language | Marker |
-|---|---|
-| JS/TS | `.eslintrc*`, `eslint.config.{js,ts,mjs,cjs}`, `biome.json` |
-| Python | `ruff.toml`, `pyproject.toml` (with `[tool.ruff]`), `.flake8` |
-| Rust | `clippy.toml`, `.clippy.toml` |
-| Go | `.golangci.yml`, `.golangci.yaml` |
-| CSS | `.stylelintrc*` |
+- New `detectLinters(octokit, owner, repo, ref)` in `packages/core/src/config/conventions.ts`. Performs a single root-listing API call (`repos.getContent` with `path: ''`), matches entries against per-linter marker tables in `LINTER_MARKERS`:
 
-Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected into `STYLE_REVIEWER_PROMPT` *only*: *"Repository has these linters configured: ${list}. Defer all formatting / lint-equivalent findings (semicolons, quotes, import order, unused imports, prefer-const, etc.) to them and do NOT emit those findings. Code-smell and architecture findings still in scope."*
+  | Linter | Markers |
+  |---|---|
+  | eslint | `.eslintrc`, `.eslintrc.{js,cjs,mjs,json,yml,yaml}`, `eslint.config.{js,ts,mjs,cjs}` |
+  | biome | `biome.json`, `biome.jsonc` |
+  | ruff | `ruff.toml`, `.ruff.toml`, plus `pyproject.toml` when it contains `[tool.ruff…]` (one extra fetch + regex) |
+  | flake8 | `.flake8` |
+  | clippy | `clippy.toml`, `.clippy.toml` |
+  | golangci | `.golangci.yml`, `.golangci.yaml`, `.golangci.toml` |
+  | stylelint | `.stylelintrc`, `.stylelintrc.{json,js,cjs,yml,yaml}`, `stylelint.config.{js,cjs}` |
 
-**Code targets:** `packages/core/src/config/conventions.ts` (detection), `packages/core/src/agents/prompts.ts` (new placeholder), `packages/core/src/agents/reviewer.ts` (`buildPrompt` substitution path for style agent only).
-**E2E target:** [E2E-36](./../e2e/RUNBOOK.md#e2e-36-fp-g--linter-aware-style-agent-target).
+  Returns the detected set sorted lexicographically (deterministic for prompt caching). Best-effort: any API error returns `[]`.
+
+- New `LINTER_AWARE_PLACEHOLDER` (`{{LINTERS_DETECTED}}`) in `STYLE_REVIEWER_PROMPT`. New `buildLinterAwareDirective(linters)` renders the directive when the set is non-empty; returns `''` (placeholder stripped) when empty — so back-compat with "no linters detected" is exact.
+
+- `runStyleAgent` accepts a new optional `detectedLinters?: readonly string[]` and substitutes the placeholder. **Style-agent only** — the security, bug, error-handling, and test-coverage agents are unaffected.
+
+- `ReviewPipelineOptions.detectedLinters` plumbs the set from the handlers (`server/review-processor.ts` + `lambda/review-agent.ts`). Both handlers call `detectLinters` in parallel with `fetchConventions` (`Promise.all`) so latency is unchanged from W4's conventions-load step.
+
+- Telemetry: `[fp-g] detected linters: eslint, biome` log line when non-empty; silent when empty.
+
+**Code targets (final):** `packages/core/src/config/conventions.ts` (`detectLinters` + `DetectedLinter` type + `LINTER_MARKERS`), `packages/core/src/agents/prompts.ts` (`LINTER_AWARE_PLACEHOLDER` + `buildLinterAwareDirective` + placeholder injection into `STYLE_REVIEWER_PROMPT`), `packages/core/src/agents/reviewer.ts` (`runStyleAgent` arg + `ReviewPipelineOptions.detectedLinters` + pipeline wiring), `packages/server/src/review-processor.ts` + `packages/lambda/src/handlers/review-agent.ts` (parallel detection + option passthrough), `packages/core/src/index.ts` (exports).
+**E2E target:** [E2E-36](./../e2e/RUNBOOK.md#e2e-36-fp-g--linter-aware-style-agent).
 
 ---
 
@@ -160,9 +172,9 @@ Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected i
 | **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ✅ SHIPPED |
 | **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ✅ SHIPPED |
 | **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ✅ SHIPPED |
-| **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ★ |
+| **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ✅ SHIPPED |
 
-**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped). Then FP-E / FP-F / FP-G as individual polish PRs in any order.
+**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / this one). **All seven items shipped.**
 
 ---
 
