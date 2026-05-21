@@ -162,7 +162,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
-| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent-target) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) — **TARGET** | 2m | 60s | FP-G |
+| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) | 2m | 60s | FP-G |
 
 ---
 
@@ -1441,11 +1441,13 @@ Branch: `fixture/35-inline-resolve`. Two-commit sequence:
 
 ---
 
-### E2E-36: FP-G — linter-aware style agent — TARGET
+### E2E-36: FP-G — linter-aware style agent
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--shipped).
 
-**Behavior (intended, once FP-G ships):** at the conventions-load step, scan the repo for known linter marker files (`.eslintrc*`, `eslint.config.{js,ts,mjs,cjs}`, `biome.json`, `ruff.toml`, `pyproject.toml [tool.ruff]`, `.flake8`, `clippy.toml`, `.golangci.yml`, `.stylelintrc*`). When detected, inject a `LINTER_AWARE_DIRECTIVE` into the **style agent's** prompt only: *"Repository has these linters configured: ${list}. Defer all formatting / lint-equivalent findings to them and do NOT emit them. Code-smell and architecture findings remain in scope."*
+**Behavior:** `detectLinters` (in `packages/core/src/config/conventions.ts`) runs in parallel with `fetchConventions` on both handlers. It performs a single root-listing GitHub API call (`repos.getContent` with `path: ''`), matches the returned entries against the marker tables for `eslint` / `biome` / `ruff` / `flake8` / `clippy` / `golangci` / `stylelint`, and (when `pyproject.toml` is present without a `ruff.toml` already matching) does one extra fetch to inspect for a `[tool.ruff]` (or `[tool.ruff.lint]`, etc.) section. The detected set is sorted lexicographically and passed into `ReviewPipelineOptions.detectedLinters`, which threads through to `runStyleAgent`. `STYLE_REVIEWER_PROMPT` has a new `LINTER_AWARE_PLACEHOLDER` (`{{LINTERS_DETECTED}}`) — `buildLinterAwareDirective` renders a directive listing the linters and telling the model to defer formatting / lint-equivalent findings (semicolons, quote style, import order, unused imports, prefer-const, no-var, eqeqeq, etc.). Code-smell and architecture findings (god functions, deep nesting, duplicate logic, misleading names, perf anti-patterns) stay in scope.
+
+The directive is **style-agent-specific** — the security, bug, error-handling, and test-coverage agents are unaffected. Best-effort: any API error in `detectLinters` returns `[]` (caught + logged), so the prompt falls back to its pre-FP-G shape with the placeholder stripped.
 
 **Setup**
 
@@ -1456,19 +1458,23 @@ Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present /
 
 **Expected outcomes — linter-present**
 
-- [ ] The style agent prompt (visible in agent logs / dashboard "view full details") includes the `LINTER_AWARE_DIRECTIVE` block listing `eslint`
-- [ ] The rendered comment has **no** semicolon / unused-import / formatting-style findings — the style agent deferred to the (assumed) linter
-- [ ] Code-smell findings (god functions, deep nesting, magic numbers) DO still appear — only lint-equivalent ones are deferred
+- [x] The style agent prompt (visible in agent logs / dashboard "view full details") includes the `LINTER_AWARE_DIRECTIVE` block listing `eslint`
+- [x] Agent log includes `[fp-g] detected linters: eslint`
+- [x] The rendered comment has **no** semicolon / unused-import / formatting-style findings — the style agent deferred to the (assumed) linter
+- [x] Code-smell findings (god functions, deep nesting, magic numbers) DO still appear — only lint-equivalent ones are deferred
 
 **Expected outcomes — no-linter**
 
-- [ ] No `LINTER_AWARE_DIRECTIVE` in the prompt (placeholder stripped)
-- [ ] Style findings (including lint-equivalent ones) are emitted as before
+- [x] No `LINTER_AWARE_DIRECTIVE` in the prompt (placeholder stripped)
+- [x] No `[fp-g] detected linters:` log line emitted
+- [x] Style findings (including lint-equivalent ones) are emitted as before
+- [x] **Regression check**: the security / bug / error-handling / test-coverage agent prompts are byte-identical regardless of linter detection (style-only injection)
 
 **Failure modes**
 - ❌ Linter-present repo still gets *"missing semicolon"* / *"unused import"* findings
 - ❌ Code-smell findings (god functions, nesting) are also suppressed (over-defer — only lint-equivalent should defer)
-- ❌ Detection false-positive: a `.eslintrc.json` in a `node_modules/` subdirectory triggers the directive (the scan must be repo-root only)
+- ❌ Detection false-positive: a `.eslintrc.json` in a `node_modules/` subdirectory triggers the directive (the scan must be repo-root only — confirmed by reading `path: ''` from the root only, not recursive)
+- ❌ A `pyproject.toml` without `[tool.ruff]` triggers `ruff` (regex must require the explicit table header)
 
 ---
 

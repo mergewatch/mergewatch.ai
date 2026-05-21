@@ -40,6 +40,8 @@ import {
   extractInlineCommentTitle,
   fetchRepoConfig,
   fetchConventions,
+  detectLinters,
+  type DetectedLinter,
   handleInlineReply,
   fetchTriageComments,
   computeDisputedKeys,
@@ -576,10 +578,28 @@ export async function handler(
       );
     }
 
-    // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
-    const conventionsResult = await fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions);
+    // Load repo conventions + (FP-G) probe the repo root for known linter
+    // marker files in parallel. detectLinters performs at most one
+    // root-listing API call + one extra pyproject.toml fetch on Python
+    // repos; both are bounded and best-effort.
+    const [conventionsResult, detectedLinters] = await Promise.all([
+      fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions),
+      detectLinters(octokit, owner, repo, headSha).catch((err) => {
+        // Fail-open by design — see server/review-processor.ts for the
+        // rationale. Surface the status code when available so post-
+        // mortem grep can distinguish 404 / 403 / 5xx at a glance.
+        const status = (err && typeof err === 'object' && 'status' in err)
+          ? (err as { status?: number }).status
+          : undefined;
+        console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
+        return [] as DetectedLinter[];
+      }),
+    ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
+    }
+    if (detectedLinters.length > 0) {
+      console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
     }
 
     const result = await runReviewPipeline({
@@ -608,6 +628,7 @@ export async function handler(
       disputedKeys,
       conventions: conventionsResult?.content,
       agentAuthored: event.source === 'agent',
+      detectedLinters,
     }, { llm });
 
     const reviewDetailUrl = `${DASHBOARD_BASE_URL}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;

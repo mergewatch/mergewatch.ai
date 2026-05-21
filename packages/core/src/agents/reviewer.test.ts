@@ -220,6 +220,43 @@ describe('runStyleAgent', () => {
     await runStyleAgent(sampleDiff, sampleContext, 'model-1', llm, []);
     expect(llm.calls[0].prompt).not.toContain('CUSTOM_RULES_PLACEHOLDER');
   });
+
+  // ─── FP-G — linter-aware directive ───────────────────────────────────────
+
+  it('FP-G — injects the linter-aware directive when linters are detected', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runStyleAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      /* customRules */ [],
+      /* fileFetchOptions */ undefined,
+      /* tone */ undefined,
+      /* conventions */ undefined,
+      /* agentAuthored */ undefined,
+      /* detectedLinters */ ['eslint', 'biome'],
+    );
+    const prompt = llm.calls[0].prompt;
+    expect(prompt).toContain('This repository has the following linters configured: biome, eslint');
+    expect(prompt).toContain('Defer ALL formatting and lint-equivalent findings');
+    expect(prompt).not.toContain('{{LINTERS_DETECTED}}');
+  });
+
+  it('FP-G — strips the placeholder when no linters are detected (back-compat)', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runStyleAgent(sampleDiff, sampleContext, 'model-1', llm, []);
+    const prompt = llm.calls[0].prompt;
+    expect(prompt).not.toContain('{{LINTERS_DETECTED}}');
+    expect(prompt).not.toContain('This repository has the following linters configured');
+  });
+
+  it('FP-G — strips the placeholder when an empty detectedLinters list is passed', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runStyleAgent(
+      sampleDiff, sampleContext, 'model-1', llm, [],
+      undefined, undefined, undefined, undefined,
+      /* detectedLinters */ [],
+    );
+    expect(llm.calls[0].prompt).not.toContain('linters configured');
+  });
 });
 
 // ─── runSummaryAgent ────────────────────────────────────────────────────────

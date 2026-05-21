@@ -7,7 +7,7 @@ import {
   DEFAULT_CONFIG, mergeConfig,
   BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, mergeScoreToReviewEvent,
   buildInlineComments, extractInlineCommentTitle,
-  fetchRepoConfig, fetchConventions,
+  fetchRepoConfig, fetchConventions, detectLinters, type DetectedLinter,
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
@@ -464,9 +464,29 @@ export async function processReviewJob(
     }
 
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
-    const conventionsResult = await fetchConventions(octokit, owner, repo, ref, config.conventions);
+    // and (FP-G) probe the repo root for known linter marker files in parallel.
+    // detectLinters performs at most one root-listing API call + one extra
+    // pyproject.toml fetch on Python repos; both are bounded and best-effort.
+    const [conventionsResult, detectedLinters] = await Promise.all([
+      fetchConventions(octokit, owner, repo, ref, config.conventions),
+      detectLinters(octokit, owner, repo, ref).catch((err) => {
+        // Fail-open by design: linter detection is best-effort and a
+        // transient infra issue (rate-limit, 5xx, network blip) must not
+        // block the review. Surface the status code when available so
+        // post-mortem grep can distinguish 404 (ref gone) from 403 (token
+        // scope) from 5xx (GitHub-side) without rifling through Sentry.
+        const status = (err && typeof err === 'object' && 'status' in err)
+          ? (err as { status?: number }).status
+          : undefined;
+        console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
+        return [] as DetectedLinter[];
+      }),
+    ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
+    }
+    if (detectedLinters.length > 0) {
+      console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
     }
 
     // Run review pipeline
@@ -498,6 +518,7 @@ export async function processReviewJob(
         disputedKeys,
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
+        detectedLinters,
       },
       { llm: deps.llm },
     );
