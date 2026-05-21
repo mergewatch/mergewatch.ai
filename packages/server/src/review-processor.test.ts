@@ -43,6 +43,10 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
       outputTokens: 100,
       estimatedCostUsd: 0.002,
     }),
+    // Triage-mapping path (W3 / FP-B). Default to "no triage" so existing
+    // tests aren't affected; the FP-B test overrides these per-call.
+    fetchTriageComments: vi.fn().mockResolvedValue([]),
+    computeDisputedKeys: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -50,6 +54,7 @@ import {
   getPRContext, getPRDiff, createCheckRun, shouldSkipPR, shouldSkipByRules,
   runReviewPipeline, postReplyComment, fetchRepoConfig, handleInlineReply,
   addPRReaction, removePRReaction, submitPRReview, mergeScoreToReviewEvent,
+  fetchTriageComments, computeDisputedKeys,
 } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
@@ -728,5 +733,76 @@ describe('processReviewJob — agent-authored wiring', () => {
 
     const pipelineOptions = (runReviewPipeline as any).mock.calls[0][0];
     expect(pipelineOptions.agentAuthored).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FP-B — pre-filter previousFindings by disputedKeys
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — FP-B previousFindings pre-filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (addPRReaction as any).mockResolvedValue(12345);
+    // Reset the triage mocks back to the "no-triage" defaults — `vi.clearAllMocks`
+    // resets call history but PRESERVES per-test `mockResolvedValue` overrides,
+    // so without these resets a non-empty disputedKeys set leaks into the next
+    // test.
+    (fetchTriageComments as any).mockResolvedValue([]);
+    (computeDisputedKeys as any).mockResolvedValue([]);
+  });
+
+  it('excludes disputed prior findings from the orchestrator input (no orchestrator re-emission of rebutted concerns)', async () => {
+    // Prior review had two findings. The author rebutted ONE via a triage
+    // comment; the W3 mapping resolved its stable key. FP-B should drop
+    // that finding from the `previousFindings` array passed to the pipeline.
+    const priorFindings = [
+      { file: 'a.ts', line: 10, severity: 'critical', category: 'security', title: 'Rebutted concern', description: '', suggestion: '' },
+      { file: 'b.ts', line: 20, severity: 'warning',  category: 'bug',      title: 'Still valid',      description: '', suggestion: '' },
+    ];
+    // The W3 stable key for the "no fingerprint" path is `file::T::title`
+    // (see `findingMatchKeys` in review-delta.ts).
+    const disputedKey = 'a.ts::T::Rebutted concern';
+
+    const deps = makeDeps();
+    (deps.reviewStore.queryByPR as any).mockResolvedValue([
+      { status: 'complete', prNumberCommitSha: '42#OLD_SHA', findings: priorFindings },
+    ]);
+    (fetchTriageComments as any).mockResolvedValue(['## mergewatch triage\n\nrebutting first finding...']);
+    (computeDisputedKeys as any).mockResolvedValue([disputedKey]);
+
+    await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
+
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.previousFindings).toEqual([
+      { file: 'b.ts', line: 20, severity: 'warning', category: 'bug', title: 'Still valid', description: '', suggestion: '' },
+    ]);
+    // disputedKeys is ALSO still passed through (W3 downstream suppression
+    // remains a defense-in-depth layer for current findings the orchestrator
+    // might still emit despite FP-B).
+    expect(opts.disputedKeys).toEqual([disputedKey]);
+  });
+
+  it('passes prior findings unchanged when there are no disputed keys (no triage on this PR)', async () => {
+    const priorFindings = [
+      { file: 'a.ts', line: 10, severity: 'critical', category: 'security', title: 'Real concern', description: '', suggestion: '' },
+    ];
+    const deps = makeDeps();
+    (deps.reviewStore.queryByPR as any).mockResolvedValue([
+      { status: 'complete', prNumberCommitSha: '42#OLD_SHA', findings: priorFindings },
+    ]);
+    // Default mocks above: fetchTriageComments → []; computeDisputedKeys → [].
+
+    await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
+
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.previousFindings).toEqual(priorFindings);
+    expect(opts.disputedKeys).toEqual([]);
   });
 });

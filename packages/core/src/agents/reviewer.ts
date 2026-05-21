@@ -39,7 +39,7 @@ import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
 import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
-import { clusterFindings } from '../finding-clustering.js';
+import { clusterFindings, dedupeCrossAgentByLine } from '../finding-clustering.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -105,6 +105,17 @@ export interface ReviewContext {
  * that still keeps end-to-end latency within typical targets.
  */
 const AGENT_CONCURRENCY = 3;
+
+/**
+ * FP-A — Hard confidence-floor for findings emitted by the orchestrator. The
+ * agent prompts ask the model to self-report `confidence: 1-100` and the
+ * orchestrator's own prompt (rule #5) instructs it to drop anything below
+ * this threshold. The model doesn't always honor that rule, so the pipeline
+ * enforces it deterministically post-orchestrator. Findings with no
+ * `confidence` field default to 100 (kept) so pre-FP-A stored records and
+ * agents that don't emit confidence aren't accidentally suppressed.
+ */
+const CONFIDENCE_FLOOR = 75;
 
 /**
  * Run task factories with a bounded concurrency. Results are returned in the
@@ -1640,11 +1651,30 @@ export async function runReviewPipeline(
     ...customTagged,
   ];
 
-  // Count total raw findings before orchestration
+  // Count total raw findings before orchestration. Captured before FP-C
+  // merges cross-agent doubles so the downstream `suppressedCount` math
+  // (totalRawFindings − filteredFindings.length) accurately reflects the
+  // dedup work, alongside W10's same-region clustering + W11's coverage
+  // suppression.
   const totalRawFindings = taggedFindings.reduce((sum, t) => sum + (t.findings?.length ?? 0), 0);
 
+  // FP-C — pre-orchestrator same-`(file, line)` cross-agent dedup. Merges
+  // exact-line doubles BEFORE the orchestrator's LLM call sees them so the
+  // prompt is shorter AND we don't rely on the model to spot identical-
+  // location duplicates. Wider line-region clustering is W10's job and runs
+  // POST-orchestrator on the final finding set.
+  const fpCResult = dedupeCrossAgentByLine(taggedFindings);
+  if (fpCResult.dedupedCount > 0) {
+    console.warn(
+      '[fp-c] merged %d cross-agent finding%s at the same (file, line)',
+      fpCResult.dedupedCount,
+      fpCResult.dedupedCount === 1 ? '' : 's',
+    );
+  }
+  const dedupedTaggedFindings = fpCResult.taggedFindings as TaggedFindings[];
+
   const orchestratorResult = await runOrchestratorAgent(
-    taggedFindings,
+    dedupedTaggedFindings,
     lightModelId,
     maxFindings,
     llm,
@@ -1652,6 +1682,28 @@ export async function runReviewPipeline(
     conventions,
     agentAuthored,
   );
+
+  // FP-A — Hard confidence-floor filter.
+  // The orchestrator's prompt (rule #5) tells the model to drop findings with
+  // confidence < 75, but nothing in code enforces it. This deterministic post-
+  // orchestrator filter catches the entire class of "model didn't honor its
+  // own confidence rule" false positives. Findings with NO `confidence` field
+  // default to 100 (no surprise suppression of legacy findings).
+  {
+    const before = orchestratorResult.findings.length;
+    orchestratorResult.findings = orchestratorResult.findings.filter(
+      (f) => (f.confidence ?? 100) >= CONFIDENCE_FLOOR,
+    );
+    const dropped = before - orchestratorResult.findings.length;
+    if (dropped > 0) {
+      console.warn(
+        '[confidence-floor] dropped %d finding%s with confidence < %d',
+        dropped,
+        dropped === 1 ? '' : 's',
+        CONFIDENCE_FLOOR,
+      );
+    }
+  }
 
   // W11 — scope/architecture awareness: when the repo's conventions
   // document explicitly declares no test harness, collapse the per-

@@ -129,9 +129,9 @@ export type { TriagePriorFinding } from './triage.js';
 // ─── Scope/architecture awareness (W11) ─────────────────────────────────────
 export { detectNoTestHarness, suppressTestCoverageFindings } from './scope-awareness.js';
 
-// ─── Finding consolidation (W10) ────────────────────────────────────────────
-export { clusterFindings, extractSignificantTokens } from './finding-clustering.js';
-export type { ClusterableFinding, ClusterOptions } from './finding-clustering.js';
+// ─── Finding consolidation (W10) + cross-agent dedup (FP-C) ────────────────
+export { clusterFindings, extractSignificantTokens, dedupeCrossAgentByLine } from './finding-clustering.js';
+export type { ClusterableFinding, ClusterOptions, TaggedClusterableFindings } from './finding-clustering.js';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {

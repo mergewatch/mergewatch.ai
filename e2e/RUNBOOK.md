@@ -156,9 +156,9 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 |
 | [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 |
 | [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 |
-| [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter-target) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) — **TARGET** | 1m | 60s | FP-A |
-| [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys-target) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) — **TARGET** | 2m | 60s | FP-B |
-| [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup-target) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) — **TARGET** | 1m | 60s | FP-C |
+| [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) | 1m | 60s | FP-A |
+| [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B |
+| [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C |
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation-target) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) — **TARGET** | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings-target) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) — **TARGET** | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory-target) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) — **TARGET** | 3m | 90s | FP-F |
@@ -1236,9 +1236,9 @@ The bait: bug / security / style / error-handling agents each have a distinct an
 
 ---
 
-### E2E-30: FP-A — hard confidence-floor filter — TARGET
+### E2E-30: FP-A — hard confidence-floor filter
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-A](./../docs/false-positive-reduction-plan.md#fp-a--hard-confidence-floor-filter--).
+**Status:** ✅ **SHIPPED.** Implemented as a deterministic post-orchestrator filter at the top of `runReviewPipeline`. Constant `CONFIDENCE_FLOOR = 75` near the other pipeline constants in `packages/core/src/agents/reviewer.ts`. See [`docs/false-positive-reduction-plan.md` → FP-A](./../docs/false-positive-reduction-plan.md#fp-a--hard-confidence-floor-filter--).
 
 **Behavior (intended, once FP-A ships):** the orchestrator's prompt rule #5 (*"Drop any finding with confidence below 75"*) is enforced **deterministically** in code. Any finding whose `confidence < 75` is dropped post-orchestrator regardless of what the model returns. Findings with no `confidence` field default to 100 (no suppression).
 
@@ -1271,9 +1271,9 @@ To force the suppression deterministically in a self-hosted run, inject `{ ...fi
 
 ---
 
-### E2E-31: FP-B — pre-filter previousFindings by disputedKeys — TARGET
+### E2E-31: FP-B — pre-filter previousFindings by disputedKeys
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-B](./../docs/false-positive-reduction-plan.md#fp-b--pre-filter-previousfindings-by-disputedkeys--).
+**Status:** ✅ **SHIPPED.** Both handlers (`packages/server/src/review-processor.ts`, `packages/lambda/src/handlers/review-agent.ts`) now compute `disputedKeys` before constructing the `runReviewPipeline` options, then use `partitionDisputed(prevComplete.findings, disputedKeys).kept` as the `previousFindings` arg. Regression-locked by two integration tests in `review-processor.test.ts`. See [`docs/false-positive-reduction-plan.md` → FP-B](./../docs/false-positive-reduction-plan.md#fp-b--pre-filter-previousfindings-by-disputedkeys--).
 
 **Behavior (intended, once FP-B ships):** prior findings whose stable identity key is in `disputedKeys` (the W3 author-rebutted set computed from `## mergewatch triage` comments) are **excluded from the orchestrator's `previousFindings` block entirely**. Today they're passed through and the orchestrator prompt encourages it to "carry forward" them; W3's suppression then runs downstream. After FP-B, the orchestrator never sees them — saves prompt tokens and eliminates the small set of re-emissions that slip past W3's stable-key match because the model reframed the finding.
 
@@ -1297,9 +1297,9 @@ Branch: `fixture/31-prev-disputed-prefilter`. Two-commit sequence:
 
 ---
 
-### E2E-32: FP-C — pre-orchestrator cross-agent dedup — TARGET
+### E2E-32: FP-C — pre-orchestrator cross-agent dedup
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-reduction-plan.md` → FP-C](./../docs/false-positive-reduction-plan.md#fp-c--pre-orchestrator-same-file-same-line-dedup--).
+**Status:** ✅ **SHIPPED.** `dedupeCrossAgentByLine` in `packages/core/src/finding-clustering.ts` is invoked on the per-agent `taggedFindings` immediately before `runOrchestratorAgent`. Reuses W10's `extractSignificantTokens` for the title-overlap gate. Regression-locked by 6 unit tests covering the strict exact-line match, the multi-agent 3-way merge, the same-line-no-token-overlap case (no merge), the different-line case (no merge), the empty-categories preservation, and the same-line-shared-token merge. See [`docs/false-positive-reduction-plan.md` → FP-C](./../docs/false-positive-reduction-plan.md#fp-c--pre-orchestrator-same-file-same-line-dedup--).
 
 **Behavior (intended, once FP-C ships):** when two or more agents flag the same `(file, line)` with overlapping titles, the duplicates are merged **before** the orchestrator's LLM call. Reuses W10's `extractSignificantTokens` for title-similarity. Strongest severity wins; absorbed siblings recorded.
 

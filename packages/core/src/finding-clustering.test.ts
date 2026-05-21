@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   clusterFindings,
   extractSignificantTokens,
+  dedupeCrossAgentByLine,
   type ClusterableFinding,
 } from './finding-clustering.js';
 
@@ -162,5 +163,98 @@ describe('clusterFindings', () => {
     expect(out[0].line).toBe(82);
     expect(out[0].description).toMatch(/Untrusted JSON/);
     expect(out[0].description).toMatch(/SQL injection/);
+  });
+});
+
+// ─── FP-C: pre-orchestrator cross-agent dedup ───────────────────────────────
+
+describe('dedupeCrossAgentByLine', () => {
+  function cf(partial: Partial<ClusterableFinding> & { line: number; title: string }): ClusterableFinding {
+    return { file: 'src/x.ts', severity: 'warning', description: '', ...partial };
+  }
+
+  it('returns inputs unchanged when there are < 2 findings total', () => {
+    const tagged = [
+      { category: 'security', findings: [cf({ line: 1, title: 'Single' })] },
+      { category: 'bug', findings: [] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.dedupedCount).toBe(0);
+    expect(r.taggedFindings).toEqual(tagged);
+  });
+
+  it('merges same-(file, line) findings across agents when they share a significant token', () => {
+    // Two agents flag the same `exec()` line — same file, same line, shared
+    // "command" token. Should merge into one finding under the primary's
+    // category (strongest severity wins; ties → earliest-encountered).
+    const tagged = [
+      { category: 'security', findings: [cf({ line: 10, severity: 'critical', title: 'Command injection via user input' })] },
+      { category: 'bug',      findings: [cf({ line: 10, severity: 'warning',  title: 'Command argument not escaped' })] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.dedupedCount).toBe(1);
+    const sec = r.taggedFindings.find((t) => t.category === 'security')!;
+    expect(sec.findings).toHaveLength(1);
+    expect(sec.findings![0].severity).toBe('critical'); // strongest severity wins
+    expect(sec.findings![0].title).toMatch(/and 1 related cross-agent concern/);
+    expect(sec.findings![0].description).toMatch(/\(bug\) Command argument not escaped/);
+    const bug = r.taggedFindings.find((t) => t.category === 'bug')!;
+    expect(bug.findings).toHaveLength(0); // absorbed into security
+  });
+
+  it('does NOT merge same-(file, line) findings when titles share no significant tokens', () => {
+    // Two distinct concerns that happen to land on the same line — no overlap.
+    const tagged = [
+      { category: 'security', findings: [cf({ line: 10, title: 'Command injection in exec call' })] },
+      { category: 'style',    findings: [cf({ line: 10, title: 'Magic constant should be extracted' })] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.dedupedCount).toBe(0);
+    // Each finding stays in its original category bucket.
+    expect(r.taggedFindings.find((t) => t.category === 'security')!.findings).toHaveLength(1);
+    expect(r.taggedFindings.find((t) => t.category === 'style')!.findings).toHaveLength(1);
+  });
+
+  it('does NOT merge findings on DIFFERENT lines (FP-C is strict exact-line; W10 handles wider regions)', () => {
+    // Adjacent lines (11 vs 12) sharing a token — W10 might cluster these
+    // post-orchestrator, but FP-C must not because they're not exact-line.
+    const tagged = [
+      { category: 'security', findings: [cf({ line: 11, title: 'Validation missing on payload' })] },
+      { category: 'bug',      findings: [cf({ line: 12, title: 'Validation missing on payload' })] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.dedupedCount).toBe(0);
+  });
+
+  it('preserves the per-category bucket structure (empty categories stay present)', () => {
+    // Even when a category is empty (no findings), it must still appear in
+    // the output so the orchestrator's per-category prompt isn't reshuffled.
+    const tagged = [
+      { category: 'security', findings: [cf({ line: 1, title: 'A' })] },
+      { category: 'bug', findings: [] },
+      { category: 'style', findings: [] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.taggedFindings.map((t) => t.category)).toEqual(['security', 'bug', 'style']);
+    expect(r.taggedFindings[1].findings).toEqual([]);
+    expect(r.taggedFindings[2].findings).toEqual([]);
+  });
+
+  it('merges 3+ same-(file, line) cross-agent findings into one (PR #38-style concentration)', () => {
+    // Three agents independently flag the same line. All share "validation"
+    // → merge into one under the strongest-severity primary.
+    const tagged = [
+      { category: 'security',       findings: [cf({ line: 42, severity: 'warning',  title: 'Input validation missing' })] },
+      { category: 'bug',            findings: [cf({ line: 42, severity: 'critical', title: 'Payload validation skipped — possible crash' })] },
+      { category: 'error-handling', findings: [cf({ line: 42, severity: 'warning',  title: 'Validation throws not handled' })] },
+    ];
+    const r = dedupeCrossAgentByLine(tagged);
+    expect(r.dedupedCount).toBe(2);
+    const bug = r.taggedFindings.find((t) => t.category === 'bug')!;
+    expect(bug.findings).toHaveLength(1);
+    expect(bug.findings![0].severity).toBe('critical');
+    expect(bug.findings![0].title).toMatch(/and 2 related cross-agent concerns/);
+    expect(bug.findings![0].description).toMatch(/\(security\)/);
+    expect(bug.findings![0].description).toMatch(/\(error-handling\)/);
   });
 });
