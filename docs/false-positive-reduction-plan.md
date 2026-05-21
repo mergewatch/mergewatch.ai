@@ -23,7 +23,7 @@ No new failure patterns. Every concrete bad review we've seen is covered by W1�
 
 Ranked by ROI: deterministic + low cost + high blast radius first.
 
-### FP-A — Hard confidence-floor filter  ★★★
+### FP-A — Hard confidence-floor filter  ✅ SHIPPED
 
 **Where the gap lives:** `packages/core/src/agents/prompts.ts:481` (rule #5 of `ORCHESTRATOR_PROMPT`):
 > *"Drop any finding with confidence below 75."*
@@ -52,7 +52,7 @@ if (lowConfidence.length > 0) {
 
 ---
 
-### FP-B — Pre-filter `previousFindings` by `disputedKeys`  ★★★
+### FP-B — Pre-filter `previousFindings` by `disputedKeys`  ✅ SHIPPED
 
 **Where the gap lives:** both handlers (`packages/server/src/review-processor.ts:425`, `packages/lambda/src/handlers/review-agent.ts:545`) pass `previousFindings: prevComplete?.findings` **raw** to `runReviewPipeline`. The orchestrator prompt then includes those prior findings via `buildPreviousFindingsBlock` (`reviewer.ts:798`) and explicitly tells the model to *"carry forward if still present."*
 
@@ -65,7 +65,7 @@ W3's `partitionDisputed` runs **after** the orchestrator. So the orchestrator ha
 
 ---
 
-### FP-C — Pre-orchestrator same-file-same-line dedup  ★★
+### FP-C — Pre-orchestrator same-file-same-line dedup  ✅ SHIPPED
 
 **Where the gap lives:** the orchestrator is the ONLY cross-agent dedup point, and it's an LLM. Two agents flagging exactly `file:42` with overlapping titles relies on the model to merge them. W10's `clusterFindings` catches some post-hoc clustering on a wider region, but trivial same-file-same-line duplicates should be killed *before* the orchestrator sees them — saves prompt tokens AND eliminates a class of cross-agent doubles the model misses.
 
@@ -143,9 +143,9 @@ Pass the detected set into a new `LINTER_AWARE_DIRECTIVE` placeholder injected i
 
 | ID | Opportunity | Cost | Code blast radius | ROI |
 |---|---|---|---|---|
-| **FP-A** | Hard confidence-floor filter | tiny | one filter call | ★★★ |
-| **FP-B** | Pre-filter `previousFindings` by disputedKeys | tiny | two handlers, ~10 lines | ★★★ |
-| **FP-C** | Pre-orchestrator same-file-same-line dedup | small | reuses W10's helper | ★★ |
+| **FP-A** | Hard confidence-floor filter | tiny | one filter call | ✅ SHIPPED |
+| **FP-B** | Pre-filter `previousFindings` by disputedKeys | tiny | two handlers, ~10 lines | ✅ SHIPPED |
+| **FP-C** | Pre-orchestrator same-file-same-line dedup | small | reuses W10's helper | ✅ SHIPPED |
 | **FP-D** | Diagram path validation | small | `parseDiagramResponse` post-process | ★★ |
 | **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ★ |
 | **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ★ |

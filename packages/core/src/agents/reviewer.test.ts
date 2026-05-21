@@ -1131,6 +1131,67 @@ describe('runReviewPipeline', () => {
     expect(typeof result.outputTokens).toBe('number');
   });
 
+  // ─── FP-A: hard confidence-floor filter ──────────────────────────────────
+
+  it('FP-A — drops findings with confidence < 75 deterministically post-orchestrator', async () => {
+    // Trigger the orchestrator by feeding the security agent one finding —
+    // an all-empty agent input short-circuits the orchestrator and bypasses
+    // its mock response entirely (see "skips LLM for empty input" test).
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    // Orchestrator returns 3 findings: confidence 90 (kept), 75 (boundary kept),
+    // 50 (dropped by FP-A). The model didn't honor its own rule #5 — FP-A does.
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 90, category: 'security', title: 'Confident issue',  description: '', suggestion: '' },
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 75, category: 'bug',      title: 'Boundary issue',   description: '', suggestion: '' },
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 50, category: 'style',    title: 'Speculative issue', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+
+    // Both the 90 and the 75 survive (the filter is `< 75`, not `<= 75`).
+    // The speculative 50 is dropped.
+    const titles = result.findings.map((f) => f.title);
+    expect(titles).toContain('Confident issue');
+    expect(titles).toContain('Boundary issue');
+    expect(titles).not.toContain('Speculative issue');
+  });
+
+  it('FP-A — findings with NO `confidence` field default to 100 and are kept (back-compat)', async () => {
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    const orchestrator = JSON.stringify({
+      findings: [
+        // No `confidence` field — must default to 100 and be kept.
+        { file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: 'Legacy untagged', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe('Legacy untagged');
+  });
+
 });
 
 // ─── agentAuthored flag (AGENT_MODE_SUFFIX injection) ───────────────

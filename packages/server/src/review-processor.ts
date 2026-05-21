@@ -11,7 +11,7 @@ import {
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
-  fetchTriageComments, computeDisputedKeys,
+  fetchTriageComments, computeDisputedKeys, partitionDisputed,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -391,6 +391,28 @@ export async function processReviewJob(
       }
     }
 
+    // FP-B — pre-filter `previousFindings` by `disputedKeys`. Without this,
+    // the orchestrator's prompt (which includes prior findings via
+    // `buildPreviousFindingsBlock` and tells the model to "carry forward if
+    // still present") gets handed findings the author already dispositioned
+    // — encouraging it to re-emit them in slightly-different framings that
+    // W3's stable-key match downstream can miss. Pre-filtering at the
+    // orchestrator's INPUT side closes the loop and saves prompt tokens.
+    const priorForOrchestrator = prevComplete?.findings && disputedKeys.length > 0
+      ? partitionDisputed(prevComplete.findings, disputedKeys).kept
+      : prevComplete?.findings;
+    if (
+      prevComplete?.findings &&
+      priorForOrchestrator &&
+      priorForOrchestrator.length < prevComplete.findings.length
+    ) {
+      console.warn(
+        '[fp-b] excluded %d disputed prior finding%s from the orchestrator input',
+        prevComplete.findings.length - priorForOrchestrator.length,
+        prevComplete.findings.length - priorForOrchestrator.length === 1 ? '' : 's',
+      );
+    }
+
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
     const conventionsResult = await fetchConventions(octokit, owner, repo, ref, config.conventions);
     if (conventionsResult) {
@@ -422,7 +444,7 @@ export async function processReviewJob(
         tone: config.ux.tone,
         customPricing: config.pricing,
         previousDiagram,
-        previousFindings: prevComplete?.findings,
+        previousFindings: priorForOrchestrator,
         disputedKeys,
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',

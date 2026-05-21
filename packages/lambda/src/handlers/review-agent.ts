@@ -43,6 +43,7 @@ import {
   handleInlineReply,
   fetchTriageComments,
   computeDisputedKeys,
+  partitionDisputed,
 } from '@mergewatch/core';
 import type {
   ReviewJobPayload,
@@ -514,6 +515,24 @@ export async function handler(
       }
     }
 
+    // FP-B — pre-filter `previousFindings` by `disputedKeys`. Mirrors the
+    // server handler; see review-processor.ts for the rationale (orchestrator
+    // input shouldn't carry findings the author already dispositioned).
+    const priorForOrchestrator = prevComplete?.findings && disputedKeys.length > 0
+      ? partitionDisputed(prevComplete.findings, disputedKeys).kept
+      : prevComplete?.findings;
+    if (
+      prevComplete?.findings &&
+      priorForOrchestrator &&
+      priorForOrchestrator.length < prevComplete.findings.length
+    ) {
+      console.warn(
+        '[fp-b] excluded %d disputed prior finding%s from the orchestrator input',
+        prevComplete.findings.length - priorForOrchestrator.length,
+        prevComplete.findings.length - priorForOrchestrator.length === 1 ? '' : 's',
+      );
+    }
+
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
     const conventionsResult = await fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions);
     if (conventionsResult) {
@@ -542,7 +561,7 @@ export async function handler(
       tone: runtimeConfig.ux.tone,
       customPricing: runtimeConfig.pricing,
       previousDiagram,
-      previousFindings: prevComplete?.findings,
+      previousFindings: priorForOrchestrator,
       disputedKeys,
       conventions: conventionsResult?.content,
       agentAuthored: event.source === 'agent',
