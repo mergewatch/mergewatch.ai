@@ -233,7 +233,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-H — Top recurring FP themes table
+### FB-H — Top recurring FP themes table  ✅ SHIPPED
 
 **Where the gap lives:** Aggregate metrics show *that* the org disputes findings; they don't show *what* the org disputes. Without that, no acting on the data.
 
@@ -259,7 +259,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-J — Per-repo FP heatmap (org-wide)
+### FB-J — Per-repo FP heatmap (org-wide)  ✅ SHIPPED
 
 **Where the gap lives:** Organisations with dozens of repos need to know *which* repos are noisy. A single aggregate disputeRate hides this.
 
@@ -270,7 +270,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-K — Suggest `.mergewatch.yml` rule CTA
+### FB-K — Suggest `.mergewatch.yml` rule CTA  ✅ SHIPPED
 
 **Where the gap lives:** Even with the themes table (FB-H), translating "we keep disputing X" into a working `.mergewatch.yml` rule still requires manual YAML drafting.
 
@@ -311,10 +311,10 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ✅ SHIPPED |
 | **FB-F** | FP funnel chart | Surface | M | FB-E | ✅ SHIPPED |
 | **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ✅ SHIPPED (bar v1; line pending per-day) |
-| **FB-H** | Top recurring themes table | Surface | M | FB-E | ★★★ |
+| **FB-H** | Top recurring themes table | Surface | M | FB-E | ✅ SHIPPED |
 | **FB-I** | Severity-shopping detector | Surface | S | FB-G | ⏸ DEFERRED (needs severity on dispositions) |
-| **FB-J** | Per-repo FP heatmap | Surface | M | FB-E | ★★ |
-| **FB-K** | Suggest `.mergewatch.yml` rule CTA | Surface | M | FB-H | ★★ |
+| **FB-J** | Per-repo FP heatmap | Surface | M | FB-E | ✅ SHIPPED (bar v1; grid pending per-day rollup) |
+| **FB-K** | Suggest `.mergewatch.yml` rule CTA | Surface | M | FB-H | ✅ SHIPPED (customStyleRules soft-guard v1) |
 | **FB-L** | `{{KNOWN_FP_PATTERNS}}` prompt injection | Learn | L | FB-E, FB-H | ★★★ (opt-in) |
 
 **Recommended bundling:**
