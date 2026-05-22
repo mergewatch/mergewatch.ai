@@ -1,4 +1,4 @@
-import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig } from '@mergewatch/core';
+import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig, RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
@@ -194,14 +194,30 @@ async function handleInlineReplyJob(
     ) {
       const inst = String(installationId);
       const at = new Date().toISOString();
-      const reason: { category: 'already-handled' | 'out-of-scope' | 'wrong-target' | 'style-disagreement' | 'other'; text?: string; at: string } = {
-        category: result.rejectCategory,
+      // Reuses the exported RejectCategory union from core so the inline
+      // shape can't drift if the categories are widened. The reason shape
+      // matches `FindingDispositionRecord['rejectReasons'][number]`.
+      const reason: NonNullable<FindingDispositionRecord['rejectReasons']>[number] = {
+        category: result.rejectCategory as RejectCategory,
         ...(result.rejectText ? { text: result.rejectText } : {}),
         at,
       };
-      for (const key of result.rejectedFindingKeys) {
-        await deps.dispositionStore.appendRejectReason(inst, repoFullName, key, reason)
-          .catch((err) => console.warn('[fb-d] appendRejectReason failed for %s:', key, err));
+      // Parallel + summary-logged: a per-key catch'd loop was sequential
+      // and emitted one warn per failure. Promise.allSettled lets the
+      // writes run in parallel and the failure count is emitted as a
+      // single line — easier to grep + sufficient for the current
+      // analytics-volume scale.
+      const settled = await Promise.allSettled(
+        result.rejectedFindingKeys.map((key) =>
+          deps.dispositionStore!.appendRejectReason(inst, repoFullName, key, reason),
+        ),
+      );
+      const failed = settled.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(
+          '[fb-d] %d/%d appendRejectReason write(s) failed for %s#%d (category=%s)',
+          failed, settled.length, repoFullName, prNumber, result.rejectCategory,
+        );
       }
       await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.rejectedFindingKeys);
       console.log(

@@ -52,6 +52,7 @@ import {
   recordQuietDrops,
   pollAndRecordInlineReactions,
 } from '@mergewatch/core';
+import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
   ReviewJobPayload,
   ReviewItem,
@@ -260,14 +261,27 @@ async function handleInlineReplyMode(
     ) {
       const inst = String(installationId);
       const at = new Date().toISOString();
-      const reason: { category: 'already-handled' | 'out-of-scope' | 'wrong-target' | 'style-disagreement' | 'other'; text?: string; at: string } = {
-        category: result.rejectCategory,
+      // Reuse the exported RejectCategory + FindingDispositionRecord shapes
+      // so the inline type can't drift if the categories are widened.
+      const reason: NonNullable<FindingDispositionRecord['rejectReasons']>[number] = {
+        category: result.rejectCategory as RejectCategory,
         ...(result.rejectText ? { text: result.rejectText } : {}),
         at,
       };
-      for (const key of result.rejectedFindingKeys) {
-        await dispositionStore.appendRejectReason(inst, repoFullName, key, reason)
-          .catch((err) => console.warn('[fb-d] appendRejectReason failed for %s:', key, err));
+      // Parallel + summary-logged. See server/review-processor.ts for
+      // the rationale (one log line for a batch of failures, not one per
+      // key — easier to grep, sufficient for the analytics-volume scale).
+      const settled = await Promise.allSettled(
+        result.rejectedFindingKeys.map((key) =>
+          dispositionStore.appendRejectReason(inst, repoFullName, key, reason),
+        ),
+      );
+      const failed = settled.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(
+          '[fb-d] %d/%d appendRejectReason write(s) failed for %s#%d (category=%s)',
+          failed, settled.length, repoFullName, prNumber, result.rejectCategory,
+        );
       }
       await recordDisputes(dispositionStore, installationId, repoFullName, result.rejectedFindingKeys);
       console.log(
