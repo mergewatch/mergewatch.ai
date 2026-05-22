@@ -19,6 +19,7 @@ export type {
   IDashboardStore,
   IDashboardInstallationStore,
   IDashboardReviewStore,
+  IDashboardFPInsightStore,
   PaginatedResult,
   ReviewStats,
   RepoStats,

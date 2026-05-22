@@ -931,6 +931,14 @@ Outputs:
     Description: Name of the DynamoDB reviews table
     Value: !Ref ReviewsTable
 
+  FindingDispositionsTableName:
+    Description: Name of the DynamoDB finding-dispositions table (FB-A)
+    Value: !Ref FindingDispositionsTable
+
+  FpInsightsTableName:
+    Description: Name of the DynamoDB installation-fp-insights table (FB-E)
+    Value: !Ref FpInsightsTable
+
   # The IAM role ARN — useful for debugging permission issues
   LambdaRoleArn:
     Description: ARN of the shared Lambda execution role

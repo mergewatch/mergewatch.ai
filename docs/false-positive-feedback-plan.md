@@ -211,7 +211,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-F — Dashboard FP funnel chart
+### FB-F — Dashboard FP funnel chart  ✅ SHIPPED
 
 **Where the gap lives:** The dashboard surfaces individual reviews but nothing about FP *health* of the org.
 
@@ -222,7 +222,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-G — Dispute-rate-by-agent line chart
+### FB-G — Dispute-rate-by-agent line chart  ✅ SHIPPED (as bar chart in v1; line chart pending per-day rollup)
 
 **Where the gap lives:** Per-agent FP rates differ wildly across orgs (a Python-heavy shop disputes most TS-style nits; a Rails shop disputes most type-assertion warnings). No way to see which agent is the noisiest for *this* org.
 
@@ -244,7 +244,11 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-I — Severity-shopping detector chart
+### FB-I — Severity-shopping detector chart  ⏸ DEFERRED
+
+**Why deferred**: `FindingDispositionRecord` only tracks `category` (the producing agent — security / bug / style / …), not `severity` (critical / warning / info). Building a severity-shopping detector requires extending the disposition schema with a `severity` field, migrating both Postgres + DynamoDB, updating the writer in `disposition-writer.ts` to set it from `finding.severity`, and adding a `perSeverity` bucket to `InstallationFPInsight`. That's a self-contained follow-up PR (~M effort, low risk) and out of scope for the FB-F + FB-G chart bundle.
+
+**Trigger to revisit**: once FB-F + FB-G are in production and operators ask for severity-shopping visibility.
 
 **Where the gap lives:** FP-E extended verification to warnings to close the severity-shopping loophole — the orchestrator might still downgrade Critical → Warning to dodge attention. We need a way to see whether warnings dispute-rate stays disproportionately high relative to criticals over time.
 
@@ -305,10 +309,10 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ✅ SHIPPED |
 | **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ✅ SHIPPED |
 | **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ✅ SHIPPED |
-| **FB-F** | FP funnel chart | Surface | M | FB-E | ★★ |
-| **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ★★ |
+| **FB-F** | FP funnel chart | Surface | M | FB-E | ✅ SHIPPED |
+| **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ✅ SHIPPED (bar v1; line pending per-day) |
 | **FB-H** | Top recurring themes table | Surface | M | FB-E | ★★★ |
-| **FB-I** | Severity-shopping detector | Surface | S | FB-G | ★ |
+| **FB-I** | Severity-shopping detector | Surface | S | FB-G | ⏸ DEFERRED (needs severity on dispositions) |
 | **FB-J** | Per-repo FP heatmap | Surface | M | FB-E | ★★ |
 | **FB-K** | Suggest `.mergewatch.yml` rule CTA | Surface | M | FB-H | ★★ |
 | **FB-L** | `{{KNOWN_FP_PATTERNS}}` prompt injection | Learn | L | FB-E, FB-H | ★★★ (opt-in) |

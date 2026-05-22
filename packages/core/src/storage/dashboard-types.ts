@@ -11,7 +11,7 @@
  *   - PostgresDashboardStore (packages/storage-postgres) — self-hosted / Docker
  */
 
-import type { InstallationItem, InstallationSettings, ReviewItem } from '../types/db.js';
+import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight } from '../types/db.js';
 
 // ─── Paginated result wrapper ───────────────────────────────────────────────
 
@@ -77,9 +77,31 @@ export interface IDashboardReviewStore {
   getRepoStats(repos: string[]): Promise<Map<string, RepoStats>>;
 }
 
+// ─── FP insight store (dashboard operations) ───────────────────────────────
+
+/**
+ * FB-F..FB-J dashboard read surface for the InstallationFPInsight rows
+ * produced by the nightly FB-E rollup. Dashboard routes read here; never
+ * from the raw FindingDispositionRecord table. Keeps page-load O(1).
+ */
+export interface IDashboardFPInsightStore {
+  /**
+   * Return all 7d / 30d / 90d insight rows for an installation, sorted
+   * window-asc. Empty array when the rollup hasn't produced rows yet
+   * (fresh installation; chart components render zero-state).
+   */
+  listByInstallation(installationId: string): Promise<InstallationFPInsight[]>;
+}
+
 // ─── Combined dashboard store ───────────────────────────────────────────────
 
 export interface IDashboardStore {
   installations: IDashboardInstallationStore;
   reviews: IDashboardReviewStore;
+  /**
+   * FB-F..FB-J — optional in v1 so older deployments (pre-FB-E table
+   * provisioning) can still serve the rest of the dashboard. Chart routes
+   * render a zero-state when this field is absent.
+   */
+  fpInsights?: IDashboardFPInsightStore;
 }

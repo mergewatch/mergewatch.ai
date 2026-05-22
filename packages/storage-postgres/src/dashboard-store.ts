@@ -269,8 +269,17 @@ export function createPostgresDashboardStore(databaseUrl: string): IDashboardSto
   const client = postgres(databaseUrl);
   const db = drizzle(client);
 
+  // FB-F..FB-J — same store instance fulfils both IFPInsightStore (pipeline
+  // writes) and IDashboardFPInsightStore (dashboard reads). The dashboard
+  // never exercises upsert here.
+  // Lazy import to keep the module DAG simple — `./fp-insight-store` itself
+  // imports schema + drizzle which are already loaded above.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PostgresFPInsightStore } = require('./fp-insight-store.js');
+
   return {
     installations: new PostgresDashboardInstallationStore(db),
     reviews: new PostgresDashboardReviewStore(db),
+    fpInsights: new PostgresFPInsightStore(db),
   };
 }

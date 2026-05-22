@@ -111,6 +111,8 @@ const nextConfig = {
     GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
     DYNAMODB_TABLE_INSTALLATIONS: process.env.DYNAMODB_TABLE_INSTALLATIONS,
     DYNAMODB_TABLE_REVIEWS: process.env.DYNAMODB_TABLE_REVIEWS,
+    // FB-F..FB-J — optional; routes degrade to a zero-state when unset.
+    DYNAMODB_TABLE_FP_INSIGHTS: process.env.DYNAMODB_TABLE_FP_INSIGHTS,
     API_KEYS_TABLE: process.env.API_KEYS_TABLE,
     GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
     DEPLOYMENT_MODE: process.env.DEPLOYMENT_MODE,

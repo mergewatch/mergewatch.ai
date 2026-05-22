@@ -168,8 +168,8 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
 | [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) | 3m | 90s | FB-D |
 | [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
-| [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart-target) | Org dashboard renders the FP funnel: surfaced → carried → resolved → disputed → silently-dropped (FB-F) — **TARGET** | 2m | 60s | FB-F |
-| [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-line-chart-target) | Org dashboard renders dispute-rate over time with one line per agent category (FB-G) — **TARGET** | 2m | 60s | FB-G |
+| [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
+| [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
 | [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table-target) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) — **TARGET** | 2m | 60s | FB-H |
 | [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart-target) | Warnings dispute-rate vs criticals dispute-rate over time, with annotation when warnings exceed criticals × 1.5 for ≥ 2 weeks (FB-I) — **TARGET** | 2m | 60s | FB-I |
 | [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap-target) | Org dashboard renders a per-repo × time heatmap of dispute rate (FB-J) — **TARGET** | 2m | 60s | FB-J |
@@ -1639,9 +1639,11 @@ Branch: `fixture/41-nightly-rollup`. Pre-seed an installation with ~20 `FindingD
 
 ---
 
-### E2E-42: FB-F — Dashboard FP funnel chart — TARGET
+### E2E-42: FB-F — Dashboard FP funnel chart
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-F](./../docs/false-positive-feedback-plan.md#fb-f--dashboard-fp-funnel-chart).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-F](./../docs/false-positive-feedback-plan.md#fb-f--dashboard-fp-funnel-chart--shipped).
+
+**Note on shape**: the original spec said `surfaced → carried → resolved → disputed → silently-dropped`. The shipping v1 uses **the four signals we actually track** in `FindingDispositionRecord`: `unsignaled` (no signal either way) + `agreed` (👍/❤️/🚀) + `silentDropped` (implicit FP) + `disputed` (explicit FP). These four sum to `totalFindingsSurfaced` by construction. "Carried" + "resolved" need a separate finding-state machine the rollup doesn't yet have — deferred.
 
 **Behavior (intended, once FB-F ships):** new `/dashboard/[installation]/insights` route. The funnel is the page's hero chart: stacked bar (or Sankey) showing `surfaced → carried → resolved → disputed → silently-dropped`. Window selector (7d / 30d / 90d). Reads exclusively from `InstallationFPInsight`; no per-finding queries on the page-load path.
 
@@ -1665,9 +1667,11 @@ Branch: `fixture/42-funnel-chart`. Seed an installation with the same data as E2
 
 ---
 
-### E2E-43: FB-G — Dispute-rate-by-agent line chart — TARGET
+### E2E-43: FB-G — Dispute-rate-by-agent bar chart
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-G](./../docs/false-positive-feedback-plan.md#fb-g--dispute-rate-by-agent-line-chart).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-G](./../docs/false-positive-feedback-plan.md#fb-g--dispute-rate-by-agent-line-chart--shipped).
+
+**Note on shape**: the original spec said *line chart over time, one line per agent category*. True time-series requires per-day rollup buckets the FB-E job doesn't yet emit (we have one rollup snapshot per night with 7d/30d/90d sliding windows). Shipping v1 is a **horizontal bar chart of `perCategory` dispute rates** in the active window, with severity colouring (red ≥ 50%, amber ≥ 25%, indigo otherwise). The window selector (7d/30d/90d) lets the operator compare windows manually. Upgrade to true time-series when FB-E gains a per-day rollup mode.
 
 **Behavior (intended, once FB-G ships):** time-series line chart on the same `/insights` route, one line per agent category (`security`, `bug`, `style`, `errorHandling`, `testCoverage`, `commentAccuracy`, `custom`). X-axis: day buckets over 30d / 90d. Y-axis: disputeRate. Hover shows per-day surfacings + disputes.
 
