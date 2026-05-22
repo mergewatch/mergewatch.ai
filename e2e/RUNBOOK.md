@@ -163,6 +163,18 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) | 2m | 60s | FP-G |
+| [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers-target) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) — **TARGET** | 2m | 60s | FB-A |
+| [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter-target) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) — **TARGET** | 2m | 60s | FB-B |
+| [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes-target) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) — **TARGET** | 2m | 60s | FB-C |
+| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command-target) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) — **TARGET** | 3m | 90s | FB-D |
+| [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup-target) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) — **TARGET** | 3m | 90s | FB-E |
+| [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart-target) | Org dashboard renders the FP funnel: surfaced → carried → resolved → disputed → silently-dropped (FB-F) — **TARGET** | 2m | 60s | FB-F |
+| [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-line-chart-target) | Org dashboard renders dispute-rate over time with one line per agent category (FB-G) — **TARGET** | 2m | 60s | FB-G |
+| [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table-target) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) — **TARGET** | 2m | 60s | FB-H |
+| [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart-target) | Warnings dispute-rate vs criticals dispute-rate over time, with annotation when warnings exceed criticals × 1.5 for ≥ 2 weeks (FB-I) — **TARGET** | 2m | 60s | FB-I |
+| [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap-target) | Org dashboard renders a per-repo × time heatmap of dispute rate (FB-J) — **TARGET** | 2m | 60s | FB-J |
+| [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta-target) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a one-click `.mergewatch.yml` snippet suggestion (FB-K) — **TARGET** | 2m | 60s | FB-K |
+| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
 
 ---
 
@@ -1475,6 +1487,323 @@ Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present /
 - ❌ Code-smell findings (god functions, nesting) are also suppressed (over-defer — only lint-equivalent should defer)
 - ❌ Detection false-positive: a `.eslintrc.json` in a `node_modules/` subdirectory triggers the directive (the scan must be repo-root only — confirmed by reading `path: ''` from the root only, not recursive)
 - ❌ A `pyproject.toml` without `[tool.ruff]` triggers `ruff` (regex must require the explicit table header)
+
+---
+
+### E2E-37: FB-A — FindingDispositionRecord storage + writers — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-A](./../docs/false-positive-feedback-plan.md#fb-a--findingdispositionrecord-storage--writers).
+
+**Behavior (intended, once FB-A ships):** every surfacing of a finding upserts a `FindingDispositionRecord` keyed by `(installationId, repoFullName, findingMatchKey)` — incrementing `surfaceCount`, refreshing `lastSeen`, capturing category + topAgent + sigTokens. The existing W3 path increments `disputeCount`; FP-F inline-resolve increments `disputeCount` AND continues to populate `inlineResolvedKeys` on `ReviewItem` (back-compat). W2 verdicts increment `verifiedCount` / `unverifiedCount`. Records are read by FB-E's nightly rollup only — no per-review read on the dashboard path.
+
+**Setup**
+
+Branch: `fixture/37-fp-record-storage`. A PR that triggers ≥ 2 findings on changed code, then a follow-up commit with no code changes:
+1. Submit PR → confirm two `FindingDispositionRecord` rows exist, each with `surfaceCount = 1`, no disputes.
+2. Author posts a `## mergewatch triage` reply rebutting one finding → re-review → confirm the rebutted row's `disputeCount = 1`.
+3. Push a no-op commit → re-review → confirm both rows now have `surfaceCount = 2` (the rebutted one was suppressed pre-orchestrator via FP-B but its surfacing on review #1 still counts).
+
+**Expected outcomes**
+
+- [ ] One row per distinct `findingMatchKey` per repo, never duplicates across reviews
+- [ ] `firstSeen` set once on creation; `lastSeen` refreshed on every surfacing
+- [ ] `disputeCount` increments on every W3 dispute AND every FP-F inline-resolve hitting that key
+- [ ] `verifiedCount` / `unverifiedCount` increment on every W2 pass that produces the corresponding verdict for that key
+- [ ] **Regression check**: `ReviewItem.inlineResolvedKeys` continues to work exactly as before — FB-A is additive
+
+**Failure modes**
+- ❌ Two records get created for the same finding because `findingMatchKey` was computed inconsistently across writers
+- ❌ A failed write blocks the review pipeline (writes must be best-effort / async)
+
+---
+
+### E2E-38: FB-B — quiet-drop derived counter — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-B](./../docs/false-positive-feedback-plan.md#fb-b--quiet-drop-derived-counter).
+
+**Behavior (intended, once FB-B ships):** when a finding from the previous review (a) was present in `previousFindings`, (b) is NOT in the current review's output, AND (c) the cited code's fingerprint did NOT change between the two commits → the orchestrator silently dropped it. Each such drop increments `silentDropCount` on the corresponding `FindingDispositionRecord`. This is a strong *implicit* FP signal — the model dropped a finding it had previously emitted on the same code.
+
+**Setup**
+
+Branch: `fixture/38-quiet-drop`. A PR with a finding that the orchestrator's confidence wavers on:
+1. Review #1 surfaces finding X. Confirm `silentDropCount = 0`.
+2. Push a small change to an unrelated file (no change to the cited code). Re-review.
+3. If review #2 omits X → confirm `silentDropCount = 1` on X's record. If review #2 keeps X → no-op (regression check).
+
+**Expected outcomes**
+
+- [ ] `silentDropCount` only increments when the cited code's fingerprint is byte-identical across commits
+- [ ] An edit to the cited code that legitimately resolves the finding does NOT increment `silentDropCount`
+- [ ] Quiet drops feed into the FB-E rollup's "carried → resolved" arc, not the "disputed" arc — separately countable
+
+**Failure modes**
+- ❌ A finding resurfaces under a slightly different title and the prior version gets counted as "silently dropped" (W9 fingerprint must drive the match, not the title alone)
+- ❌ A finding the author actively addressed via code (legitimate resolve) increments `silentDropCount` (the code-change check is missing or wrong)
+
+---
+
+### E2E-39: FB-C — inline-comment 👎 reactions → disputes — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-C](./../docs/false-positive-feedback-plan.md#fb-c--inline-comment--reactions--disputes).
+
+**Behavior (intended, once FB-C ships):** reactions on the bot's inline finding comments are collected and mapped:
+
+| Reaction | Counter |
+|---|---|
+| 👎 (`-1`) | `disputeCount` |
+| 🤔 (`confused`) | `disputeCount` |
+| 👍 (`+1`) | `agreementCount` |
+| ❤️ (`heart`) | `agreementCount` |
+| 🚀 (`rocket`) | `agreementCount` |
+
+Reaction *removal* is a no-op (signal stays monotonic). Anonymous: we count, we don't store reactor identity.
+
+**Setup**
+
+Branch: `fixture/39-inline-reactions`. A PR with at least one inline-comment-eligible finding:
+1. Confirm `FindingDispositionRecord` row exists post-review with `disputeCount = 0`, `agreementCount = 0`.
+2. Add 👎 to the inline bot comment → confirm `disputeCount = 1`.
+3. Add 🚀 → confirm `agreementCount = 1`.
+4. Remove the 👎 → confirm `disputeCount` stays at 1 (monotonic).
+
+**Expected outcomes**
+
+- [ ] 👎 / 🤔 ↔ `disputeCount` mapping fires per-reaction
+- [ ] 👍 / ❤️ / 🚀 ↔ `agreementCount` mapping fires per-reaction
+- [ ] Reactions on the TOP-level bot comment continue to populate `ReviewItem.reactions` separately (back-compat)
+- [ ] Reactions added by `mergewatch[bot]` itself are ignored (no self-counting)
+
+**Failure modes**
+- ❌ Reaction removal decrements the counter (must be monotonic)
+- ❌ Reactions on a CopilotAI / dependabot inline comment get attributed to a MergeWatch finding (must filter by `INLINE_BOT_COMMENT_MARKER`)
+- ❌ Bot's own reactions count (loop)
+
+---
+
+### E2E-40: FB-D — `/mergewatch reject` slash command — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-D](./../docs/false-positive-feedback-plan.md#fb-d--mergewatch-reject-slash-command).
+
+**Behavior (intended, once FB-D ships):** new inline-thread intent parser alongside `detectResolveIntent`. Recognises `/mergewatch reject <category> [optional reason]` where category is one of: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Increments `disputeCount` AND appends `{ category, text?, at }` to `rejectReasons[]` on the `FindingDispositionRecord`. Bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`). Thread is NOT auto-resolved (different from `/resolve` — rejection is for *finding-level FP signal*, resolution is for *thread-level closure*).
+
+**Setup**
+
+Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
+1. Reply `/mergewatch reject style-disagreement we use snake_case for python here` on the thread.
+2. Confirm the `FindingDispositionRecord` has `disputeCount = 1` and `rejectReasons[0] = { category: 'style-disagreement', text: 'we use snake_case for python here', at: <iso> }`.
+3. Confirm the bot posts a structured confirmation reply.
+4. Confirm the thread is NOT auto-resolved on GitHub.
+
+**Expected outcomes**
+
+- [ ] Recognised categories: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`
+- [ ] Unrecognised category (`/mergewatch reject typo-here`) → bot reply asks for a valid category, no record write
+- [ ] Multiple `/mergewatch reject` replies on the same thread append to `rejectReasons[]` (don't overwrite)
+- [ ] Top-level `## mergewatch triage` continues to function (FB-D is an inline-thread addition, not a replacement)
+
+**Failure modes**
+- ❌ `/mergewatch reject` is matched in prose ("here's how I'd reject this differently") — pattern must be standalone-line or slash-command form
+- ❌ The thread is auto-resolved (signal collected; closure is human-driven)
+
+---
+
+### E2E-41: FB-E — Nightly InstallationFPInsight rollup — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-E](./../docs/false-positive-feedback-plan.md#fb-e--nightly-installationfpinsight-rollup).
+
+**Behavior (intended, once FB-E ships):** scheduled task (EventBridge → Lambda for SaaS; node-cron for self-hosted) runs nightly per installation. For each window (7d / 30d / 90d), aggregates `FindingDispositionRecord` rows into a single `InstallationFPInsight` row carrying: `totalFindingsSurfaced`, `disputeRate`, `perCategory`, `topClusters[]` (via W10 token clustering), `perRepo`. Stored in a new `mergewatch-installation-fp-insights` table. All dashboard charts read exclusively from these rollups.
+
+**Setup**
+
+Branch: `fixture/41-nightly-rollup`. Pre-seed an installation with ~20 `FindingDispositionRecord` rows spanning 3 repos, 2 categories, ~30% dispute rate. Trigger the rollup manually:
+1. SaaS: `aws lambda invoke --function-name mergewatch-insights-rollup-prod`.
+2. Self-hosted: `POST /api/insights/rollup` (admin endpoint).
+
+**Expected outcomes**
+
+- [ ] Three rollup rows per installation per night (`7d`, `30d`, `90d` windows)
+- [ ] `topClusters[]` is populated via `extractSignificantTokens` + union-find on shared tokens, sorted by `surfaceCount × disputeRate`
+- [ ] `perRepo[repoFullName]` populated for every repo with ≥ 1 surfacing in the window
+- [ ] Job is idempotent — re-running the same night doesn't double-count
+- [ ] Job completes within 60s for the largest expected installation
+
+**Failure modes**
+- ❌ Rollup reads or writes the wrong installation's records (cross-install contamination)
+- ❌ A repo deleted mid-window crashes the rollup
+- ❌ Cluster sigToken extraction differs from W10's — analytics should reuse the same helper, not a parallel one
+
+---
+
+### E2E-42: FB-F — Dashboard FP funnel chart — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-F](./../docs/false-positive-feedback-plan.md#fb-f--dashboard-fp-funnel-chart).
+
+**Behavior (intended, once FB-F ships):** new `/dashboard/[installation]/insights` route. The funnel is the page's hero chart: stacked bar (or Sankey) showing `surfaced → carried → resolved → disputed → silently-dropped`. Window selector (7d / 30d / 90d). Reads exclusively from `InstallationFPInsight`; no per-finding queries on the page-load path.
+
+**Setup**
+
+Branch: `fixture/42-funnel-chart`. Seed an installation with the same data as E2E-41. Navigate to `/dashboard/<installation>/insights`:
+1. Confirm the funnel renders with the right counts at each stage.
+2. Switch window selector → numbers update.
+3. Page lighthouse score ≥ 90 (no per-finding scan on read).
+
+**Expected outcomes**
+
+- [ ] Each bar segment shows count + percentage on hover
+- [ ] Disputed segment is visually distinct (warm color)
+- [ ] Silently-dropped segment uses a neutral / muted color (signal, not failure)
+- [ ] Page reads only the rollup row, not per-finding records
+
+**Failure modes**
+- ❌ Page does an O(N) scan of `FindingDispositionRecord` on every render
+- ❌ Funnel widths visually misrepresent the proportions (chart misconfigured)
+
+---
+
+### E2E-43: FB-G — Dispute-rate-by-agent line chart — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-G](./../docs/false-positive-feedback-plan.md#fb-g--dispute-rate-by-agent-line-chart).
+
+**Behavior (intended, once FB-G ships):** time-series line chart on the same `/insights` route, one line per agent category (`security`, `bug`, `style`, `errorHandling`, `testCoverage`, `commentAccuracy`, `custom`). X-axis: day buckets over 30d / 90d. Y-axis: disputeRate. Hover shows per-day surfacings + disputes.
+
+**Setup**
+
+Branch: `fixture/43-dispute-by-agent`. Pre-seeded data with a mix of disputed categories across 30 days. Render the chart.
+
+**Expected outcomes**
+
+- [ ] One line per active agent category — categories with zero surfacings are omitted (not zero-rendered)
+- [ ] Legend is interactive (click to toggle)
+- [ ] Date range follows the window selector (shared with FB-F)
+- [ ] When `disputeRate` is undefined for a bucket (no surfacings), the line shows a gap, not a fake zero
+
+**Failure modes**
+- ❌ A line drops to zero on a "no data" day, suggesting an improvement that didn't actually happen
+- ❌ Agent categories the org has disabled still render as zero-lines (UX clutter)
+
+---
+
+### E2E-44: FB-H — Top recurring FP themes table — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-H](./../docs/false-positive-feedback-plan.md#fb-h--top-recurring-fp-themes-table).
+
+**Behavior (intended, once FB-H ships):** sortable table on the `/insights` route. Reads `InstallationFPInsight.topClusters` (top 10 by default). Columns: representative title, sigTokens (as chips), surfaceCount, disputeCount, disputeRate, lastSeen, "View findings" drill-through (links to `/reviews?match-key=<sample>`). This is the actionable surface — everything else contextualises this view.
+
+**Setup**
+
+Branch: `fixture/44-themes-table`. Pre-seed with three recognisable clusters (e.g. ~10 "missing await on async X" findings, ~7 "type assertion without runtime validation", ~5 "consider memoization"). Render the table.
+
+**Expected outcomes**
+
+- [ ] Three distinct cluster rows (no over-merging, no under-merging)
+- [ ] sigTokens chips include the cluster's distinguishing tokens (e.g. `await`, `async` for the missing-await cluster)
+- [ ] Sort by every column works; default sort is `disputeRate × surfaceCount` desc
+- [ ] Drill-through opens a filtered reviews view with the matching findings
+
+**Failure modes**
+- ❌ Clusters merge across categories ("missing await" and "missing semicolon" both have generic stop-tokens that overlap)
+- ❌ A cluster's representative title is the longest member rather than the highest-surfacing one
+- ❌ Drill-through 404s because the filtered reviews query isn't wired
+
+---
+
+### E2E-45: FB-I — Severity-shopping detector chart — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-I](./../docs/false-positive-feedback-plan.md#fb-i--severity-shopping-detector-chart).
+
+**Behavior (intended, once FB-I ships):** dual-line chart overlaying warnings dispute-rate and criticals dispute-rate over time. When `warningsRate > criticalsRate × 1.5` over a ≥ 2-week window, an annotation surfaces ("Warnings disputed disproportionately — possible severity-shopping regression"). FP-E ships verification on both severities; this chart confirms whether that intervention sticks long-term.
+
+**Setup**
+
+Branch: `fixture/45-severity-shopping`. Pre-seed with a 4-week pattern where warnings dispute-rate is 2× the criticals rate for the last 2 weeks. Render.
+
+**Expected outcomes**
+
+- [ ] Two distinct lines (warnings & criticals)
+- [ ] Annotation appears for the ≥ 2-week period meeting the threshold
+- [ ] Annotation does NOT appear for short / noisy spikes
+
+**Failure modes**
+- ❌ Annotation triggers on a single-day spike (smoothing window must be ≥ 2 weeks)
+- ❌ The detector reports severity-shopping when there are very few criticals — small-N criticalsRate is noisy; require a minimum criticals surfacings count before evaluating
+
+---
+
+### E2E-46: FB-J — Per-repo FP heatmap — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-J](./../docs/false-positive-feedback-plan.md#fb-j--per-repo-fp-heatmap-org-wide).
+
+**Behavior (intended, once FB-J ships):** grid heatmap on the `/insights` route. Rows = repos (top 20 by surfacings, expandable). Columns = day or week buckets. Cell colour = disputeRate (cool → warm). Reads `InstallationFPInsight.perRepo` cross-rollup-window.
+
+**Setup**
+
+Branch: `fixture/46-repo-heatmap`. Pre-seed 5 repos with distinct dispute patterns (one consistently noisy, one consistently clean, three mixed).
+
+**Expected outcomes**
+
+- [ ] Noisy repo's row is visually distinct (warm cells across many days)
+- [ ] Empty cells (no surfacings that bucket) are rendered as neutral, not warm
+- [ ] Sort by total disputes desc by default
+- [ ] Repo names link through to the per-repo reviews view
+
+**Failure modes**
+- ❌ A repo with very few surfacings looks "noisy" because the single dispute hits 100% disputeRate (require minimum surfacings before colour-coding, fall back to neutral)
+- ❌ A repo deleted from the org keeps showing up (clean stale repos out of the rollup)
+
+---
+
+### E2E-47: FB-K — Suggest `.mergewatch.yml` rule CTA — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-K](./../docs/false-positive-feedback-plan.md#fb-k--suggest-mergewatchyml-rule-cta).
+
+**Behavior (intended, once FB-K ships):** on any row in the FB-H themes table with `disputeRate > 80%` AND `surfaceCount ≥ 5`, a "Suggest ignore rule" CTA appears. Clicking expands an inline pane showing a pre-generated `.mergewatch.yml` snippet built from the cluster's sigTokens + categories. One-click copy. No auto-write to the repo — user pastes manually.
+
+**Setup**
+
+Branch: `fixture/47-suggest-rule`. Pre-seed a high-dispute-rate cluster (90% disputeRate, 10 surfacings). Render the themes table.
+
+**Expected outcomes**
+
+- [ ] CTA appears only when both thresholds are met
+- [ ] Snippet uses the cluster's sigTokens as title-pattern keywords
+- [ ] Snippet is valid `.mergewatch.yml` (parses; doesn't break loading)
+- [ ] One-click copy to clipboard
+- [ ] No request to write to the repo is initiated
+
+**Failure modes**
+- ❌ Snippet escapes special characters incorrectly and the YAML doesn't parse
+- ❌ Threshold check uses surfaceCount alone (single highly-disputed finding gets a suggestion — too aggressive)
+- ❌ CTA auto-writes to the repo without user confirmation
+
+---
+
+### E2E-48: FB-L — `{{KNOWN_FP_PATTERNS}}` prompt injection — TARGET
+
+**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-L](./../docs/false-positive-feedback-plan.md#fb-l--known_fp_patterns-prompt-injection-opt-in).
+
+**Behavior (intended, once FB-L ships):** new placeholder `{{KNOWN_FP_PATTERNS}}` on every finding-producing agent prompt. **Off by default.** When the org has `feedback: { learnFromDisputes: true }` in `.mergewatch.yml`, the handler fetches the latest `InstallationFPInsight`, picks top-K clusters with `surfaceCount ≥ 5` AND `disputeRate ≥ 75%`, and renders them into a directive:
+
+> *"In this organization the following finding patterns have been explicitly disputed by reviewers multiple times: [list with representative titles + sigTokens]. Report findings matching these patterns only if you have **strong** evidence — describe the evidence explicitly in the description."*
+
+Soft guidance, not suppression. Log: `[fb-l] injected N known-FP patterns`.
+
+**Setup**
+
+Branch: `fixture/48-known-fp-injection`. Set `feedback: { learnFromDisputes: true }` in the repo's `.mergewatch.yml`. Pre-seed one cluster meeting the threshold. Open a PR that has a finding matching that cluster's sigTokens. Re-review.
+
+**Expected outcomes**
+
+- [ ] Agent log shows `[fb-l] injected 1 known-FP pattern`
+- [ ] The matching finding either (a) is omitted, or (b) appears with an *explicit evidence sentence* in its description (model honoured the "strong evidence" instruction)
+- [ ] With `learnFromDisputes: false` (default), no log line, no directive, prompt is byte-identical to the FP-G shape
+- [ ] Sub-threshold clusters (`surfaceCount = 3` or `disputeRate = 50%`) DO NOT leak into the prompt
+- [ ] **Regression check**: an entirely new defect that happens to match a known-FP cluster but has a clear, explicit failure case still surfaces
+
+**Failure modes**
+- ❌ Hard suppression: the model omits the finding without the evidence-sentence escape hatch
+- ❌ Sub-threshold cluster leaks (threshold check must happen at directive-build time, not at write-time)
+- ❌ Directive injection happens on the orchestrator's prompt rather than the per-agent prompts (loses the layered defense — orchestrator already has its own filters)
+- ❌ With `learnFromDisputes` unset, the prompt diverges from the FP-G baseline byte-for-byte (must be exact back-compat)
 
 ---
 
