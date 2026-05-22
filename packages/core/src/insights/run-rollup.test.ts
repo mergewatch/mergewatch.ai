@@ -105,14 +105,52 @@ describe('runInsightRollup (FB-E orchestrator)', () => {
     expect(result.rowsWritten).toBe(6); // 2 OK × 3 windows
   });
 
-  it('returns empty result when listInstallationIds fails (rollup aborts cleanly)', async () => {
+  it('re-throws when listInstallationIds fails so callers see operator-visible failure', async () => {
+    // Earlier behaviour returned an empty result, which made a catastrophic
+    // enumeration failure look identical to "no installations to process".
+    // Now we re-throw so the Lambda invocation fails (→ CloudWatch alarm)
+    // and the self-hosted cron's outer try/catch logs + skips the cycle.
     const stores = makeStores({ installationsThrow: true });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = await runInsightRollup(stores, WINDOW_END);
-    expect(result.installationsProcessed).toBe(0);
-    expect(result.rowsWritten).toBe(0);
+    await expect(runInsightRollup(stores, WINDOW_END)).rejects.toThrow('list fail');
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('follows cursor pagination across multiple pages of disposition records', async () => {
+    // FB-E previously stopped after the first 1000-row page — a silent
+    // truncation hazard for installations with high finding volume. Now
+    // we loop until nextCursor is unset.
+    const calls: Array<{ id: string; cursor?: string }> = [];
+    const stores: RollupStores & { upserts: InstallationFPInsight[] } = {
+      upserts: [],
+      installationStore: { listInstallationIds: async () => ['42'] },
+      dispositionStore: {
+        listByInstallation: async (id, opts) => {
+          calls.push({ id, cursor: opts?.cursor });
+          if (!opts?.cursor) {
+            return { items: [record({ surfaceCount: 1 })], nextCursor: 'page-2' };
+          }
+          if (opts.cursor === 'page-2') {
+            return { items: [record({ surfaceCount: 2 })], nextCursor: 'page-3' };
+          }
+          // Final page: no nextCursor.
+          return { items: [record({ surfaceCount: 4 })] };
+        },
+      },
+      fpInsightStore: {
+        upsert: async (i) => { (stores.upserts as InstallationFPInsight[]).push(i); },
+      },
+    };
+    const result = await runInsightRollup(stores, WINDOW_END);
+    expect(calls).toEqual([
+      { id: '42', cursor: undefined },
+      { id: '42', cursor: 'page-2' },
+      { id: '42', cursor: 'page-3' },
+    ]);
+    // All three records (1+2+4=7) summed into each window's surface count.
+    expect(stores.upserts[0].totalFindingsSurfaced).toBe(7);
+    expect(result.installationsProcessed).toBe(1);
   });
 
   it('counts installations as failed when ANY of the three window upserts fails', async () => {

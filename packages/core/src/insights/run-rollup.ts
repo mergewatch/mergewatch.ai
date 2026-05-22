@@ -14,7 +14,7 @@ import type {
   IFPInsightStore,
   IInstallationStore,
 } from '../storage/types.js';
-import type { InstallationFPInsight } from '../types/db.js';
+import type { FindingDispositionRecord, InstallationFPInsight } from '../types/db.js';
 import { buildInsightFromDispositions } from './rollup.js';
 
 const WINDOWS: InstallationFPInsight['window'][] = ['7d', '30d', '90d'];
@@ -57,19 +57,33 @@ export async function runInsightRollup(
   let installationsProcessed = 0;
   let rowsWritten = 0;
 
-  const installationIds = await stores.installationStore.listInstallationIds().catch((err) => {
+  // Re-throw on catastrophic enumeration failure so the operator sees it:
+  //   • Lambda → throws → invocation marked failed → CloudWatch alarm.
+  //   • Self-hosted cron → outer try/catch in `runOnce` swallows + logs.
+  // The PRIOR behaviour returned [] which made a complete failure look
+  // identical to "no installations to process" — invisible to ops.
+  let installationIds: string[];
+  try {
+    installationIds = await stores.installationStore.listInstallationIds();
+  } catch (err) {
     console.warn('[fb-e] listInstallationIds failed; rollup aborted:', err);
-    return [] as string[];
-  });
+    throw err;
+  }
 
   for (const installationId of installationIds) {
     try {
-      // Page through records — listByInstallation returns up to 1000 per
-      // call. For the typical installation that's a single page; for
-      // outliers we'd want to extend the loop to follow nextCursor. Here
-      // we take the first page (the rollup is best-effort + bounded by
-      // the store's cap; pagination support belongs in a follow-up).
-      const { items: records } = await stores.dispositionStore.listByInstallation(installationId, { limit: 1000 });
+      // Page through every disposition record for this installation. Earlier
+      // versions stopped after the first 1000-row page — fine for typical
+      // installations but a silent truncation hazard for the long tail.
+      // Cursor pagination keeps us correct across any record volume; each
+      // page is bounded by the store's `limit` so memory stays predictable.
+      const records: FindingDispositionRecord[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await stores.dispositionStore.listByInstallation(installationId, { limit: 1000, cursor });
+        records.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
 
       for (const window of WINDOWS) {
         const insight = buildInsightFromDispositions(installationId, window, windowEndIso, records);
