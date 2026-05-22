@@ -165,8 +165,8 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) | 2m | 60s | FP-G |
 | [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
-| [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes-target) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) — **TARGET** | 2m | 60s | FB-C |
-| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command-target) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) — **TARGET** | 3m | 90s | FB-D |
+| [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
+| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) | 3m | 90s | FB-D |
 | [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup-target) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) — **TARGET** | 3m | 90s | FB-E |
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart-target) | Org dashboard renders the FP funnel: surfaced → carried → resolved → disputed → silently-dropped (FB-F) — **TARGET** | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-line-chart-target) | Org dashboard renders dispute-rate over time with one line per agent category (FB-G) — **TARGET** | 2m | 60s | FB-G |
@@ -1542,9 +1542,9 @@ Branch: `fixture/38-quiet-drop`. A PR with a finding that the orchestrator's con
 
 ---
 
-### E2E-39: FB-C — inline-comment 👎 reactions → disputes — TARGET
+### E2E-39: FB-C — inline-comment 👎 reactions → disputes
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-C](./../docs/false-positive-feedback-plan.md#fb-c--inline-comment--reactions--disputes).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-C](./../docs/false-positive-feedback-plan.md#fb-c--inline-comment--reactions--disputes--shipped).
 
 **Behavior (intended, once FB-C ships):** reactions on the bot's inline finding comments are collected and mapped:
 
@@ -1580,9 +1580,9 @@ Branch: `fixture/39-inline-reactions`. A PR with at least one inline-comment-eli
 
 ---
 
-### E2E-40: FB-D — `/mergewatch reject` slash command — TARGET
+### E2E-40: FB-D — `/mergewatch reject` slash command
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-D](./../docs/false-positive-feedback-plan.md#fb-d--mergewatch-reject-slash-command).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-D](./../docs/false-positive-feedback-plan.md#fb-d--mergewatch-reject-slash-command--shipped).
 
 **Behavior (intended, once FB-D ships):** new inline-thread intent parser alongside `detectResolveIntent`. Recognises `/mergewatch reject <category> [optional reason]` where category is one of: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Increments `disputeCount` AND appends `{ category, text?, at }` to `rejectReasons[]` on the `FindingDispositionRecord`. Bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`). Thread is NOT auto-resolved (different from `/resolve` — rejection is for *finding-level FP signal*, resolution is for *thread-level closure*).
 

@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Octokit } from '@octokit/rest';
 import type { ILLMProvider } from '../llm/types.js';
-import { handleInlineReply, detectResolveIntent, MAX_BOT_REPLIES } from './inline-reply.js';
+import {
+  handleInlineReply,
+  detectResolveIntent,
+  parseRejectIntent,
+  REJECT_CATEGORIES,
+  MAX_BOT_REPLIES,
+} from './inline-reply.js';
 
 // ─── detectResolveIntent ────────────────────────────────────────────────────
 
@@ -47,6 +53,82 @@ describe('detectResolveIntent', () => {
     expect(detectResolveIntent('resolves the issue in the next PR')).toBe(false);
     expect(detectResolveIntent('I cannot resolve this right now')).toBe(false);
     expect(detectResolveIntent('the bug will resolve itself')).toBe(false);
+  });
+});
+
+// ─── parseRejectIntent (FB-D) ──────────────────────────────────────────────
+
+describe('parseRejectIntent (FB-D)', () => {
+  it('parses a known category with no free-text reason', () => {
+    expect(parseRejectIntent('/mergewatch reject already-handled')).toEqual({
+      category: 'already-handled',
+      text: undefined,
+      coerced: false,
+    });
+  });
+
+  it('parses a known category with a free-text reason', () => {
+    expect(parseRejectIntent('/mergewatch reject out-of-scope This is integration-only')).toEqual({
+      category: 'out-of-scope',
+      text: 'This is integration-only',
+      coerced: false,
+    });
+  });
+
+  it('recognises every locked category', () => {
+    for (const cat of REJECT_CATEGORIES) {
+      const r = parseRejectIntent(`/mergewatch reject ${cat}`);
+      expect(r?.category).toBe(cat);
+      expect(r?.coerced).toBe(false);
+    }
+  });
+
+  it('is case-insensitive on the `/mergewatch reject` prefix AND the category', () => {
+    expect(parseRejectIntent('/Mergewatch Reject ALREADY-HANDLED')).toMatchObject({
+      category: 'already-handled',
+      coerced: false,
+    });
+  });
+
+  it('silently coerces an unrecognised category to `other`, preserving the typo in the text', () => {
+    // Locked design: don't ask the user to re-type — preserve the signal.
+    expect(parseRejectIntent('/mergewatch reject typo-cat foo bar')).toEqual({
+      category: 'other',
+      text: 'typo-cat foo bar',
+      coerced: true,
+    });
+  });
+
+  it('coerces bare `/mergewatch reject` (no category at all) to `other` with no text', () => {
+    expect(parseRejectIntent('/mergewatch reject')).toEqual({
+      category: 'other',
+      text: undefined,
+      coerced: true,
+    });
+  });
+
+  it('returns null when the line shape does not match (no slash command)', () => {
+    expect(parseRejectIntent("here's how I'd reject this differently")).toBeNull();
+    expect(parseRejectIntent('this finding should be rejected')).toBeNull();
+    expect(parseRejectIntent('')).toBeNull();
+  });
+
+  it('matches when the command appears after other lines in a multi-line reply', () => {
+    const body = 'Thanks for the review.\n/mergewatch reject style-disagreement we use snake_case in python';
+    expect(parseRejectIntent(body)).toMatchObject({
+      category: 'style-disagreement',
+      text: 'we use snake_case in python',
+      coerced: false,
+    });
+  });
+
+  it('does not bleed into a following line (single-line scope)', () => {
+    const body = '/mergewatch reject already-handled\nbut on the next line, free text';
+    expect(parseRejectIntent(body)).toEqual({
+      category: 'already-handled',
+      text: undefined,
+      coerced: false,
+    });
   });
 });
 
@@ -357,5 +439,115 @@ describe('handleInlineReply', () => {
     );
     expect(result.action).toBe('replied');
     expect(result.resolvedFindingKeys).toBeUndefined();
+  });
+
+  // ─── FB-D — /mergewatch reject ───────────────────────────────────────────
+
+  it('FB-D — `/mergewatch reject <category>` returns action=rejected with category + match keys', async () => {
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Missing try/catch around this call**\n\nWrap fetch().',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'packages/server/src/worker.ts',
+    };
+    const { octokit, calls } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: '/mergewatch reject already-handled We use a middleware', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('rejected');
+    expect(result.rejectCategory).toBe('already-handled');
+    expect(result.rejectText).toBe('We use a middleware');
+    expect(result.rejectedFindingKeys).toEqual([
+      'packages/server/src/worker.ts::T::Missing try/catch around this call',
+    ]);
+    // Zero LLM cost on the fast path.
+    expect(llm.calls).toHaveLength(0);
+    // Bot posts a confirming reply with the category name.
+    expect(calls.createReplyForReviewComment).toHaveBeenCalled();
+    const replyArg = (calls.createReplyForReviewComment as any).mock.calls[0][0];
+    expect(replyArg.body).toContain('already-handled');
+    // Does NOT auto-resolve the thread (orthogonal verbs).
+    expect(calls.graphql).not.toHaveBeenCalled();
+  });
+
+  it('FB-D — bot reply explains the silent-other coercion when the user mistypes', async () => {
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Some title**\n\nDesc.',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'src/a.ts',
+    };
+    const { octokit, calls } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: '/mergewatch reject typo-cat foo', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('rejected');
+    expect(result.rejectCategory).toBe('other');
+    expect(result.rejectText).toBe('typo-cat foo');
+    const replyArg = (calls.createReplyForReviewComment as any).mock.calls[0][0];
+    expect(replyArg.body).toContain('other');
+    expect(replyArg.body).toMatch(/known reject category/i);
+  });
+
+  it('FB-D — resolve takes precedence when both `/resolve` and `/mergewatch reject` appear in the same reply', async () => {
+    // Document the locked precedence: explicit `/resolve` wins (the
+    // handler checks resolve intent BEFORE reject intent in the
+    // fast-path chain). Users wanting BOTH should reject first, then
+    // resolve separately.
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Some title**\n\nDesc.',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'src/a.ts',
+    };
+    const { octokit } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: '/resolve\n/mergewatch reject already-handled', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('resolved');
+    expect(result.rejectCategory).toBeUndefined();
+  });
+
+  it('FB-D — `/mergewatch reject` without a recoverable finding still posts a confirmation and returns the category (no keys)', async () => {
+    // Root has no `path` → keys can't be derived. The category + text
+    // still surface so the bot's confirmation reply is correct; the
+    // dispute-write path in the handler will be a no-op when keys is
+    // empty (recordDisputes guards on empty array).
+    const inlineRoot = {
+      id: 100,
+      body: '<!-- mergewatch-inline -->\n**🔴 Title**\n\nDesc.',
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+    };
+    const { octokit } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: '/mergewatch reject other', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('rejected');
+    expect(result.rejectCategory).toBe('other');
+    expect(result.rejectedFindingKeys).toBeUndefined();
   });
 });

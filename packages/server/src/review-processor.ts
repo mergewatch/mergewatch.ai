@@ -1,4 +1,4 @@
-import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig } from '@mergewatch/core';
+import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig, RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
@@ -13,6 +13,7 @@ import {
   handleInlineReply,
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
   recordFindingSurfacings, recordDisputes, detectQuietDrops, recordQuietDrops,
+  pollAndRecordInlineReactions,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -178,6 +179,55 @@ async function handleInlineReplyJob(
       // FB-A — every inline-resolve also counts as an explicit per-finding
       // dispute. Best-effort write; the helper logs+swallows on failure.
       await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+    }
+
+    // FB-D — `/mergewatch reject` persists a categorised rejection per
+    // match key. Mirrors the FP-F path but records `rejectReasons[]` +
+    // increments `disputeCount`. Best-effort.
+    if (
+      deps.dispositionStore &&
+      installationId != null &&
+      result.action === 'rejected' &&
+      result.rejectedFindingKeys &&
+      result.rejectedFindingKeys.length > 0 &&
+      result.rejectCategory
+    ) {
+      const inst = String(installationId);
+      const at = new Date().toISOString();
+      // Reuses the exported RejectCategory union from core so the inline
+      // shape can't drift if the categories are widened. The reason shape
+      // matches `FindingDispositionRecord['rejectReasons'][number]`.
+      const reason: NonNullable<FindingDispositionRecord['rejectReasons']>[number] = {
+        category: result.rejectCategory as RejectCategory,
+        ...(result.rejectText ? { text: result.rejectText } : {}),
+        at,
+      };
+      // Parallel + summary-logged: a per-key catch'd loop was sequential
+      // and emitted one warn per failure. Promise.allSettled lets the
+      // writes run in parallel and the failure count is emitted as a
+      // single line — easier to grep + sufficient for the current
+      // analytics-volume scale.
+      const settled = await Promise.allSettled(
+        result.rejectedFindingKeys.map((key) =>
+          deps.dispositionStore!.appendRejectReason(inst, repoFullName, key, reason),
+        ),
+      );
+      const failed = settled.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(
+          '[fb-d] %d/%d appendRejectReason write(s) failed for %s#%d (category=%s)',
+          failed, settled.length, repoFullName, prNumber, result.rejectCategory,
+        );
+      }
+      await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.rejectedFindingKeys);
+      console.log(
+        '[fb-d] recorded %d /mergewatch reject%s (category=%s) on %s#%d',
+        result.rejectedFindingKeys.length,
+        result.rejectedFindingKeys.length === 1 ? '' : 's',
+        result.rejectCategory,
+        repoFullName,
+        prNumber,
+      );
     }
 
     console.log(
@@ -547,19 +597,23 @@ export async function processReviewJob(
       delta = computeReviewDelta(result.findings, prevComplete.findings);
     }
 
-    // FB-A / FB-B — analytics writes. All best-effort; failures inside the
-    // helpers are caught + logged and never block the review path.
+    // FB-A / FB-B / FB-C — analytics writes. All best-effort; failures inside
+    // the helpers are caught + logged and never block the review path.
     //
-    //   surfacings        — one upsertSurface + (verified|unverified) per
+    //   surfacings (FB-A) — one upsertSurface + (verified|unverified) per
     //                       finding × match-key. Captures category, agent,
     //                       and W10 sigTokens for later clustering.
     //   quiet drops (FB-B) — findings that vanished without a code change at
     //                       the cited line → silentDropCount++. Strong
     //                       implicit FP signal.
+    //   reactions (FB-C)  — fold a single listReviewComments call into the
+    //                       post-pipeline path; delta vs the prior snapshot
+    //                       drives dispute/agreement counter increments.
+    //                       Returns the new snapshot for persistence below.
     //
-    // Both writes use the same nowIso anchor so a re-review of the same
-    // commit produces identical lastSeen timestamps on duplicate calls
-    // (rare but possible on retries).
+    // FB-A and FB-B share `nowIso` so a re-review of the same commit
+    // produces identical lastSeen timestamps on duplicate calls (rare but
+    // possible on retries).
     const nowIso = new Date().toISOString();
     await recordFindingSurfacings(deps.dispositionStore, installationId, repoFullName, result.findings, nowIso);
     if (prevComplete?.findings && prevComplete.findings.length > 0) {
@@ -569,6 +623,13 @@ export async function processReviewJob(
         await recordQuietDrops(deps.dispositionStore, installationId, repoFullName, quietDrops);
       }
     }
+    const updatedReactionsSnapshot = await pollAndRecordInlineReactions(
+      octokit, owner, repo, prNumber,
+      prevComplete?.inlineReactionsSnapshot,
+      deps.dispositionStore,
+      installationId,
+      repoFullName,
+    );
 
     // Compute cumulative cost across all reviews on this PR
     const prevCost = prevReviewsResult.reduce((sum, r) => sum + (r.estimatedCostUsd ?? 0), 0);
@@ -705,6 +766,14 @@ export async function processReviewJob(
       inputTokens: result.inputTokens || undefined,
       outputTokens: result.outputTokens || undefined,
       estimatedCostUsd: result.estimatedCostUsd ?? undefined,
+      // FB-C — persist the new reaction snapshot so the next review can
+      // compute deltas without re-counting already-observed reactions.
+      // Omit when empty so the field stays absent on freshly-reviewed
+      // PRs with no inline comments yet (back-compat with the typed
+      // ReviewItem shape).
+      ...(Object.keys(updatedReactionsSnapshot).length > 0
+        ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
+        : {}),
     });
 
     // Create structured check run (matches Lambda pattern)

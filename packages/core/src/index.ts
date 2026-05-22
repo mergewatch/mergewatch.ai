@@ -44,9 +44,11 @@ export {
 export {
   handleInlineReply,
   detectResolveIntent,
+  parseRejectIntent,
+  REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
 } from './agents/inline-reply.js';
-export type { InlineReplyContext, InlineReplyDeps, InlineReplyResult } from './agents/inline-reply.js';
+export type { InlineReplyContext, InlineReplyDeps, InlineReplyResult, RejectIntent, RejectCategory } from './agents/inline-reply.js';
 export type {
   AgentFinding,
   OrchestratedFinding,
@@ -139,12 +141,13 @@ export { detectNoTestHarness, suppressTestCoverageFindings } from './scope-aware
 export { clusterFindings, extractSignificantTokens, dedupeCrossAgentByLine } from './finding-clustering.js';
 export type { ClusterableFinding, ClusterOptions, TaggedClusterableFindings } from './finding-clustering.js';
 
-// ─── Disposition writers (FB-A / FB-B) ─────────────────────────────────────
+// ─── Disposition writers (FB-A / FB-B / FB-C) ─────────────────────────────
 export {
   recordFindingSurfacings,
   recordDisputes,
   detectQuietDrops,
   recordQuietDrops,
+  pollAndRecordInlineReactions,
 } from './insights/disposition-writer.js';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
