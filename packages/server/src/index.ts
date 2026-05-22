@@ -8,11 +8,13 @@ import {
   PostgresInstallationStore,
   PostgresReviewStore,
   PostgresFindingDispositionStore,
+  PostgresFPInsightStore,
   runMigrations,
 } from '@mergewatch/storage-postgres';
 import { EnvGitHubAuthProvider } from './github-auth-env.js';
 import { createLLMProvider } from './llm-factory.js';
 import { createWebhookHandler } from './webhook-handler.js';
+import { startInsightsCron } from './insights-cron.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -64,8 +66,15 @@ async function main() {
   const installationStore = new PostgresInstallationStore(db);
   const reviewStore = new PostgresReviewStore(db);
   const dispositionStore = new PostgresFindingDispositionStore(db);
+  const fpInsightStore = new PostgresFPInsightStore(db);
   const authProvider = new EnvGitHubAuthProvider(githubAppId, githubPrivateKey);
   const llm = createLLMProvider();
+
+  // FB-E — start the nightly insights rollup scheduler. Runs at startup
+  // (60s after init to let migrations complete) and every 24h after.
+  // Errors are caught + logged inside; the cron handle is kept for
+  // future graceful-shutdown support.
+  startInsightsCron({ installationStore, dispositionStore, fpInsightStore });
 
   // Express app
   const app = express();

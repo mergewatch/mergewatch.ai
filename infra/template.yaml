@@ -369,6 +369,60 @@ Resources:
           - handlers/mcp.ts
 
   # ===========================================================================
+  # Lambda: Insights Rollup (FB-E)
+  # ===========================================================================
+  # Scheduled nightly to aggregate FindingDispositionRecord rows into
+  # InstallationFPInsight rollups (7d / 30d / 90d windows per installation).
+  # Powers the dashboard FB-F..FB-J charts.
+  #
+  # Cron: 03:00 UTC daily (`cron(0 3 * * ? *)`). Chosen for low traffic
+  # collision with EU/US business hours. Idempotent — re-running the same
+  # window-end overwrites with identical numbers.
+
+  InsightsRollupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'mergewatch-insights-rollup-${Stage}'
+      Description: Nightly FP insight rollup (FB-E) — aggregates disposition records into per-installation rolling-window insights
+
+      CodeUri: ../packages/lambda/src/
+      Handler: handlers/insights-rollup.handler
+
+      # Light workload — Scan + filter + aggregate. 512MB is plenty;
+      # bumping memory mainly for CPU headroom on the clustering step.
+      MemorySize: 512
+
+      # Bounded by the largest installation's record count (low-thousands
+      # at scale). 5 min ceiling matches the SAM template's Globals.
+      Timeout: 300
+
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          INSTALLATIONS_TABLE: !Ref InstallationsTable
+          FINDING_DISPOSITIONS_TABLE: !Ref FindingDispositionsTable
+          FP_INSIGHTS_TABLE: !Ref FpInsightsTable
+
+      # EventBridge schedule trigger — 03:00 UTC daily.
+      Events:
+        NightlyRollup:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 3 * * ? *)
+            Description: Nightly insight rollup at 03:00 UTC
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        EntryPoints:
+          - handlers/insights-rollup.ts
+
+  # ===========================================================================
   # DynamoDB Table: Installations
   # ===========================================================================
   # Tracks GitHub App installations and per-repo configuration.
@@ -650,6 +704,56 @@ Resources:
     UpdateReplacePolicy: Retain
 
   # ===========================================================================
+  # DynamoDB: InstallationFPInsights (FB-E)
+  # ===========================================================================
+  # Per-installation rolling-window FP insight rollups. Three rows per
+  # installation (7d / 30d / 90d), replaced idempotently by the nightly
+  # InsightsRollupFunction. Reads power the dashboard FB-F..FB-J charts.
+  #
+  # Schema:
+  #   PK: installationId (String)
+  #   SK: window         (String — '7d' | '30d' | '90d')
+  #
+  # Attributes (set on every nightly run):
+  #   - windowStart / windowEnd / generatedAt (String, ISO 8601)
+  #   - totalFindingsSurfaced / totalDisputes / totalSilentDrops /
+  #     totalAgreements (Number)
+  #   - disputeRate (String — same precision discipline as estimated_cost_usd)
+  #   - perCategory / perRepo / topClusters (Map / List)
+  #
+  # Idempotent writes via PutCommand → no ConditionExpression needed.
+
+  FpInsightsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-installation-fp-insights-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: installationId
+          KeyType: HASH
+        - AttributeName: window
+          KeyType: RANGE
+
+      AttributeDefinitions:
+        - AttributeName: installationId
+          AttributeType: S
+        - AttributeName: window
+          AttributeType: S
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # ===========================================================================
   # IAM Role: Lambda Execution Role
   # ===========================================================================
   # A single shared role for both Lambda functions. This simplifies management
@@ -724,12 +828,14 @@ Resources:
                   - !GetAtt ApiKeysTable.Arn
                   - !GetAtt SessionsTable.Arn
                   - !GetAtt FindingDispositionsTable.Arn
+                  - !GetAtt FpInsightsTable.Arn
                   # Index ARNs (for future GSIs)
                   - !Sub '${InstallationsTable.Arn}/index/*'
                   - !Sub '${ReviewsTable.Arn}/index/*'
                   - !Sub '${ApiKeysTable.Arn}/index/*'
                   - !Sub '${SessionsTable.Arn}/index/*'
                   - !Sub '${FindingDispositionsTable.Arn}/index/*'
+                  - !Sub '${FpInsightsTable.Arn}/index/*'
 
         # --- SSM Parameter Store ---
         # Read-only access to GitHub credentials stored in SSM.

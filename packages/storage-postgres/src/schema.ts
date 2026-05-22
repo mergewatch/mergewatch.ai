@@ -86,6 +86,29 @@ export const mcpSessions = pgTable('mcp_sessions', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
 
+// FB-E — per-installation rolling-window FP insight rollups. Computed
+// nightly by the scheduled job; read by dashboard charts. See
+// InstallationFPInsight in @mergewatch/core for the typed shape.
+export const installationFpInsights = pgTable('installation_fp_insights', {
+  installationId: text('installation_id').notNull(),
+  // '7d' | '30d' | '90d' — typed at the application layer.
+  window: text('window').notNull(),
+  windowStart: text('window_start').notNull(),
+  windowEnd: text('window_end').notNull(),
+  generatedAt: text('generated_at').notNull(),
+  totalFindingsSurfaced: integer('total_findings_surfaced').notNull().default(0),
+  totalDisputes: integer('total_disputes').notNull().default(0),
+  // Stored as text to avoid float-precision drift across pg float8 ↔ js number.
+  disputeRate: text('dispute_rate').notNull().default('0'),
+  totalSilentDrops: integer('total_silent_drops').notNull().default(0),
+  totalAgreements: integer('total_agreements').notNull().default(0),
+  perCategory: jsonb('per_category').notNull().default({}),
+  perRepo: jsonb('per_repo').notNull().default({}),
+  topClusters: jsonb('top_clusters').notNull().default([]),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.window] }),
+}));
+
 // FB-A — per-finding cross-PR identity records (one row per distinct
 // findingMatchKey per repo per installation). See FindingDispositionRecord
 // in @mergewatch/core for the typed shape and lifecycle semantics.

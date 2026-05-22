@@ -67,4 +67,15 @@ export class PostgresInstallationStore implements IInstallationStore {
         },
       });
   }
+
+  async listInstallationIds(): Promise<string[]> {
+    // Composite PK includes (installation_id, repo_full_name) so the same
+    // installation appears N times — one per monitored repo. DISTINCT
+    // gives us each installation once. Bounded result set (we're well
+    // under the 1k row limit even at SaaS scale).
+    const rows = await this.db
+      .selectDistinct({ installationId: installations.installationId })
+      .from(installations);
+    return rows.map((r) => r.installationId);
+  }
 }

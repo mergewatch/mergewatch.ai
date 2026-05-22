@@ -12,3 +12,7 @@ export {
   DynamoFindingDispositionStore,
   DEFAULT_FINDING_DISPOSITIONS_TABLE,
 } from './finding-disposition-store.js';
+export {
+  DynamoFPInsightStore,
+  DEFAULT_FP_INSIGHTS_TABLE,
+} from './fp-insight-store.js';
