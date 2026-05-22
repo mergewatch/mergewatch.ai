@@ -151,6 +151,10 @@ export class PostgresReviewStore implements IReviewStore {
       ...(Array.isArray(row.inlineResolvedKeys) && row.inlineResolvedKeys.length > 0
         ? { inlineResolvedKeys: row.inlineResolvedKeys as string[] }
         : {}),
+      ...(row.inlineReactionsSnapshot && typeof row.inlineReactionsSnapshot === 'object'
+        && Object.keys(row.inlineReactionsSnapshot as Record<string, unknown>).length > 0
+        ? { inlineReactionsSnapshot: row.inlineReactionsSnapshot as Record<string, Record<string, number>> }
+        : {}),
     }));
   }
 }

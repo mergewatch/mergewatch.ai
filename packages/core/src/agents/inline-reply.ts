@@ -74,6 +74,100 @@ export function detectResolveIntent(text: string): boolean {
   return false;
 }
 
+// ─── FB-D — /mergewatch reject ────────────────────────────────────────────
+
+/**
+ * Closed set of categories accepted by `/mergewatch reject`. Decisions
+ * locked in the FP-feedback plan (docs/false-positive-feedback-plan.md →
+ * FB-D, "Design decisions (locked)").
+ *
+ * Any unrecognised category coerces silently to `other`, with the original
+ * token preserved as the leading word of the free-text reason. Preserves
+ * the signal even when the reviewer mistypes — the dashboard surfaces
+ * these as `other`-category rejections for triage.
+ */
+export const REJECT_CATEGORIES = [
+  'already-handled',
+  'out-of-scope',
+  'wrong-target',
+  'style-disagreement',
+  'other',
+] as const;
+
+export type RejectCategory = typeof REJECT_CATEGORIES[number];
+
+const REJECT_CATEGORY_SET = new Set<RejectCategory>(REJECT_CATEGORIES);
+
+/**
+ * Structured result of parsing a `/mergewatch reject` line.
+ *   - `category` — one of REJECT_CATEGORIES; never undefined (coerces to 'other').
+ *   - `text`     — optional free-text reason (the rest of the line after the
+ *                  category, or the unrecognised token + rest when fallback fires).
+ *   - `coerced`  — true when the user typed something that wasn't a known
+ *                  category and we silently coerced to 'other'. Surfaces in
+ *                  the bot's confirming reply so the reviewer knows what
+ *                  was actually persisted.
+ */
+export interface RejectIntent {
+  category: RejectCategory;
+  text?: string;
+  coerced: boolean;
+}
+
+const REJECT_LINE_PATTERN = /(?:^|\s)\/mergewatch\s+reject\b(.*?)(?:\n|$)/i;
+
+/**
+ * Recognise `/mergewatch reject <category> [optional reason]` in a reply.
+ *
+ * Grammar (locked in PR #164):
+ *   /mergewatch reject already-handled
+ *   /mergewatch reject out-of-scope This is integration-only, not unit.
+ *   /mergewatch reject style-disagreement we use snake_case in this repo
+ *
+ * Match rules:
+ *   • Slash form required — must be `/mergewatch reject` exactly (case-
+ *     insensitive). Free-prose like "I'd reject this" does NOT match.
+ *   • Standalone line (or end-of-text). Won't fire on `/mergewatch reject`
+ *     mentioned in the middle of a sentence with other commands.
+ *   • Category is the next whitespace-delimited token. If it's not in
+ *     REJECT_CATEGORIES, we coerce to 'other' AND prepend the typo
+ *     token to the free-text reason (so the signal isn't lost).
+ *   • Everything after the category (on the same line) is the optional
+ *     free-text reason, trimmed.
+ *
+ * Returns `null` when the line shape doesn't match at all (don't fire).
+ */
+export function parseRejectIntent(text: string): RejectIntent | null {
+  if (!text) return null;
+  const match = text.match(REJECT_LINE_PATTERN);
+  if (!match) return null;
+
+  // match[1] is the suffix after `/mergewatch reject` on the SAME line
+  // (the line-anchor `(?:\n|$)` stops the lazy match). Could be empty,
+  // a category, or `<category> <text>`.
+  const suffix = (match[1] ?? '').trim();
+  if (!suffix) {
+    // Bare `/mergewatch reject` with no category — coerce to 'other',
+    // no text. Bot's confirming reply tells the user what happened.
+    return { category: 'other', text: undefined, coerced: true };
+  }
+
+  // First whitespace-delimited token = category candidate.
+  const firstWs = suffix.search(/\s/);
+  const catToken = firstWs === -1 ? suffix : suffix.slice(0, firstWs);
+  const rest = firstWs === -1 ? '' : suffix.slice(firstWs + 1).trim();
+
+  const candidate = catToken.toLowerCase() as RejectCategory;
+  if (REJECT_CATEGORY_SET.has(candidate)) {
+    return { category: candidate, text: rest || undefined, coerced: false };
+  }
+  // Silent-other coercion: preserve the unrecognised token in `text` so
+  // the signal isn't lost. Example: `/mergewatch reject typo-cat foo` →
+  // { category: 'other', text: 'typo-cat foo', coerced: true }.
+  const coercedText = (catToken + (rest ? ' ' + rest : '')).trim();
+  return { category: 'other', text: coercedText || undefined, coerced: true };
+}
+
 export interface InlineReplyContext {
   owner: string;
   repo: string;
@@ -92,11 +186,11 @@ export interface InlineReplyDeps {
 }
 
 export interface InlineReplyResult {
-  action: 'skipped' | 'replied' | 'resolved';
+  action: 'skipped' | 'replied' | 'resolved' | 'rejected';
   reason?: string;
   /** Populated when `action === 'replied'`. */
   recommendation?: 'resolve' | 'keep' | 'needs_info';
-  /** Populated when `action === 'replied'`. */
+  /** Populated when `action === 'replied'` or `'rejected'`. */
   botCommentId?: number;
   /**
    * FP-F — Stable identity keys for the finding the developer resolved.
@@ -109,6 +203,19 @@ export interface InlineReplyResult {
    * or the title couldn't be parsed (defensive — never crashes resolve).
    */
   resolvedFindingKeys?: string[];
+  /**
+   * FB-D — Stable identity keys for the finding the developer rejected
+   * via `/mergewatch reject`. Same key-derivation rules as
+   * `resolvedFindingKeys`. The handler increments `disputeCount` and
+   * appends to `rejectReasons[]` on each key's FindingDispositionRecord
+   * via `recordDisputes` + `appendRejectReason`. Empty/undefined if the
+   * keys couldn't be recovered (same fail-safe as resolve).
+   */
+  rejectedFindingKeys?: string[];
+  /** FB-D — categorical reason persisted alongside the rejection. */
+  rejectCategory?: RejectCategory;
+  /** FB-D — optional free-text reason persisted alongside the rejection. */
+  rejectText?: string;
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number | null;
@@ -265,6 +372,35 @@ export async function handleInlineReply(
         };
       }
       return { action: 'skipped', reason: 'could not locate review thread id', inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+    }
+
+    // FB-D — `/mergewatch reject <category> [text]` fast path. Like
+    // resolve, this skips the LLM (deterministic parse). Unlike resolve,
+    // it does NOT auto-resolve the GitHub thread — rejection records the
+    // signal; closure stays a human decision.
+    const rejectIntent = parseRejectIntent(lastComment.body);
+    if (rejectIntent) {
+      const rejectedFindingKeys = deriveResolvedFindingKeys(root);
+      // Confirming reply: short, structured, mentions both the category
+      // we persisted AND (when coerced) the original token so the user
+      // can see what happened.
+      const confirmation = rejectIntent.coerced
+        ? `Got it — your reply didn't match a known reject category, so I'm recording this as \`other\`. Recognised categories: \`already-handled\`, \`out-of-scope\`, \`wrong-target\`, \`style-disagreement\`, \`other\`.`
+        : `Got it — recording as \`${rejectIntent.category}\`. This finding's pattern won't be re-raised on similar code unless conditions change.`;
+      const botCommentId = await replyToReviewComment(
+        deps.octokit, ctx.owner, ctx.repo, ctx.prNumber, root.id, confirmation,
+      );
+      return {
+        action: 'rejected',
+        reason: 'explicit /mergewatch reject',
+        botCommentId,
+        rejectedFindingKeys: rejectedFindingKeys.length > 0 ? rejectedFindingKeys : undefined,
+        rejectCategory: rejectIntent.category,
+        rejectText: rejectIntent.text,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0,
+      };
     }
 
     // LLM reply path.

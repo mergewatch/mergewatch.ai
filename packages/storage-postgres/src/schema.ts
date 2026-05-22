@@ -55,6 +55,10 @@ export const reviews = pgTable('reviews', {
   // FP-F — keys for findings the author resolved on inline comment threads.
   // Union'd with the live W3 disputedKeys on subsequent reviews.
   inlineResolvedKeys: jsonb('inline_resolved_keys').default([]),
+  // FB-C — last-observed reaction counts per inline bot comment, keyed by
+  // commentId. Drives the reaction-delta → dispute/agreement increments
+  // on subsequent reviews.
+  inlineReactionsSnapshot: jsonb('inline_reactions_snapshot').default({}),
 }, (t) => ({
   pk: primaryKey({ columns: [t.repoFullName, t.prNumberCommitSha] }),
   installationIdx: index('reviews_installation_idx').on(t.installationId),

@@ -50,6 +50,7 @@ import {
   recordDisputes,
   detectQuietDrops,
   recordQuietDrops,
+  pollAndRecordInlineReactions,
 } from '@mergewatch/core';
 import type {
   ReviewJobPayload,
@@ -246,6 +247,37 @@ async function handleInlineReplyMode(
       );
       // FB-A — every inline-resolve is also an explicit dispute for analytics.
       await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+    }
+
+    // FB-D — `/mergewatch reject` persists a categorised rejection per
+    // match key. Mirrors the server handler.
+    if (
+      installationId != null &&
+      result.action === 'rejected' &&
+      result.rejectedFindingKeys &&
+      result.rejectedFindingKeys.length > 0 &&
+      result.rejectCategory
+    ) {
+      const inst = String(installationId);
+      const at = new Date().toISOString();
+      const reason: { category: 'already-handled' | 'out-of-scope' | 'wrong-target' | 'style-disagreement' | 'other'; text?: string; at: string } = {
+        category: result.rejectCategory,
+        ...(result.rejectText ? { text: result.rejectText } : {}),
+        at,
+      };
+      for (const key of result.rejectedFindingKeys) {
+        await dispositionStore.appendRejectReason(inst, repoFullName, key, reason)
+          .catch((err) => console.warn('[fb-d] appendRejectReason failed for %s:', key, err));
+      }
+      await recordDisputes(dispositionStore, installationId, repoFullName, result.rejectedFindingKeys);
+      console.log(
+        '[fb-d] recorded %d /mergewatch reject%s (category=%s) on %s#%d',
+        result.rejectedFindingKeys.length,
+        result.rejectedFindingKeys.length === 1 ? '' : 's',
+        result.rejectCategory,
+        repoFullName,
+        prNumber,
+      );
     }
 
     console.log(
@@ -659,7 +691,7 @@ export async function handler(
       delta = computeReviewDelta(result.findings, prevComplete.findings);
     }
 
-    // FB-A / FB-B — best-effort analytics writes. Mirrors the server
+    // FB-A / FB-B / FB-C — best-effort analytics writes. Mirrors the server
     // handler; see packages/server/src/review-processor.ts for the
     // rationale. All failures are caught + logged inside the helpers
     // and never block the review path.
@@ -672,6 +704,13 @@ export async function handler(
         await recordQuietDrops(dispositionStore, installationId, repoFullName, quietDrops);
       }
     }
+    const updatedReactionsSnapshot = await pollAndRecordInlineReactions(
+      octokit, owner, repo, prNumber,
+      prevComplete?.inlineReactionsSnapshot,
+      dispositionStore,
+      installationId,
+      repoFullName,
+    );
 
     const durationMs = Date.now() - new Date(reviewStartedAt).getTime();
 
@@ -818,6 +857,12 @@ export async function handler(
       inputTokens: result.inputTokens || undefined,
       outputTokens: result.outputTokens || undefined,
       estimatedCostUsd: result.estimatedCostUsd ?? undefined,
+      // FB-C — persist the new reaction snapshot for delta-vs-snapshot
+      // reconciliation on the next review run. See server/review-processor.ts
+      // for the rationale.
+      ...(Object.keys(updatedReactionsSnapshot).length > 0
+        ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
+        : {}),
     });
 
     // ── Record billing (SaaS only) ────

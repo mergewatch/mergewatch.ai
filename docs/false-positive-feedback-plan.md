@@ -157,7 +157,7 @@ Ranked by dependency order (foundation first → capture → aggregation → sur
 
 ---
 
-### FB-C — Inline-comment 👎 reactions → disputes
+### FB-C — Inline-comment 👎 reactions → disputes  ✅ SHIPPED
 
 **Where the gap lives:** Top-comment reactions are already collected via `ReviewItem.reactions`. Inline-comment reactions are not. Yet reactions on an inline finding are arguably *more* signal-dense than top-level reactions — they're per-finding, attributed to the reviewer, and require zero typing.
 
@@ -172,7 +172,7 @@ The bot's inline-comment ID is already linked to a finding via `ReviewItem.findi
 
 ---
 
-### FB-D — `/mergewatch reject "<reason>"` slash command
+### FB-D — `/mergewatch reject "<reason>"` slash command  ✅ SHIPPED
 
 **Where the gap lives:** W3 triage prose is the cleanest signal we have — author writes a sentence explaining why a finding is wrong — but it requires the author to write prose and lives only on top-level comments. Inline threads have only `/resolve` (which is success-shaped, not FP-shaped). There's no quick "this finding is wrong" channel from an inline thread.
 
@@ -302,8 +302,8 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 |---|---|---|---|---|---|
 | **FB-A** | FindingDispositionRecord storage + writers | Persist | S | — | ✅ SHIPPED |
 | **FB-B** | Quiet-drop derived counter | Persist | S | FB-A | ✅ SHIPPED |
-| **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ★★★ |
-| **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ★★ |
+| **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ✅ SHIPPED |
+| **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ✅ SHIPPED |
 | **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ★★★ |
 | **FB-F** | FP funnel chart | Surface | M | FB-E | ★★ |
 | **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ★★ |

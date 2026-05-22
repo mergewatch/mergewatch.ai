@@ -4,9 +4,11 @@ import {
   recordDisputes,
   detectQuietDrops,
   recordQuietDrops,
+  pollAndRecordInlineReactions,
 } from './disposition-writer.js';
 import type { IFindingDispositionStore } from '../storage/types.js';
 import type { OrchestratedFinding, PreviousFinding } from '../agents/reviewer.js';
+import type { Octokit } from '@octokit/rest';
 
 // ─── Mock store ─────────────────────────────────────────────────────────────
 
@@ -249,5 +251,162 @@ describe('recordQuietDrops (FB-B)', () => {
     const store = makeMockStore();
     await recordQuietDrops(store, 42, 'org/repo', []);
     expect(store.calls.incrementSilentDrop).toHaveLength(0);
+  });
+});
+
+// ─── pollAndRecordInlineReactions (FB-C) ────────────────────────────────────
+
+interface MockReviewCommentInput {
+  id: number;
+  body: string;
+  path?: string;
+  user?: { type: string };
+  reactions?: Record<string, number>;
+}
+
+function makeReactionOctokit(comments: MockReviewCommentInput[]): Octokit {
+  return {
+    pulls: {
+      listReviewComments: vi.fn(async () => ({ data: comments })),
+    },
+  } as unknown as Octokit;
+}
+
+describe('pollAndRecordInlineReactions (FB-C)', () => {
+  const inlineBody = '<!-- mergewatch-inline -->\n**🔴 Missing try/catch around fetch**\n\nDesc.';
+  const expectedKey = 'src/worker.ts::T::Missing try/catch around fetch';
+
+  it('emits one incrementDispute per 👎 above the prior snapshot', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 2 } },
+    ]);
+    // Prior snapshot had 0 thumbs-down → delta is +2 → two dispute increments.
+    const newSnapshot = await pollAndRecordInlineReactions(
+      octokit, 'o', 'r', 1,
+      /* prevSnapshot */ {},
+      store, 42, 'org/repo',
+    );
+    expect(store.calls.incrementDispute.filter((c) => c[2] === expectedKey)).toHaveLength(2);
+    expect(store.calls.incrementAgreement).toHaveLength(0);
+    expect(newSnapshot['100']['-1']).toBe(2);
+  });
+
+  it('emits one incrementAgreement per 👍 / ❤️ / 🚀 above the prior snapshot', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '+1': 1, heart: 1, rocket: 2 } },
+    ]);
+    await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    // 4 agreements (1+1+2), all on the same match key.
+    expect(store.calls.incrementAgreement.filter((c) => c[2] === expectedKey)).toHaveLength(4);
+    expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+
+  it('ignores 👀 (eyes), 🎉 (hooray), 😄 (laugh) — non-FP-shaped reactions', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { eyes: 3, hooray: 2, laugh: 1 } },
+    ]);
+    await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    expect(store.calls.incrementDispute).toHaveLength(0);
+    expect(store.calls.incrementAgreement).toHaveLength(0);
+  });
+
+  it('only writes the POSITIVE delta vs the prior snapshot (monotonic)', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 3 } },
+    ]);
+    // Prior already counted 2 thumbs-down. Current is 3 → delta = +1.
+    await pollAndRecordInlineReactions(
+      octokit, 'o', 'r', 1,
+      { '100': { '-1': 2 } },
+      store, 42, 'org/repo',
+    );
+    expect(store.calls.incrementDispute.filter((c) => c[2] === expectedKey)).toHaveLength(1);
+  });
+
+  it('ignores reaction REMOVAL (current < prior — monotonic, never decrements)', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 1 } },
+    ]);
+    // Prior counted 3, current is 1 → reviewer removed reactions. Monotonic
+    // counters never decrement; we just emit no new increments.
+    await pollAndRecordInlineReactions(
+      octokit, 'o', 'r', 1,
+      { '100': { '-1': 3 } },
+      store, 42, 'org/repo',
+    );
+    expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+
+  it('skips comments that are NOT bot-authored', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'User' }, reactions: { '-1': 5 } },
+    ]);
+    await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+
+  it('skips comments missing the INLINE_BOT_COMMENT_MARKER (CopilotAI / dependabot threads)', async () => {
+    const store = makeMockStore();
+    // Bot-authored but lacks our marker — another reviewer bot.
+    const octokit = makeReactionOctokit([
+      { id: 100, body: '**🔴 Some title from another bot**', path: 'src/a.ts', user: { type: 'Bot' }, reactions: { '-1': 2 } },
+    ]);
+    await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+
+  it('captures a snapshot row even when match keys cannot be derived (missing path)', async () => {
+    // Path is missing → can't derive match keys → no counter increments,
+    // but we STILL record the current counts so the next poll sees the
+    // snapshot baseline. (Ensures the system stays consistent if the
+    // comment gains a path later via some edit, etc.)
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, user: { type: 'Bot' }, reactions: { '-1': 2 } },
+    ]);
+    const newSnapshot = await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    expect(store.calls.incrementDispute).toHaveLength(0);
+    expect(newSnapshot['100']['-1']).toBe(2);
+  });
+
+  it('returns an empty snapshot + skips writes when store / installationId is unset', async () => {
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 2 } },
+    ]);
+    const result = await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, undefined, 42, 'org/repo');
+    expect(result).toEqual({});
+  });
+
+  it('returns the new snapshot the caller persists on the latest review record', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 2, '+1': 1, eyes: 5 } },
+      { id: 200, body: inlineBody, path: 'src/other.ts', user: { type: 'Bot' }, reactions: { heart: 3 } },
+    ]);
+    const newSnapshot = await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    // 'eyes' is not in REACTION_TRACKED_TYPES → omitted from the snapshot too.
+    expect(newSnapshot['100']).toEqual({ '-1': 2, '+1': 1 });
+    expect(newSnapshot['200']).toEqual({ heart: 3 });
+  });
+
+  it('returns empty snapshot on listReviewComments failure (best-effort)', async () => {
+    const store = makeMockStore();
+    const octokit = {
+      pulls: {
+        listReviewComments: vi.fn(async () => { throw new Error('API down'); }),
+      },
+    } as unknown as Octokit;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await pollAndRecordInlineReactions(octokit, 'o', 'r', 1, {}, store, 42, 'org/repo');
+    expect(result).toEqual({});
+    expect(store.calls.incrementDispute).toHaveLength(0);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

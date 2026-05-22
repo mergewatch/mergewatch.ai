@@ -327,6 +327,24 @@ export interface ReviewItem {
   estimatedCostUsd?: number;
 
   /**
+   * FB-C — Last-observed reaction counts per inline bot comment on this PR,
+   * keyed by comment ID. Used to compute reaction deltas on the next
+   * review run (counters in `FindingDispositionRecord` are monotonic, so
+   * we need to know "what we've already counted" to avoid double-writing
+   * the same 👎 on every re-review).
+   *
+   * Inner map shape: each GitHub reaction content type ('+1', '-1',
+   * 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes') → count
+   * of non-bot reactions observed at the time of the last poll. Reactions
+   * added by `mergewatch[bot]` (the bot's own 👀 read-receipt etc.) are
+   * filtered out client-side and never enter this snapshot.
+   *
+   * Persisted on the LATEST complete review for the PR. Updated on every
+   * review run that polls reactions.
+   */
+  inlineReactionsSnapshot?: Record<string, Record<string, number>>;
+
+  /**
    * FP-F — Stable `findingMatchKeys` for findings the author resolved by
    * replying `/resolve` (or equivalent) on an inline review-comment thread.
    *
