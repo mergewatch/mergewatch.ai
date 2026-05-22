@@ -301,6 +301,12 @@ export interface DynamoDashboardStoreOptions {
   installationsTable: string;
   reviewsTable: string;
   region?: string;
+  /**
+   * FB-F..FB-J — optional. When set, the dashboard store exposes an
+   * `fpInsights` member backed by the named table. When unset the
+   * dashboard chart routes render zero-state (no table provisioned).
+   */
+  fpInsightsTable?: string;
 }
 
 export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions): IDashboardStore {
@@ -308,14 +314,25 @@ export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions)
   // The client is created once per factory call.
   const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
   const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+  const { DynamoFPInsightStore } = require('./fp-insight-store.js');
 
   const raw = new DynamoDBClient({ region: options.region ?? process.env.AWS_REGION ?? 'us-east-1' });
   const client = DynamoDBDocumentClient.from(raw, {
     marshallOptions: { removeUndefinedValues: true },
   });
 
+  // FB-F..FB-J — the FP insight store implements both the pipeline
+  // `IFPInsightStore` (upsert / get) AND the dashboard surface
+  // (listByInstallation), so we just hand the same instance to the
+  // dashboard layer. The dashboard only calls listByInstallation —
+  // upsert is never exercised from this path.
+  const fpInsights = options.fpInsightsTable
+    ? new DynamoFPInsightStore(client, options.fpInsightsTable)
+    : undefined;
+
   return {
     installations: new DynamoDashboardInstallationStore(client, options.installationsTable),
     reviews: new DynamoDashboardReviewStore(client, options.reviewsTable),
+    ...(fpInsights ? { fpInsights } : {}),
   };
 }

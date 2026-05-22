@@ -23,6 +23,10 @@ export async function getDashboardStore(): Promise<IDashboardStore> {
     _store = createDynamoDashboardStore({
       installationsTable: process.env.DYNAMODB_TABLE_INSTALLATIONS ?? 'mergewatch-installations',
       reviewsTable: process.env.DYNAMODB_TABLE_REVIEWS ?? 'mergewatch-reviews',
+      // FB-F..FB-J — optional. Unset on older deployments → dashboard
+      // chart routes render a zero-state. Defaults to the FB-E SAM table
+      // name when the stage suffix is supplied via env (SaaS path).
+      fpInsightsTable: process.env.DYNAMODB_TABLE_FP_INSIGHTS,
       region: process.env.APP_REGION ?? process.env.AWS_REGION,
     });
   }
