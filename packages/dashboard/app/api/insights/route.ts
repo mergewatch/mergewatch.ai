@@ -4,9 +4,10 @@
  * GET /api/insights?installation_id=<id>
  *
  * Returns the 7d / 30d / 90d `InstallationFPInsight` rows for the given
- * installation. All charts on the dashboard `/dashboard/analytics`
- * (insights subview) read from this one endpoint — single query, all
- * three windows returned together.
+ * installation. All charts on the `/dashboard/insights` route read from
+ * this one endpoint — single query, all three windows returned together.
+ * (`/dashboard/insights` is a sibling route to `/dashboard/analytics`,
+ * not a subview — distinct intents per the page.tsx header doc.)
  *
  * Access: the requester must have access to the installation (same
  * fetchUserInstallations gate the rest of the dashboard uses).

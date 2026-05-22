@@ -90,10 +90,18 @@ function pickWindow(insights: Insight[], window: "7d" | "30d" | "90d"): Insight 
  * `totalFindingsSurfaced` by construction.
  */
 function funnelSegmentsFor(insight: Insight): { name: string; value: number; colour: string }[] {
-  const surfaced = insight.totalFindingsSurfaced;
+  // Defensive clamping — each segment is `min(counter, remainingHeadroom)`
+  // wrapped in `max(0, ...)`. The remainingHeadroom is already ≥ 0 by
+  // induction from the earlier clamps, BUT the inner Math.max(0, ...)
+  // wrapper survives a future rollup-aggregation refactor that quietly
+  // breaks the non-negativity invariant. Cheap belt-and-braces.
+  const surfaced = Math.max(0, insight.totalFindingsSurfaced);
   const disputed = Math.min(insight.totalDisputes, surfaced);
-  const silentDropped = Math.min(insight.totalSilentDrops, surfaced - disputed);
-  const agreed = Math.min(insight.totalAgreements, surfaced - disputed - silentDropped);
+  const silentDropped = Math.min(insight.totalSilentDrops, Math.max(0, surfaced - disputed));
+  const agreed = Math.min(
+    insight.totalAgreements,
+    Math.max(0, surfaced - disputed - silentDropped),
+  );
   const unsignaled = Math.max(0, surfaced - disputed - silentDropped - agreed);
   return [
     { name: "Unsignaled", value: unsignaled, colour: SEGMENT_COLOURS.unsignaled },
