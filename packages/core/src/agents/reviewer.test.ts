@@ -20,10 +20,12 @@ import {
   extractFindingIdentifiers,
   groundFinding,
   suggestionAlreadyApplied,
+  suggestionMatchesExistingCode,
   verifyFindings,
   reconcileMergeScore,
   type ReviewContext,
   type AgentFinding,
+  type PreviousFinding,
   type ReviewPipelineOptions,
 } from './reviewer.js';
 import { AGENT_MODE_SUFFIX, AGENT_MODE_PLACEHOLDER } from './prompts.js';
@@ -1975,9 +1977,180 @@ describe('verifyFindings', () => {
     ]);
     expect(llm.calls).toHaveLength(2);
   });
+
+  // ─── FP-I L2 — suggestionMatchesExistingCode short-circuit ────────────────
+
+  it('FP-I L2 — drops a finding when its suggestion is already implemented at the cited line (no LLM call)', async () => {
+    const fileWithCode = {
+      'src/a.ts': [
+        'export async function fetchUser(id: string) {',
+        '  try {',
+        '    return await fetch(`/users/${id}`);',  // line 3
+        '  } catch (err) {',
+        '    console.warn("fetch failed", err);',
+        '    throw err;',
+        '  }',
+        '}',
+      ].join('\n'),
+    };
+    const finding = {
+      file: 'src/a.ts',
+      line: 3,
+      severity: 'warning' as const,
+      category: 'bug',
+      title: 'Missing await on fetch',
+      description: 'The fetch call should be awaited.',
+      // Suggestion proposes code that's literally already there.
+      suggestion: 'Use `return await fetch(`/users/${id}`);`',
+    };
+    const llm = createMockLLM([JSON.stringify({ valid: true })]);
+    const result = await verifyFindings([finding], fileWithCode, 'light', llm);
+    expect(result).toEqual([]); // dropped
+    expect(llm.calls).toHaveLength(0); // no LLM call — structural short-circuit
+  });
+
+  it('FP-I L2 — does NOT short-circuit when the suggestion has no code-shaped content', async () => {
+    const fileContents = { 'src/a.ts': 'export const X = 1;\n' };
+    const finding = {
+      file: 'src/a.ts',
+      line: 1,
+      severity: 'warning' as const,
+      category: 'style',
+      title: 'Consider extracting',
+      description: 'Long function.',
+      suggestion: 'Consider refactoring this into smaller functions.', // prose only
+    };
+    const llm = createMockLLM([JSON.stringify({ valid: true })]);
+    const result = await verifyFindings([finding], fileContents, 'light', llm);
+    expect(result).toHaveLength(1);
+    expect(llm.calls).toHaveLength(1); // verifier was consulted
+  });
+
+  // ─── FP-H L2 / FP-J L2 — prior-context block in verifier prompt ──────────
+
+  it('FP-H L2 / FP-J L2 — prior-context block appears in the verifier prompt on re-reviews', async () => {
+    const fileContents = { 'src/a.ts': 'const x = 1;\n' };
+    const finding = {
+      file: 'src/a.ts',
+      line: 1,
+      severity: 'warning' as const,
+      category: 'style',
+      title: 'New finding',
+      description: 'A new concern.',
+      suggestion: 'Refactor it.',
+    };
+    const priorFindings: PreviousFinding[] = [
+      {
+        file: 'src/b.ts',
+        line: 5,
+        severity: 'warning',
+        category: 'bug',
+        title: 'Missing error handling',
+        description: 'Catch is silent.',
+        suggestion: 'Add a console.warn to the catch block.',
+      },
+    ];
+    const llm = createMockLLM([JSON.stringify({ valid: true })]);
+    await verifyFindings([finding], fileContents, 'light', llm, priorFindings);
+    expect(llm.calls).toHaveLength(1);
+    const prompt = llm.calls[0].prompt;
+    expect(prompt).toContain('Prior review context');
+    expect(prompt).toContain('Missing error handling'); // prior title
+    expect(prompt).toContain('Add a console.warn'); // prior suggestion
+    expect(prompt).toContain('pattern-matched re-review hallucination'); // FP-H L2 instruction
+    expect(prompt).toContain('contradicts a prior recommendation'); // FP-J L2 instruction
+    expect(prompt).not.toContain('{{PRIOR_CONTEXT}}'); // placeholder fully substituted
+  });
+
+  it('FP-H L2 / FP-J L2 — placeholder is stripped clean on first reviews (no prior context)', async () => {
+    const fileContents = { 'src/a.ts': 'const x = 1;\n' };
+    const finding = {
+      file: 'src/a.ts',
+      line: 1,
+      severity: 'warning' as const,
+      category: 'style',
+      title: 'X', description: '', suggestion: '',
+    };
+    const llm = createMockLLM([JSON.stringify({ valid: true })]);
+    await verifyFindings([finding], fileContents, 'light', llm);
+    expect(llm.calls[0].prompt).not.toContain('{{PRIOR_CONTEXT}}');
+    expect(llm.calls[0].prompt).not.toContain('Prior review context');
+  });
 });
 
-// ─── reconcileMergeScore (W7 score guardrail) ───────────────────────────────
+// ─── suggestionMatchesExistingCode (FP-I L2) ────────────────────────────────
+
+describe('suggestionMatchesExistingCode (FP-I L2)', () => {
+  const file = [
+    'function foo() {',
+    '  try {',
+    '    return await fetch(url);',  // line 3
+    '  } catch (err) {',
+    '    console.warn("failed", err);',
+    '  }',
+    '}',
+  ].join('\n');
+
+  it('detects an inline backticked suggestion that matches existing code', () => {
+    expect(suggestionMatchesExistingCode('Use `return await fetch(url);`', file, 3)).toBe(true);
+  });
+
+  it('detects a fenced-block suggestion that matches existing code', () => {
+    const suggestion = 'Add error logging:\n```ts\nconsole.warn("failed", err);\n```';
+    expect(suggestionMatchesExistingCode(suggestion, file, 5)).toBe(true);
+  });
+
+  it('returns false on prose-only suggestions (no code chunks to compare)', () => {
+    expect(suggestionMatchesExistingCode('Consider refactoring this.', file, 3)).toBe(false);
+  });
+
+  it('returns false on too-generic chunks (< 10 chars) — avoids `;` / `}` false positives', () => {
+    expect(suggestionMatchesExistingCode('Use `;` here.', file, 3)).toBe(false);
+    expect(suggestionMatchesExistingCode('Add `}`.', file, 3)).toBe(false);
+  });
+
+  it('normalises whitespace before comparing', () => {
+    const messySuggestion = 'Use `return   await  fetch(url);`'; // extra spaces
+    expect(suggestionMatchesExistingCode(messySuggestion, file, 3)).toBe(true);
+  });
+
+  it('uses a ±5-line window around the cited line — far-away matches do not count', () => {
+    // Cited line 100 (way past the file's last line) — should not match.
+    expect(suggestionMatchesExistingCode('Use `return await fetch(url);`', file, 100)).toBe(false);
+  });
+
+  it('returns false when the suggestion is missing entirely', () => {
+    expect(suggestionMatchesExistingCode(undefined, file, 3)).toBe(false);
+    expect(suggestionMatchesExistingCode('', file, 3)).toBe(false);
+  });
+
+  it('returns false when the file content is missing', () => {
+    expect(suggestionMatchesExistingCode('Use `return await fetch(url);`', undefined, 3)).toBe(false);
+    expect(suggestionMatchesExistingCode('Use `return await fetch(url);`', '', 3)).toBe(false);
+  });
+});
+
+// ─── FP-H L1 — buildPreviousFindingsBlock counter-instruction ──────────────
+
+describe('buildPreviousFindingsBlock — FP-H L1 anti-anchoring counter-instruction', () => {
+  it('includes the explicit anti-template-matching instruction', async () => {
+    // We assert via the orchestrator prompt path because buildPreviousFindingsBlock
+    // is module-private. runOrchestratorAgent substitutes the placeholder, so
+    // a prior-findings input forces the block to render in the prompt.
+    const llm = createMockLLM([JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'ok' })]);
+    const priorFindings: PreviousFinding[] = [
+      { file: 'src/x.ts', line: 1, severity: 'warning', category: 'bug', title: 'Old finding' },
+    ];
+    await runOrchestratorAgent(
+      [{ category: 'security', findings: [{ file: 'src/y.ts', line: 1, severity: 'warning', title: 'New', description: '', suggestion: '' }] }],
+      'm', 10, llm, priorFindings,
+    );
+    const prompt = llm.calls[0].prompt;
+    expect(prompt).toContain('CRITICAL (FP-H)');
+    expect(prompt).toContain('Do NOT use this list as a stylistic template');
+    expect(prompt).toContain('Pattern-matching against a prior finding');
+  });
+});
 
 describe('reconcileMergeScore', () => {
   // Minimal helpers — only the fields the function reads.

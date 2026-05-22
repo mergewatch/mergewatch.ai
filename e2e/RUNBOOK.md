@@ -175,6 +175,9 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap-target) | Org dashboard renders a per-repo × time heatmap of dispute rate (FB-J) — **TARGET** | 2m | 60s | FB-J |
 | [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta-target) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a one-click `.mergewatch.yml` snippet suggestion (FB-K) — **TARGET** | 2m | 60s | FB-K |
 | [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
+| [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
+| [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
+| [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2 — Layer 1 + 3 pending FB-A data) | 2m | 60s | FP-J |
 
 ---
 
@@ -1806,6 +1809,86 @@ Branch: `fixture/48-known-fp-injection`. Set `feedback: { learnFromDisputes: tru
 - ❌ Sub-threshold cluster leaks (threshold check must happen at directive-build time, not at write-time)
 - ❌ Directive injection happens on the orchestrator's prompt rather than the per-agent prompts (loses the layered defense — orchestrator already has its own filters)
 - ❌ With `learnFromDisputes` unset, the prompt diverges from the FP-G baseline byte-for-byte (must be exact back-compat)
+
+---
+
+### E2E-49: FP-H — anti-anchoring on prior findings
+
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-H](./../docs/false-positive-reduction-plan.md#fp-h--anti-anchoring-on-prior-findings--shipped).
+
+**Behavior:** Two layers compose:
+- **Layer 1** — `buildPreviousFindingsBlock` includes an explicit "CRITICAL (FP-H)" counter-instruction telling the orchestrator the previous-findings list is for stable-identity matching ONLY, not a stylistic template. Pattern-matching is named as a known failure mode and explicitly forbidden.
+- **Layer 2** — `verifyFindings` accepts a `previousFindings` arg and renders a prior-context block listing prior titles + per-prior sigToken bags. The verifier prompt gains a new INVALID condition: *"the current finding overlaps heavily with a prior finding's tokens AND the cited line does not contain the construct"*.
+
+**Setup**
+
+Branch: `fixture/49-re-review-no-anchoring`. Two-commit sequence:
+1. Open a PR that draws N legitimate findings (e.g. real error-handling issues in a worker module).
+2. As the author, address ALL findings in a fix commit. Push a small additional change to a DIFFERENT file (no error-handling code anywhere).
+
+**Expected outcomes**
+
+- [x] Round-2 re-review on the fix commit does NOT produce findings that critique the new file's code using the round-1 frame ("error handling", "silent failure", etc.)
+- [x] Agent log includes `Prior review context` block in the verifier prompt when the fix-commit re-review fires
+- [x] Round-1 findings that are genuinely fixed are correctly marked as resolved (no false carry-forward)
+- [x] **Regression check**: a fresh PR with NO prior reviews produces the same findings as before FP-H landed (no false suppression on first reviews)
+
+**Failure modes**
+- ❌ Round-2 re-review still produces "this LOOKS LIKE the kind of finding round-1 had" pattern-matches
+- ❌ Counter-instruction matches too aggressively and suppresses genuinely-still-live carry-forward findings
+
+---
+
+### E2E-50: FP-I — verify suggestion-already-implemented
+
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-I](./../docs/false-positive-reduction-plan.md#fp-i--verify-suggestion-already-implemented--shipped).
+
+**Behavior:** Two layers compose:
+- **Layer 1** — `FINDING_VERIFICATION_PROMPT` (the verifier) carries a new INVALID condition asking the model to check whether the suggestion's code-shaped content (backticks / fences) is already at the cited line. Zero added LLM cost — same call, longer prompt.
+- **Layer 2** — new `suggestionMatchesExistingCode(suggestion, fileContent, line)` exported helper. Extracts code chunks (fenced blocks → inline backticks), normalises whitespace, requires ≥10 chars (avoids generic-punctuation false positives), checks substring overlap in the cited ±5-line window. `verifyFindings` consults this BEFORE the LLM call; on match, drops the finding with `[finding-verify] dropped … — FP-I L2: suggestion already implemented at cited location` and no model invocation.
+
+**Setup**
+
+Branch: `fixture/50-suggestion-redundant`. Craft a PR where one agent emits a finding whose `suggestion` field is byte-equivalent (after whitespace normalisation) to the existing line at the cited location. The most reliable trigger: a "log the error" finding on code that already has `console.warn('failed', err)`.
+
+**Expected outcomes**
+
+- [x] Agent log: `[finding-verify] dropped … — FP-I L2: suggestion already implemented at cited location`
+- [x] The finding does NOT appear in the rendered review
+- [x] Zero LLM calls for that finding (deterministic short-circuit)
+- [x] **Regression check**: a finding whose suggestion contains genuinely new code (no byte-overlap with cited region) goes through verification normally
+- [x] **Regression check**: prose-only suggestions ("Consider refactoring") fall through to the LLM verifier path (Layer 2 returns false)
+
+**Failure modes**
+- ❌ Generic-punctuation suggestions (`;`, `}`) trigger false-positive drops (the 10-char floor must be enforced)
+- ❌ Suggestion text that mentions OTHER code in the file but proposes a different fix gets dropped (the cited ±5-line window must be respected — far-away matches don't count)
+
+---
+
+### E2E-51: FP-J — verifier honours prior recommendations
+
+**Status:** ✅ SHIPPED (Layer 2 only — Layer 1 + 3 pending FB-A data accumulation). See [`docs/false-positive-reduction-plan.md` → FP-J](./../docs/false-positive-reduction-plan.md#fp-j--verifier-honours-prior-recommendations--shipped-layer-2-only).
+
+**Behavior:** The same prior-context block from FP-H L2 also surfaces prior **recommendations** (from `previousFindings[].suggestion`). The verifier prompt gains a third new INVALID condition: *"the current finding contradicts a prior recommendation"*. Prior advice is binding for the duration of the PR — re-reviews cannot dispute the bot's own prior fixes.
+
+This is Layer 2. Layer 1 (use FB-A dispute-rate counters in `reconcileMergeScore` to down-weight low-confidence findings in the verdict tier) and Layer 3 (comment-footer disclosure of dispute-rate context) both depend on FB-A/FB-E having accumulated production data; deferred.
+
+**Setup**
+
+Branch: `fixture/51-no-self-contradiction`. Two-commit sequence:
+1. Open a PR. MergeWatch's round-1 review recommends some fix X (e.g. *"add try/catch around the fetch call"*).
+2. As author, apply X. Push the fix commit. Round-2 re-review fires.
+
+**Expected outcomes**
+
+- [x] Round-2 does NOT produce a finding that critiques the application of X (e.g. *"the try/catch is unhandled"* / *"the error handler doesn't log enough"*)
+- [x] If round-2 ALSO finds a NEW unrelated defect Y, Y still surfaces normally (FP-J only suppresses contradiction-of-own-advice, not net-new findings)
+- [x] The verifier prompt visibly contains the prior suggestion text in its prior-context block (agent log / dashboard "view full details")
+- [x] **Regression check**: a first review (no `previousFindings`) verifies findings with no prior-context block — same shape as before FP-J landed
+
+**Failure modes**
+- ❌ Genuine new defects on code that happens to be near a prior fix get incorrectly dropped as "contradicting prior advice"
+- ❌ Prior recommendations are passed in raw verbatim, allowing prompt-injection via crafted prior suggestion text (sanitisation must already cover this — same `sanitizePreviousFindingString` path used by `buildPreviousFindingsBlock`)
 
 ---
 
