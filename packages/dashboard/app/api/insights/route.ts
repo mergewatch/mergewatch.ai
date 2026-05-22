@@ -56,21 +56,39 @@ export async function GET(req: NextRequest) {
     if (err instanceof TokenExpiredError) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });
     }
-    // Fall through to zero-state — better to show "no data yet" than to
-    // 500 the page when the GitHub API is flaky.
-    return NextResponse.json({ insights: [] });
+    // Upstream-degraded: GitHub API failed (rate limit, network, 5xx).
+    // We can't verify access, so we cannot serve insights. Return 503 so
+    // the dashboard distinguishes "upstream is having issues" from
+    // "this installation legitimately has no data yet" (200 + []).
+    // The earlier behaviour returned zero-state here; while the response
+    // shape was information-free (and so not an "auth bypass" — see PR
+    // #172 review thread), the 503 is the cleaner UX signal.
+    console.warn("[/api/insights] fetchUserInstallations failed:", err);
+    return NextResponse.json(
+      { error: "GitHub API unavailable, please retry" },
+      { status: 503 },
+    );
   }
 
   try {
     const store = await getDashboardStore();
     if (!store.fpInsights) {
-      // Older deployment without the FB-E table provisioned. Zero-state.
+      // Older deployment without the FB-E table provisioned. Zero-state
+      // is correct here — the table genuinely has no rows because it
+      // doesn't exist. Differentiated from the upstream-degraded 503
+      // above by virtue of being a successful (but empty) path.
       return NextResponse.json({ insights: [] });
     }
     const insights = await store.fpInsights.listByInstallation(installationId);
     return NextResponse.json({ insights });
   } catch (err) {
+    // DB-read failure (DynamoDB throttling, Postgres connection drop, etc.).
+    // Same upstream-degraded semantics as the GitHub-API catch above —
+    // 503 rather than misleading the dashboard with a fake zero-state.
     console.warn("[/api/insights] fp-insight read failed:", err);
-    return NextResponse.json({ insights: [] });
+    return NextResponse.json(
+      { error: "Insights service temporarily unavailable" },
+      { status: 503 },
+    );
   }
 }

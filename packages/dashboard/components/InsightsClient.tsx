@@ -123,7 +123,21 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
     (async () => {
       try {
         const r = await fetch(`/api/insights?installation_id=${encodeURIComponent(installationId)}`);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          // 503 = upstream-degraded (GitHub API or DB read failed). The
+          // API returns an `error` string we can surface verbatim — gives
+          // the user actionable signal instead of a generic "HTTP 503".
+          let upstreamMessage: string | undefined;
+          try {
+            const body = (await r.json()) as { error?: string };
+            upstreamMessage = body.error;
+          } catch { /* not JSON; fall through to generic */ }
+          throw new Error(
+            r.status === 503 && upstreamMessage
+              ? upstreamMessage
+              : `HTTP ${r.status}`,
+          );
+        }
         const data = (await r.json()) as { insights?: Insight[] };
         if (!cancelled) setInsights(data.insights ?? []);
       } catch (e) {
