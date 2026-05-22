@@ -8,6 +8,8 @@ export type {
   IReviewStore,
   IApiKeyStore,
   IMcpSessionStore,
+  IFindingDispositionStore,
+  FindingDispositionAttribution,
   ApiKeyRecord,
   McpSessionRecord,
 } from './storage/types.js';
@@ -137,6 +139,14 @@ export { detectNoTestHarness, suppressTestCoverageFindings } from './scope-aware
 export { clusterFindings, extractSignificantTokens, dedupeCrossAgentByLine } from './finding-clustering.js';
 export type { ClusterableFinding, ClusterOptions, TaggedClusterableFindings } from './finding-clustering.js';
 
+// ─── Disposition writers (FB-A / FB-B) ─────────────────────────────────────
+export {
+  recordFindingSurfacings,
+  recordDisputes,
+  detectQuietDrops,
+  recordQuietDrops,
+} from './insights/disposition-writer.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,
@@ -218,6 +228,7 @@ export type {
   ReviewKey,
   CreateReviewInput,
   UpdateReviewInput,
+  FindingDispositionRecord,
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';

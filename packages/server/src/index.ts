@@ -4,7 +4,12 @@ import rateLimit from 'express-rate-limit';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql as drizzleSql } from 'drizzle-orm';
-import { PostgresInstallationStore, PostgresReviewStore, runMigrations } from '@mergewatch/storage-postgres';
+import {
+  PostgresInstallationStore,
+  PostgresReviewStore,
+  PostgresFindingDispositionStore,
+  runMigrations,
+} from '@mergewatch/storage-postgres';
 import { EnvGitHubAuthProvider } from './github-auth-env.js';
 import { createLLMProvider } from './llm-factory.js';
 import { createWebhookHandler } from './webhook-handler.js';
@@ -58,6 +63,7 @@ async function main() {
   // Initialize providers
   const installationStore = new PostgresInstallationStore(db);
   const reviewStore = new PostgresReviewStore(db);
+  const dispositionStore = new PostgresFindingDispositionStore(db);
   const authProvider = new EnvGitHubAuthProvider(githubAppId, githubPrivateKey);
   const llm = createLLMProvider();
 
@@ -105,6 +111,7 @@ async function main() {
     webhookSecret,
     installationStore,
     reviewStore,
+    dispositionStore,
     authProvider,
     llm,
     dashboardBaseUrl,

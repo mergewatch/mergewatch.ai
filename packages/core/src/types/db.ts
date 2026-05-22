@@ -434,6 +434,64 @@ export type ReviewKey = Pick<ReviewItem, 'repoFullName' | 'prNumberCommitSha'>;
 export type CreateReviewInput = Omit<ReviewItem, 'completedAt' | 'commentId'>;
 
 /**
+ * FB-A — Per-finding cross-PR identity record. One row per distinct
+ * `findingMatchKey` per repo per installation. Created on first surfacing;
+ * counters incremented on every subsequent surfacing, dispute, verification,
+ * agreement, silent drop, etc.
+ *
+ * Storage:
+ *   - DynamoDB (SaaS) table: mergewatch-finding-dispositions
+ *     PK: `${installationId}#${repoFullName}`   SK: `findingMatchKey`
+ *   - Postgres (self-hosted) table: finding_dispositions
+ *     PK: (installation_id, repo_full_name, finding_match_key)
+ *
+ * Read path: only the FB-E nightly rollup queries this directly. Dashboard
+ * pages read the FB-E rollups, never the raw records — keeps O(1) on the
+ * page-load side.
+ *
+ * Write path: best-effort. Failed writes are logged but never block the
+ * review pipeline. Counters are monotonic — we never decrement (avoids the
+ * need for an event-source table to reconcile reaction removals).
+ */
+export interface FindingDispositionRecord {
+  installationId: string;
+  repoFullName: string;
+  /** W9-style stable identity. Either `${file}::T::${title}` or `${file}::F::${fingerprint}`. */
+  findingMatchKey: string;
+
+  /** ISO 8601. Set once on creation. */
+  firstSeen: string;
+  /** ISO 8601. Refreshed on every surfacing. */
+  lastSeen: string;
+
+  /** Distinct reviews this key appeared in. */
+  surfaceCount: number;
+  /** Explicit disputes (W3 triage, FP-F inline-resolve, FB-C 👎/🤔, FB-D /mergewatch reject). */
+  disputeCount: number;
+  /** W2 verifyFindings explicit `valid: true` verdicts on a finding carrying this key. */
+  verifiedCount: number;
+  /** W2 verifyFindings inconclusive verdicts on a finding carrying this key. */
+  unverifiedCount: number;
+  /** FB-B — finding was in previousFindings, code at the cited line didn't change, finding was NOT in current. */
+  silentDropCount: number;
+  /** FB-C — 👍 / ❤️ / 🚀 reactions on the bot's inline comment for a finding with this key. */
+  agreementCount: number;
+
+  /** Last-seen finding category for this key (the few seen are stable; we keep the most recent). */
+  category?: 'security' | 'bug' | 'style' | 'errorHandling' | 'testCoverage' | 'commentAccuracy' | 'custom';
+  /** Last-seen producing agent (heuristic — same finding can drift agent across reviews). */
+  topAgent?: string;
+  /** W10 significant-token bag for this finding's title — drives cluster-level rollup in FB-E. */
+  sigTokens?: string[];
+  /** FB-D — appended one entry per `/mergewatch reject <category>` invocation. */
+  rejectReasons?: Array<{
+    category: 'already-handled' | 'out-of-scope' | 'wrong-target' | 'style-disagreement' | 'other';
+    text?: string;
+    at: string;
+  }>;
+}
+
+/**
  * Type for updating a review's status — partial update to an existing item.
  */
 export type UpdateReviewInput = ReviewKey & {

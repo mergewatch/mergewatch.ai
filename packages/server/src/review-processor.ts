@@ -12,6 +12,7 @@ import {
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
+  recordFindingSurfacings, recordDisputes, detectQuietDrops, recordQuietDrops,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -90,7 +91,7 @@ Please respond to the developer's comment:`;
 async function handleInlineReplyJob(
   octokit: Awaited<ReturnType<IGitHubAuthProvider['getInstallationOctokit']>>,
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'llm'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'llm'>,
 ): Promise<void> {
   const { owner, repo, prNumber, installationId, inlineReplyCommentId } = job;
   const repoFullName = `${owner}/${repo}`;
@@ -174,6 +175,9 @@ async function handleInlineReplyJob(
         repoFullName,
         prNumber,
       );
+      // FB-A — every inline-resolve also counts as an explicit per-finding
+      // dispute. Best-effort write; the helper logs+swallows on failure.
+      await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
     }
 
     console.log(
@@ -191,7 +195,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -420,6 +424,10 @@ export async function processReviewJob(
           deps.llm,
           config.lightModel || config.model,
         );
+        // FB-A — record one dispute per W3-disputed key. This runs in
+        // ADDITION to the partitionDisputed suppression downstream; the
+        // analytics rollup needs to see every dispute, not just net new ones.
+        await recordDisputes(deps.dispositionStore, installationId, repoFullName, disputedKeys);
       }
     }
     // FP-F — union with the persisted inline-resolve memory. Findings the
@@ -537,6 +545,29 @@ export async function processReviewJob(
     let delta: ReviewDelta | null = null;
     if (prevComplete?.findings) {
       delta = computeReviewDelta(result.findings, prevComplete.findings);
+    }
+
+    // FB-A / FB-B — analytics writes. All best-effort; failures inside the
+    // helpers are caught + logged and never block the review path.
+    //
+    //   surfacings        — one upsertSurface + (verified|unverified) per
+    //                       finding × match-key. Captures category, agent,
+    //                       and W10 sigTokens for later clustering.
+    //   quiet drops (FB-B) — findings that vanished without a code change at
+    //                       the cited line → silentDropCount++. Strong
+    //                       implicit FP signal.
+    //
+    // Both writes use the same nowIso anchor so a re-review of the same
+    // commit produces identical lastSeen timestamps on duplicate calls
+    // (rare but possible on retries).
+    const nowIso = new Date().toISOString();
+    await recordFindingSurfacings(deps.dispositionStore, installationId, repoFullName, result.findings, nowIso);
+    if (prevComplete?.findings && prevComplete.findings.length > 0) {
+      const quietDrops = detectQuietDrops(result.findings, prevComplete.findings, result.changedLines);
+      if (quietDrops.length > 0) {
+        console.log('[fb-b] %d quiet drop%s detected', quietDrops.length, quietDrops.length === 1 ? '' : 's');
+        await recordQuietDrops(deps.dispositionStore, installationId, repoFullName, quietDrops);
+      }
     }
 
     // Compute cumulative cost across all reviews on this PR

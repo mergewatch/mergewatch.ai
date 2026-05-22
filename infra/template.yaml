@@ -597,6 +597,59 @@ Resources:
     UpdateReplacePolicy: Delete
 
   # ===========================================================================
+  # DynamoDB: FindingDispositions (FB-A)
+  # ===========================================================================
+  # Per-finding cross-PR identity records — one row per distinct
+  # findingMatchKey per repo per installation. Drives the FB-E nightly
+  # rollup and (via the rollup) every dashboard insight chart.
+  #
+  # Schema:
+  #   PK: pk  (String)  — "${installationId}#${repoFullName}"
+  #   SK: sk  (String)  — findingMatchKey (file::T::title or file::F::fp)
+  #
+  # Attributes (best-effort, monotonic counters):
+  #   - firstSeen / lastSeen   (String, ISO 8601)
+  #   - surfaceCount / disputeCount / verifiedCount / unverifiedCount /
+  #     silentDropCount / agreementCount  (Number)
+  #   - category / topAgent    (String)
+  #   - sigTokens              (List<String>) — W10 cluster bag
+  #   - rejectReasons          (List<Map>)    — FB-D append-only log
+  #
+  # Reads are bounded (FB-E nightly, listByInstallation with Scan + filter);
+  # writes are hot-path (every surfacing/dispute/verification). PAY_PER_REQUEST
+  # keeps it cheap.
+
+  FindingDispositionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-finding-dispositions-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # ===========================================================================
   # IAM Role: Lambda Execution Role
   # ===========================================================================
   # A single shared role for both Lambda functions. This simplifies management
@@ -670,11 +723,13 @@ Resources:
                   - !GetAtt ReviewsTable.Arn
                   - !GetAtt ApiKeysTable.Arn
                   - !GetAtt SessionsTable.Arn
+                  - !GetAtt FindingDispositionsTable.Arn
                   # Index ARNs (for future GSIs)
                   - !Sub '${InstallationsTable.Arn}/index/*'
                   - !Sub '${ReviewsTable.Arn}/index/*'
                   - !Sub '${ApiKeysTable.Arn}/index/*'
                   - !Sub '${SessionsTable.Arn}/index/*'
+                  - !Sub '${FindingDispositionsTable.Arn}/index/*'
 
         # --- SSM Parameter Store ---
         # Read-only access to GitHub credentials stored in SSM.

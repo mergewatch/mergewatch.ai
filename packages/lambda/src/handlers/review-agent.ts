@@ -46,6 +46,10 @@ import {
   fetchTriageComments,
   computeDisputedKeys,
   partitionDisputed,
+  recordFindingSurfacings,
+  recordDisputes,
+  detectQuietDrops,
+  recordQuietDrops,
 } from '@mergewatch/core';
 import type {
   ReviewJobPayload,
@@ -57,7 +61,7 @@ import type {
 } from '@mergewatch/core';
 import { buildWorkDoneSection, computeReviewDelta } from '@mergewatch/core';
 import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
-import { DynamoReviewStore } from '@mergewatch/storage-dynamo';
+import { DynamoReviewStore, DynamoFindingDispositionStore, DEFAULT_FINDING_DISPOSITIONS_TABLE } from '@mergewatch/storage-dynamo';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
@@ -68,11 +72,15 @@ const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 const INSTALLATIONS_TABLE = process.env.INSTALLATIONS_TABLE ?? 'mergewatch-installations';
 const REVIEWS_TABLE = process.env.REVIEWS_TABLE ?? 'mergewatch-reviews';
+const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE;
 const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
 const reviewStore = new DynamoReviewStore(dynamodb, REVIEWS_TABLE);
+// FB-A — per-finding cross-PR dispositions. Best-effort writes; if the
+// table doesn't exist yet (mid-deploy state) the store layer swallows.
+const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DISPOSITIONS_TABLE);
 const llm = new BedrockLLMProvider();
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -236,6 +244,8 @@ async function handleInlineReplyMode(
         repoFullName,
         prNumber,
       );
+      // FB-A — every inline-resolve is also an explicit dispute for analytics.
+      await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
     }
 
     console.log(
@@ -540,6 +550,8 @@ export async function handler(
           llm,
           lightModelId,
         );
+        // FB-A — record one dispute per W3-disputed key.
+        await recordDisputes(dispositionStore, installationId, repoFullName, disputedKeys);
       }
     }
     // FP-F — union with the persisted inline-resolve memory; mirrors the
@@ -645,6 +657,20 @@ export async function handler(
     let delta: ReviewDelta | null = null;
     if (prevComplete?.findings) {
       delta = computeReviewDelta(result.findings, prevComplete.findings);
+    }
+
+    // FB-A / FB-B — best-effort analytics writes. Mirrors the server
+    // handler; see packages/server/src/review-processor.ts for the
+    // rationale. All failures are caught + logged inside the helpers
+    // and never block the review path.
+    const nowIso = new Date().toISOString();
+    await recordFindingSurfacings(dispositionStore, installationId, repoFullName, result.findings, nowIso);
+    if (prevComplete?.findings && prevComplete.findings.length > 0) {
+      const quietDrops = detectQuietDrops(result.findings, prevComplete.findings, result.changedLines);
+      if (quietDrops.length > 0) {
+        console.log('[fb-b] %d quiet drop%s detected', quietDrops.length, quietDrops.length === 1 ? '' : 's');
+        await recordQuietDrops(dispositionStore, installationId, repoFullName, quietDrops);
+      }
     }
 
     const durationMs = Date.now() - new Date(reviewStartedAt).getTime();
