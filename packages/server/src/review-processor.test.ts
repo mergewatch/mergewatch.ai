@@ -113,6 +113,10 @@ const basePRContext = {
 const basePipelineResult = {
   summary: 'All good',
   findings: [],
+  // FB-A / FB-B downstream readers expect this map (changedLines drives the
+  // quiet-drop detection). Empty map = "no files changed" — sufficient for
+  // these unit-level tests that never assert on the analytics writers.
+  changedLines: new Map<string, Set<number>>(),
   mergeScore: 5,
   mergeScoreReason: 'No issues',
   diagram: undefined,

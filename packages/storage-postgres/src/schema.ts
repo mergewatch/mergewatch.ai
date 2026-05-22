@@ -81,3 +81,27 @@ export const mcpSessions = pgTable('mcp_sessions', {
   iteration: integer('iteration').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
+
+// FB-A — per-finding cross-PR identity records (one row per distinct
+// findingMatchKey per repo per installation). See FindingDispositionRecord
+// in @mergewatch/core for the typed shape and lifecycle semantics.
+export const findingDispositions = pgTable('finding_dispositions', {
+  installationId: text('installation_id').notNull(),
+  repoFullName: text('repo_full_name').notNull(),
+  findingMatchKey: text('finding_match_key').notNull(),
+  firstSeen: text('first_seen').notNull(),
+  lastSeen: text('last_seen').notNull(),
+  surfaceCount: integer('surface_count').notNull().default(0),
+  disputeCount: integer('dispute_count').notNull().default(0),
+  verifiedCount: integer('verified_count').notNull().default(0),
+  unverifiedCount: integer('unverified_count').notNull().default(0),
+  silentDropCount: integer('silent_drop_count').notNull().default(0),
+  agreementCount: integer('agreement_count').notNull().default(0),
+  category: text('category'),
+  topAgent: text('top_agent'),
+  sigTokens: jsonb('sig_tokens'),
+  rejectReasons: jsonb('reject_reasons'),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.findingMatchKey] }),
+  installationIdx: index('finding_dispositions_installation_idx').on(t.installationId),
+}));

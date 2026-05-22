@@ -923,6 +923,13 @@ export type PreviousFinding = {
   severity: string;
   category: string;
   title: string;
+  /**
+   * W9 stable identity over the cited code (optional — older stored
+   * findings predate W9 and won't have one). Already accepted at runtime
+   * by `findingMatchKeys` via the `FindingLike` shape; declared here so
+   * the FB-A / FB-B analytics writers can use it without unsafe coercion.
+   */
+  fingerprint?: string;
 };
 
 /** Maximum characters per serialised string field to limit prompt injection surface. */

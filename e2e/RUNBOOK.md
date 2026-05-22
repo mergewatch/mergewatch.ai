@@ -163,8 +163,8 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
 | [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) | 2m | 60s | FP-G |
-| [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers-target) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) — **TARGET** | 2m | 60s | FB-A |
-| [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter-target) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) — **TARGET** | 2m | 60s | FB-B |
+| [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
+| [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes-target) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) — **TARGET** | 2m | 60s | FB-C |
 | [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command-target) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) — **TARGET** | 3m | 90s | FB-D |
 | [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup-target) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) — **TARGET** | 3m | 90s | FB-E |
@@ -1490,9 +1490,9 @@ Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present /
 
 ---
 
-### E2E-37: FB-A — FindingDispositionRecord storage + writers — TARGET
+### E2E-37: FB-A — FindingDispositionRecord storage + writers
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-A](./../docs/false-positive-feedback-plan.md#fb-a--findingdispositionrecord-storage--writers).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-A](./../docs/false-positive-feedback-plan.md#fb-a--findingdispositionrecord-storage--writers--shipped).
 
 **Behavior (intended, once FB-A ships):** every surfacing of a finding upserts a `FindingDispositionRecord` keyed by `(installationId, repoFullName, findingMatchKey)` — incrementing `surfaceCount`, refreshing `lastSeen`, capturing category + topAgent + sigTokens. The existing W3 path increments `disputeCount`; FP-F inline-resolve increments `disputeCount` AND continues to populate `inlineResolvedKeys` on `ReviewItem` (back-compat). W2 verdicts increment `verifiedCount` / `unverifiedCount`. Records are read by FB-E's nightly rollup only — no per-review read on the dashboard path.
 
@@ -1517,9 +1517,9 @@ Branch: `fixture/37-fp-record-storage`. A PR that triggers ≥ 2 findings on cha
 
 ---
 
-### E2E-38: FB-B — quiet-drop derived counter — TARGET
+### E2E-38: FB-B — quiet-drop derived counter
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-B](./../docs/false-positive-feedback-plan.md#fb-b--quiet-drop-derived-counter).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-B](./../docs/false-positive-feedback-plan.md#fb-b--quiet-drop-derived-counter--shipped).
 
 **Behavior (intended, once FB-B ships):** when a finding from the previous review (a) was present in `previousFindings`, (b) is NOT in the current review's output, AND (c) the cited code's fingerprint did NOT change between the two commits → the orchestrator silently dropped it. Each such drop increments `silentDropCount` on the corresponding `FindingDispositionRecord`. This is a strong *implicit* FP signal — the model dropped a finding it had previously emitted on the same code.
 

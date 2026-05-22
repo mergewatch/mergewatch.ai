@@ -6,7 +6,11 @@
  *   - Future: PostgresInstallationStore / PostgresReviewStore
  */
 
-import type { InstallationItem, InstallationSettings, ReviewItem, ReviewStatus } from '../types/db.js';
+import type {
+  InstallationItem, InstallationSettings,
+  ReviewItem, ReviewStatus,
+  FindingDispositionRecord,
+} from '../types/db.js';
 
 export interface IInstallationStore {
   get(installationId: string, repoFullName: string): Promise<InstallationItem | null>;
@@ -73,4 +77,71 @@ export interface McpSessionRecord {
 export interface IMcpSessionStore {
   get(sessionId: string): Promise<McpSessionRecord | null>;
   upsert(record: McpSessionRecord): Promise<void>;
+}
+
+// ─── FB-A — Finding disposition store ──────────────────────────────────────
+
+/**
+ * Sentinel — the field passed to `upsertSurface` when attribution data
+ * (category / topAgent / sigTokens) is unknown. Existing values are kept
+ * when a fresher write doesn't carry them.
+ */
+export interface FindingDispositionAttribution {
+  category?: FindingDispositionRecord['category'];
+  topAgent?: string;
+  sigTokens?: string[];
+}
+
+export interface IFindingDispositionStore {
+  /**
+   * Increment surfaceCount + refresh lastSeen on the record for this key.
+   * Creates the record (with firstSeen = lastSeen = now, surfaceCount = 1)
+   * if it doesn't exist yet. Attribution fields are written-through on every
+   * upsert (last writer wins; they're stable enough that this is fine).
+   *
+   * Idempotency: each `upsertSurface` is treated as exactly one "this finding
+   * surfaced once". Callers must dedupe across multiple match-keys of the same
+   * finding (typical pattern: write one upsertSurface per key returned by
+   * `findingMatchKeys(f)`).
+   */
+  upsertSurface(
+    installationId: string,
+    repoFullName: string,
+    findingMatchKey: string,
+    nowIso: string,
+    attribution?: FindingDispositionAttribution,
+  ): Promise<void>;
+
+  /** Increment disputeCount by 1. No-op if no record exists yet (we don't backfill — a dispute without prior surfacing is a write-ordering bug we'd want to see logged separately). */
+  incrementDispute(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
+  /** Increment verifiedCount by 1. */
+  incrementVerified(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
+  /** Increment unverifiedCount by 1. */
+  incrementUnverified(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
+  /** FB-B — increment silentDropCount by 1. */
+  incrementSilentDrop(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
+  /** FB-C — increment agreementCount by 1. */
+  incrementAgreement(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
+  /** FB-D — append a rejectReason entry. Idempotent at the record level; appends always extend. */
+  appendRejectReason(
+    installationId: string,
+    repoFullName: string,
+    findingMatchKey: string,
+    reason: NonNullable<FindingDispositionRecord['rejectReasons']>[number],
+  ): Promise<void>;
+
+  /**
+   * Page through all records for an installation. Used by the FB-E nightly
+   * rollup. Optional limit + cursor-style pagination — implementations may
+   * cap per-call to ~1000 records.
+   */
+  listByInstallation(
+    installationId: string,
+    opts?: { limit?: number; cursor?: string },
+  ): Promise<{ items: FindingDispositionRecord[]; nextCursor?: string }>;
 }

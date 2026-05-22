@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import type { IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
@@ -9,6 +9,9 @@ export interface WebhookDeps {
   webhookSecret: string;
   installationStore: IInstallationStore;
   reviewStore: IReviewStore;
+  /** FB-A — optional disposition store. Best-effort: when unset, writes are
+   *  no-ops and the review pipeline runs unchanged. */
+  dispositionStore?: IFindingDispositionStore;
   authProvider: IGitHubAuthProvider;
   llm: ILLMProvider;
   dashboardBaseUrl: string;

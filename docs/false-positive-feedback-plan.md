@@ -131,7 +131,7 @@ DynamoDB for SaaS, Postgres `jsonb` columns for self-hosted — same shape, two 
 
 Ranked by dependency order (foundation first → capture → aggregation → surface → active learning).
 
-### FB-A — `FindingDispositionRecord` storage + writers
+### FB-A — `FindingDispositionRecord` storage + writers  ✅ SHIPPED
 
 **Where the gap lives:** W3 disputed keys are computed live every review; FP-F inline-resolve keys are persisted on `ReviewItem` but only as a flat string array — no surfaceCount, no rate, no per-agent attribution. We have *no* cross-review per-finding identity table today.
 
@@ -146,7 +146,7 @@ Ranked by dependency order (foundation first → capture → aggregation → sur
 
 ---
 
-### FB-B — Quiet-drop derived counter
+### FB-B — Quiet-drop derived counter  ✅ SHIPPED
 
 **Where the gap lives:** When a finding appeared in `previousFindings` AND the cited code's fingerprint didn't change AND it's NOT in the current review → the orchestrator silently dropped it. That's a *very strong* implicit FP signal we're throwing away today.
 
@@ -300,8 +300,8 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 | ID | Workstream | Bucket | Effort | Depends on | ROI |
 |---|---|---|---|---|---|
-| **FB-A** | FindingDispositionRecord storage + writers | Persist | S | — | ★★★ foundation |
-| **FB-B** | Quiet-drop derived counter | Persist | S | FB-A | ★★ free signal |
+| **FB-A** | FindingDispositionRecord storage + writers | Persist | S | — | ✅ SHIPPED |
+| **FB-B** | Quiet-drop derived counter | Persist | S | FB-A | ✅ SHIPPED |
 | **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ★★★ |
 | **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ★★ |
 | **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ★★★ |
