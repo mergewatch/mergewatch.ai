@@ -264,6 +264,16 @@ export async function pollAndRecordInlineReactions(
   }
 
   const inst = String(installationId);
+  // Collect every increment operation across all comments, all types, all
+  // deltas, all match-keys into a single Promise.allSettled batch. Three
+  // wins over the prior per-call sequential `await + catch + continue`:
+  //   1. Parallel I/O (cheap but real on large reaction-active PRs).
+  //   2. One greppable failure-summary log line per poll instead of N
+  //      individual warns scrolling past in CloudWatch.
+  //   3. Matches the same shape as the FB-D appendRejectReason batch in
+  //      both handlers (review-processor.ts + review-agent.ts) — one
+  //      pattern for "best-effort fan-out of analytics writes".
+  const incrementOps: Promise<void>[] = [];
   for (const c of comments) {
     // Restrict to MergeWatch inline findings: bot-authored AND carrying
     // the inline marker. Same guard the inline-reply path uses (so
@@ -299,19 +309,29 @@ export async function pollAndRecordInlineReactions(
       const increment = isDispute
         ? store.incrementDispute.bind(store)
         : store.incrementAgreement.bind(store);
-      // Apply the delta `delta` times, fanned out across both match keys.
-      // We don't batch because counter writes are individually idempotent
-      // at the wire level and the volumes are small (most PRs see <5
-      // reactions per inline comment).
+      // Queue up `delta` increments fanned out across the finding's match
+      // keys (typically 2: title + fingerprint). Counter writes are
+      // idempotent at the wire level so the parallel-batch shape is safe;
+      // the store layer's internal try/catch handles per-call failures.
       for (let i = 0; i < delta; i++) {
         for (const key of matchKeys) {
-          try {
-            await increment(inst, repoFullName, key);
-          } catch (err) {
-            console.warn('[fb-c] reaction increment failed for %s %s:', type, key, err);
-          }
+          incrementOps.push(increment(inst, repoFullName, key));
         }
       }
+    }
+  }
+
+  // Single batch + single failure-summary log line. Best-effort —
+  // counters never block the review and rejections still get the
+  // verified snapshot return value below.
+  if (incrementOps.length > 0) {
+    const settled = await Promise.allSettled(incrementOps);
+    const failed = settled.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) {
+      console.warn(
+        '[fb-c] %d/%d reaction increment write(s) failed on %s',
+        failed, settled.length, repoFullName,
+      );
     }
   }
 
