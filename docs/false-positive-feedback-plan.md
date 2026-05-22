@@ -184,7 +184,14 @@ The bot's inline-comment ID is already linked to a finding via `ReviewItem.findi
 /mergewatch reject style-disagreement we use snake_case for python here
 ```
 
-Categories: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Free-text after the category is optional and persisted as `text`. The bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`) and increments `disputeCount` + appends to `rejectReasons[]`.
+**Design decisions (locked):**
+
+- **Prefix form:** exactly `/mergewatch reject <category> [text]`. Slash-prefixed for discoverability via autocomplete-aware GitHub clients; full `mergewatch` (not `/mw`) to avoid collisions with other CI bots that may install a `/mw` prefix.
+- **Auto-resolve behaviour:** rejection does **NOT** auto-resolve the GitHub thread. Rejection is a *signal*; closure is a *human decision*. Reviewers can still type `/resolve` separately if they want both. Keeps `/resolve` and `/reject` as orthogonal verbs.
+- **Categories:** closed set — `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Free-text after the category is optional and persisted as `text`.
+- **Unrecognised category fallback:** silently coerce to `other`, with the original token preserved as the leading word of `text`. Example: `/mergewatch reject typo-cat foo` persists as `{ category: 'other', text: 'typo-cat foo' }`. Preserves the signal even when the reviewer types something unexpected; the dashboard surfaces these as `other`-category rejections for triage.
+
+The bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`) and increments `disputeCount` + appends to `rejectReasons[]`.
 
 **Code targets:** `packages/core/src/agents/inline-reply.ts` (new parser + handler branch), `packages/core/src/agents/prompts.ts` (confirmation reply template), `packages/server/src/review-processor.ts` + `packages/lambda/src/handlers/review-agent.ts` (write through).
 **E2E target:** [E2E-40](./../e2e/RUNBOOK.md#e2e-40-fb-d--mergewatch-reject-slash-command-target).

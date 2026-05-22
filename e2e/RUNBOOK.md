@@ -1597,13 +1597,15 @@ Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
 **Expected outcomes**
 
 - [ ] Recognised categories: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`
-- [ ] Unrecognised category (`/mergewatch reject typo-here`) → bot reply asks for a valid category, no record write
+- [ ] Unrecognised category (`/mergewatch reject typo-here foo`) → silently coerced to `{ category: 'other', text: 'typo-here foo' }`; bot's confirming reply says "recording as `other`". No request for re-entry (preserve the signal).
 - [ ] Multiple `/mergewatch reject` replies on the same thread append to `rejectReasons[]` (don't overwrite)
 - [ ] Top-level `## mergewatch triage` continues to function (FB-D is an inline-thread addition, not a replacement)
+- [ ] The GitHub thread is NOT auto-resolved by `/reject` — `/resolve` and `/reject` are orthogonal verbs
 
 **Failure modes**
 - ❌ `/mergewatch reject` is matched in prose ("here's how I'd reject this differently") — pattern must be standalone-line or slash-command form
 - ❌ The thread is auto-resolved (signal collected; closure is human-driven)
+- ❌ Unrecognised category writes nothing (must coerce to `other` and preserve the original token in `text`)
 
 ---
 
