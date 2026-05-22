@@ -162,6 +162,51 @@ The same fail-safe semantics apply at both severities: missing file content → 
 
 ---
 
+### FP-H — Anti-anchoring on prior findings  ✅ SHIPPED
+
+**Where the gap lived:** observed live across PRs #163 / #166 / #169 — when MergeWatch re-reviews after a fix commit, it carries the previous bot review in conversation history (via `buildPreviousFindingsBlock`). The model was treating the previous-findings block as **stylistic guidance** — "look for findings shaped like these" — even after the cited instances were gone. The frame outlived the referent, producing round-2 false positives whose hit-rate dropped to 0/3 on the most extreme case (#166 round-2). Filed as [#167](https://github.com/santthosh/mergewatch.ai/issues/167).
+
+**The fix (Layer 1 + Layer 2):**
+
+- **Layer 1** — explicit counter-instruction in `buildPreviousFindingsBlock`. A new "CRITICAL (FP-H)" paragraph tells the orchestrator that the previous-findings list is **for stable-identity matching only**, NOT a stylistic template. Pattern-matching against a prior finding is named as a known failure mode and explicitly forbidden.
+- **Layer 2** — `verifyFindings` accepts an optional `previousFindings` arg and constructs a per-batch prior-context block via `buildVerifierPriorContext(...)`. The verifier prompt gains an additional INVALID condition: *"the current finding's title overlaps heavily with a prior finding's significant tokens AND the cited line does not contain the construct the finding describes"*. The verifier sees prior titles + per-prior sigToken bags (computed via the same W10 helper FB-A uses).
+
+Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted findings are pattern-matched in the first place; Layer 2 catches the residual that still gets through.
+
+**Code targets (final):** `packages/core/src/agents/reviewer.ts` (`buildPreviousFindingsBlock` counter-instruction + `verifyFindings` priorFindings arg + caller threading), `packages/core/src/agents/prompts.ts` (`PRIOR_CONTEXT_PLACEHOLDER` + `buildVerifierPriorContext` + verifier-prompt extension), `packages/core/src/index.ts` (exports).
+**E2E target:** [E2E-49](./../e2e/RUNBOOK.md#e2e-49-fp-h--anti-anchoring-on-prior-findings).
+
+---
+
+### FP-I — Verify "suggestion already implemented"  ✅ SHIPPED
+
+**Where the gap lived:** `FINDING_VERIFICATION_PROMPT` (FP-E) checks defect existence but not whether the *suggested fix is already the existing code*. On PR #169 round-2 (commit `69573aa`), MW produced a finding whose suggestion was byte-identical to the existing `console.warn(...)` call on the cited line. The verifier let it through because the prompt asks *"does the defect exist?"* — not *"is the fix already implemented?"*. Filed as [#168](https://github.com/santthosh/mergewatch.ai/issues/168).
+
+**The fix (Layer 1 + Layer 2):**
+
+- **Layer 1** — extended `FINDING_VERIFICATION_PROMPT` with an additional INVALID condition: *"the Suggestion field proposes code that is ALREADY implemented in the cited region of the file"*. Zero additional LLM cost — same verifier call, longer prompt. Asks the model to inspect the suggestion's code-shaped content (backticks / fences) against the cited ±5-line region.
+- **Layer 2** — new exported `suggestionMatchesExistingCode(suggestion, fileContent, line)` helper. Extracts code chunks from the suggestion (fenced blocks first, then inline backticks), normalises whitespace, requires ≥10 chars to avoid generic-punctuation false positives, and checks for substring overlap against the cited ±5-line window. When `true`, `verifyFindings` drops the finding **before** the LLM call — deterministic structural backstop that catches the unambiguous cases cheaply (`[finding-verify] dropped … — FP-I L2: suggestion already implemented`).
+
+**Code targets (final):** `packages/core/src/agents/reviewer.ts` (`suggestionMatchesExistingCode` helper + verifyFindings pre-LLM short-circuit), `packages/core/src/agents/prompts.ts` (FINDING_VERIFICATION_PROMPT INVALID condition extension).
+**E2E target:** [E2E-50](./../e2e/RUNBOOK.md#e2e-50-fp-i--verify-suggestion-already-implemented).
+
+---
+
+### FP-J — Verifier honours prior recommendations  ✅ SHIPPED (Layer 2 only)
+
+**Where the gap lived:** on PR #169 round-2, MW directly contradicted its own round-1 advice. Round-1 said *"re-throw on `listInstallationIds` failure so CloudWatch alarms"*. I made that change. Round-2 then flagged the very same throw as a 🔴 Critical *"unhandled promise rejection"*. The verifier had no notion of prior recommendations being binding constraints on subsequent reviews. Filed as [#170](https://github.com/santthosh/mergewatch.ai/issues/170).
+
+**The fix (Layer 2 only — Layer 1 + Layer 3 still pending):**
+
+- **Layer 2** — the same prior-context block from FP-H L2 also lists prior **recommendations** (suggestions) from `previousFindings[].suggestion`. The verifier prompt gains an additional INVALID condition: *"the current finding contradicts a prior recommendation — if the prior review suggested X and X is now present, a current finding that critiques X MUST be dropped"*. The prior advice is binding for the duration of the PR. Same single prompt-extension surface as FP-H L2 — one verifier call, three new INVALID conditions, three failure modes collapsed into one mechanism.
+- **Layer 1** (use FB-A dispute-rate counters in `reconcileMergeScore`) — **deferred**. Logically blocked on FB-A/FB-E being live in production for several weeks so the counters accumulate. Will revisit after the FB-* bundle finishes and a few weeks of dispute data exists.
+- **Layer 3** (comment-footer disclosure of dispute-rate context) — **deferred**, depends on Layer 1.
+
+**Code targets (final):** `packages/core/src/agents/prompts.ts` (FINDING_VERIFICATION_PROMPT — new INVALID condition; `buildVerifierPriorContext` lists prior suggestions), `packages/core/src/agents/reviewer.ts` (PreviousFinding widened with optional `suggestion`).
+**E2E target:** [E2E-51](./../e2e/RUNBOOK.md#e2e-51-fp-j--verifier-honours-prior-recommendations).
+
+---
+
 ## Priority order
 
 | ID | Opportunity | Cost | Code blast radius | ROI |
@@ -173,8 +218,11 @@ The same fail-safe semantics apply at both severities: missing file content → 
 | **FP-E** | Extend W2 verification to warnings | LLM-cost +$0.02–0.03/review | one severity-skip line | ✅ SHIPPED |
 | **FP-F** | Inline-reply resolve memory → disputedKeys | medium | new storage field + handler wiring | ✅ SHIPPED |
 | **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ✅ SHIPPED |
+| **FP-H** | Anti-anchoring on prior findings (L1 + L2) | small | prompt extension + verifier ctx | ✅ SHIPPED |
+| **FP-I** | Verify suggestion-already-implemented (L1 + L2) | small | verifier prompt + structural helper | ✅ SHIPPED |
+| **FP-J** | Verifier honours prior recommendations | small (L2 only) | verifier prompt extension | ✅ SHIPPED (L2); L1+L3 pending FB-A data |
 
-**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / this one). **All seven items shipped.**
+**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / #163). **FP-H + FP-I + FP-J Layer 2** as a single follow-up bundle (this PR) — all three touch the same verifier prompt + reviewer surface, so bundling them is cheaper than three sequential PRs.
 
 ---
 
