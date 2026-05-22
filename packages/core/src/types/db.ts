@@ -510,6 +510,65 @@ export interface FindingDispositionRecord {
 }
 
 /**
+ * FB-E — Per-installation FP insight rollup. Produced nightly by aggregating
+ * `FindingDispositionRecord` rows over a rolling window (7d / 30d / 90d).
+ *
+ * Storage:
+ *   - DynamoDB (SaaS) table: mergewatch-installation-fp-insights
+ *     PK: `installationId`   SK: `window`   (e.g. PK=42, SK="30d")
+ *   - Postgres (self-hosted) table: installation_fp_insights
+ *     PK: (installation_id, window)
+ *
+ * Read path: dashboard charts (FB-F..FB-J) read these rows; never the raw
+ * `FindingDispositionRecord` table. Keeps page-load O(1).
+ *
+ * Write path: a scheduled job (EventBridge → Lambda for SaaS; node-cron
+ * in the Express server for self-hosted) replaces the three rolling-window
+ * rows for each installation once per night. Idempotent — re-running the
+ * same night overwrites with identical numbers.
+ */
+export interface InstallationFPInsight {
+  installationId: string;
+  /** Rolling window the row aggregates over. */
+  window: '7d' | '30d' | '90d';
+  /** ISO 8601 — the lower bound of the window (now - window length). */
+  windowStart: string;
+  /** ISO 8601 — the upper bound (rollup timestamp). */
+  windowEnd: string;
+  /** ISO 8601 — when this row was last computed; same as windowEnd for fresh rollups. */
+  generatedAt: string;
+
+  /** Sum of surfaceCount across every disposition record whose lastSeen falls inside the window. */
+  totalFindingsSurfaced: number;
+  /** Sum of disputeCount across the same set. */
+  totalDisputes: number;
+  /** disputeCount / surfaceCount across the window. 0 when totalFindingsSurfaced is 0. */
+  disputeRate: number;
+  /** Sum of silentDropCount — the implicit FP signal. */
+  totalSilentDrops: number;
+  /** Sum of agreementCount — the implicit TP signal. */
+  totalAgreements: number;
+
+  /** Bucketed by `FindingDispositionRecord.category` (security / bug / style / …). */
+  perCategory: Record<string, { surfaced: number; disputed: number; rate: number }>;
+  /** Bucketed by `FindingDispositionRecord.repoFullName`. */
+  perRepo: Record<string, { surfaced: number; disputed: number; rate: number }>;
+
+  /**
+   * Top-N clusters by `disputeRate × surfaceCount`. Clusters are built via
+   * union-find on shared significant tokens (same W10 token bag the
+   * orchestrator's FB-A writer captures on each surfacing).
+   */
+  topClusters: Array<{
+    sigTokens: string[];
+    representativeTitle: string;
+    surfaceCount: number;
+    disputeCount: number;
+    rate: number;
+  }>;
+}
+
+/**
  * Type for updating a review's status — partial update to an existing item.
  */
 export type UpdateReviewInput = ReviewKey & {

@@ -198,7 +198,7 @@ The bot posts a confirming reply (`Got it — recording as <category>. This patt
 
 ---
 
-### FB-E — Nightly `InstallationFPInsight` rollup
+### FB-E — Nightly `InstallationFPInsight` rollup  ✅ SHIPPED
 
 **Where the gap lives:** Reading per-finding records on every dashboard pageload is O(N) on installation size. We want the dashboard to be O(1).
 
@@ -304,7 +304,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-B** | Quiet-drop derived counter | Persist | S | FB-A | ✅ SHIPPED |
 | **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ✅ SHIPPED |
 | **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ✅ SHIPPED |
-| **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ★★★ |
+| **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ✅ SHIPPED |
 | **FB-F** | FP funnel chart | Surface | M | FB-E | ★★ |
 | **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ★★ |
 | **FB-H** | Top recurring themes table | Surface | M | FB-E | ★★★ |

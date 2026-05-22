@@ -167,7 +167,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
 | [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) | 3m | 90s | FB-D |
-| [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup-target) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) — **TARGET** | 3m | 90s | FB-E |
+| [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart-target) | Org dashboard renders the FP funnel: surfaced → carried → resolved → disputed → silently-dropped (FB-F) — **TARGET** | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-line-chart-target) | Org dashboard renders dispute-rate over time with one line per agent category (FB-G) — **TARGET** | 2m | 60s | FB-G |
 | [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table-target) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) — **TARGET** | 2m | 60s | FB-H |
@@ -1609,9 +1609,9 @@ Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
 
 ---
 
-### E2E-41: FB-E — Nightly InstallationFPInsight rollup — TARGET
+### E2E-41: FB-E — Nightly InstallationFPInsight rollup
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-E](./../docs/false-positive-feedback-plan.md#fb-e--nightly-installationfpinsight-rollup).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-E](./../docs/false-positive-feedback-plan.md#fb-e--nightly-installationfpinsight-rollup--shipped).
 
 **Behavior (intended, once FB-E ships):** scheduled task (EventBridge → Lambda for SaaS; node-cron for self-hosted) runs nightly per installation. For each window (7d / 30d / 90d), aggregates `FindingDispositionRecord` rows into a single `InstallationFPInsight` row carrying: `totalFindingsSurfaced`, `disputeRate`, `perCategory`, `topClusters[]` (via W10 token clustering), `perRepo`. Stored in a new `mergewatch-installation-fp-insights` table. All dashboard charts read exclusively from these rollups.
 

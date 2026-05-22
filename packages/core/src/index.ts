@@ -9,6 +9,7 @@ export type {
   IApiKeyStore,
   IMcpSessionStore,
   IFindingDispositionStore,
+  IFPInsightStore,
   FindingDispositionAttribution,
   ApiKeyRecord,
   McpSessionRecord,
@@ -150,6 +151,11 @@ export {
   pollAndRecordInlineReactions,
 } from './insights/disposition-writer.js';
 
+// ─── Insight rollup (FB-E) ─────────────────────────────────────────────────
+export { buildInsightFromDispositions, WINDOW_LENGTH_MS } from './insights/rollup.js';
+export { runInsightRollup } from './insights/run-rollup.js';
+export type { RollupStores, RollupRunResult } from './insights/run-rollup.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,
@@ -232,6 +238,7 @@ export type {
   CreateReviewInput,
   UpdateReviewInput,
   FindingDispositionRecord,
+  InstallationFPInsight,
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';

@@ -10,12 +10,21 @@ import type {
   InstallationItem, InstallationSettings,
   ReviewItem, ReviewStatus,
   FindingDispositionRecord,
+  InstallationFPInsight,
 } from '../types/db.js';
 
 export interface IInstallationStore {
   get(installationId: string, repoFullName: string): Promise<InstallationItem | null>;
   getSettings(installationId: string): Promise<InstallationSettings>;
   upsert(item: InstallationItem): Promise<void>;
+  /**
+   * FB-E — enumerate every distinct installation ID known to the store.
+   * Used by the nightly insight rollup to fan out across all
+   * installations. Returns an empty array when the underlying store is
+   * empty. No pagination — installation counts are bounded (low
+   * hundreds even at scale).
+   */
+  listInstallationIds(): Promise<string[]>;
 }
 
 export interface IReviewStore {
@@ -144,4 +153,24 @@ export interface IFindingDispositionStore {
     installationId: string,
     opts?: { limit?: number; cursor?: string },
   ): Promise<{ items: FindingDispositionRecord[]; nextCursor?: string }>;
+}
+
+// ─── FB-E — InstallationFPInsight rollup store ─────────────────────────────
+
+/**
+ * Persists the per-installation rolling-window FP insight rollups computed
+ * by the nightly job. Reads back to power the dashboard charts (FB-F..FB-J).
+ *
+ * Idempotent writes — `upsert` replaces the existing row for a given
+ * (installationId, window) tuple.
+ */
+export interface IFPInsightStore {
+  upsert(insight: InstallationFPInsight): Promise<void>;
+  get(installationId: string, window: InstallationFPInsight['window']): Promise<InstallationFPInsight | null>;
+  /**
+   * Read the full set of rolling-window rows for one installation —
+   * dashboard charts typically render all three windows side-by-side.
+   * Returns the rows in `window` order ('7d', '30d', '90d').
+   */
+  listByInstallation(installationId: string): Promise<InstallationFPInsight[]>;
 }

@@ -5,7 +5,7 @@
  * and loadInstallationSettings functions.
  */
 
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import type { IInstallationStore } from '@mergewatch/core';
 import type { InstallationItem, InstallationSettings } from '@mergewatch/core';
 import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS } from '@mergewatch/core';
@@ -61,5 +61,27 @@ export class DynamoInstallationStore implements IInstallationStore {
         Item: item,
       }),
     );
+  }
+
+  async listInstallationIds(): Promise<string[]> {
+    // ProjectionExpression keeps only the PK so the Scan is as cheap as
+    // possible. Page until LastEvaluatedKey is absent. Installation
+    // counts are bounded (low hundreds at scale) — a Scan beats a GSI
+    // for read cost on a once-a-day rollup workload.
+    const ids = new Set<string>();
+    let cursor: Record<string, unknown> | undefined;
+    do {
+      const resp = await this.client.send(new ScanCommand({
+        TableName: this.tableName,
+        ProjectionExpression: 'installationId',
+        ...(cursor ? { ExclusiveStartKey: cursor } : {}),
+      }));
+      for (const it of resp.Items ?? []) {
+        const id = it.installationId;
+        if (typeof id === 'string' || typeof id === 'number') ids.add(String(id));
+      }
+      cursor = resp.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (cursor);
+    return Array.from(ids);
   }
 }
