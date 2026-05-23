@@ -3,6 +3,7 @@ import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
   formatReviewComment, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
+  loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
   BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, mergeScoreToReviewEvent,
@@ -245,7 +246,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -525,7 +526,11 @@ export async function processReviewJob(
     // and (FP-G) probe the repo root for known linter marker files in parallel.
     // detectLinters performs at most one root-listing API call + one extra
     // pyproject.toml fetch on Python repos; both are bounded and best-effort.
-    const [conventionsResult, detectedLinters] = await Promise.all([
+    // FP-J L1 — fetch category dispute rates in parallel. The helper
+    // returns `{}` on every failure path (no rollup yet, store unwired,
+    // upstream-degraded), which is identical to "no down-weighting" in
+    // the verdict-tier softener — so the await is safe to bundle here.
+    const [conventionsResult, detectedLinters, categoryDisputeRates] = await Promise.all([
       fetchConventions(octokit, owner, repo, ref, config.conventions),
       detectLinters(octokit, owner, repo, ref).catch((err) => {
         // Fail-open by design: linter detection is best-effort and a
@@ -539,6 +544,7 @@ export async function processReviewJob(
         console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
         return [] as DetectedLinter[];
       }),
+      loadCategoryDisputeRates(deps.fpInsightStore, job.installationId),
     ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
@@ -577,6 +583,7 @@ export async function processReviewJob(
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
         detectedLinters,
+        categoryDisputeRates,
       },
       { llm: deps.llm },
     );
@@ -647,6 +654,7 @@ export async function processReviewJob(
       showDiagram: instSettings.summary?.diagram !== false,
       mergeScore: result.mergeScore,
       mergeScoreReason: result.mergeScoreReason,
+      disputeDisclosure: result.disputeDisclosure,
       commentFooter: instSettings.commentHeader || undefined,
       reviewDetailUrl: deps.dashboardBaseUrl
         ? `${deps.dashboardBaseUrl}/dashboard/reviews/${encodeURIComponent(repoFullName)}/${prNumberCommitSha}`

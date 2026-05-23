@@ -192,18 +192,26 @@ Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted find
 
 ---
 
-### FP-J — Verifier honours prior recommendations  ✅ SHIPPED (Layer 2 only)
+### FP-J — Verifier honours prior recommendations  ✅ SHIPPED
 
-**Where the gap lived:** on PR #169 round-2, MW directly contradicted its own round-1 advice. Round-1 said *"re-throw on `listInstallationIds` failure so CloudWatch alarms"*. I made that change. Round-2 then flagged the very same throw as a 🔴 Critical *"unhandled promise rejection"*. The verifier had no notion of prior recommendations being binding constraints on subsequent reviews. Filed as [#170](https://github.com/santthosh/mergewatch.ai/issues/170).
+**Where the gap lived (Layer 2):** on PR #169 round-2, MW directly contradicted its own round-1 advice. Round-1 said *"re-throw on `listInstallationIds` failure so CloudWatch alarms"*. I made that change. Round-2 then flagged the very same throw as a 🔴 Critical *"unhandled promise rejection"*. The verifier had no notion of prior recommendations being binding constraints on subsequent reviews. Filed as [#170](https://github.com/santthosh/mergewatch.ai/issues/170).
 
-**The fix (Layer 2 only — Layer 1 + Layer 3 still pending):**
+**Where the gap lived (Layer 1 + 3):** the verdict tier (`COMMENTED` vs `CHANGES_REQUESTED`) was dominated by the *presence* of any non-info finding, not by the *fraction* of findings that were historically accurate. A PR with 1 valid warning + 2 false ones flipped to `CHANGES_REQUESTED` even though the average finding accuracy was 33%. The fix was deferred until FB-A/FB-E accumulated production data — once the FP-feedback plan shipped (FB-A → FB-L), the counters were available to drive the verdict softener.
+
+**The fix (three layers — all shipped):**
 
 - **Layer 2** — the same prior-context block from FP-H L2 also lists prior **recommendations** (suggestions) from `previousFindings[].suggestion`. The verifier prompt gains an additional INVALID condition: *"the current finding contradicts a prior recommendation — if the prior review suggested X and X is now present, a current finding that critiques X MUST be dropped"*. The prior advice is binding for the duration of the PR. Same single prompt-extension surface as FP-H L2 — one verifier call, three new INVALID conditions, three failure modes collapsed into one mechanism.
-- **Layer 1** (use FB-A dispute-rate counters in `reconcileMergeScore`) — **deferred**. Logically blocked on FB-A/FB-E being live in production for several weeks so the counters accumulate. Will revisit after the FB-* bundle finishes and a few weeks of dispute data exists.
-- **Layer 3** (comment-footer disclosure of dispute-rate context) — **deferred**, depends on Layer 1.
+- **Layer 1** — `reconcileMergeScore` gains an optional `categoryDisputeRates: Record<string, number>` input projected from `InstallationFPInsight.perCategory` over the 30d window. When the orchestrator wants to BLOCK (score ≤ 2) AND more than half the action findings come from chronically-disputed categories (rate ≥ 0.75 AND surfacings ≥ 5), the verdict is softened to 3 (Review recommended / advisory). Same shape as the W7 unverified-criticals clamp, but driven by FB-A dispute counters rather than W2 verification verdicts. Pure deterministic scoring — no LLM calls, no prompt changes. `loadCategoryDisputeRates(insightStore, installationId)` is the read helper; both handlers (server + lambda) wire it into the existing parallel-fetches block alongside `fetchConventions` and `detectLinters`.
+- **Layer 3** — a transparent disclosure footer (`📊 N of M action findings are from a category disputed ≥ 75% of the time in this org's recent reviews…`) renders as a quiet `<sub>` line beneath the merge-score badge whenever at least one action finding's category qualifies — even when the tier didn't change. Gives reviewers context about *why* the verdict looks the way it does without auto-suppressing the findings themselves.
 
-**Code targets (final):** `packages/core/src/agents/prompts.ts` (FINDING_VERIFICATION_PROMPT — new INVALID condition; `buildVerifierPriorContext` lists prior suggestions), `packages/core/src/agents/reviewer.ts` (PreviousFinding widened with optional `suggestion`).
-**E2E target:** [E2E-51](./../e2e/RUNBOOK.md#e2e-51-fp-j--verifier-honours-prior-recommendations).
+Back-compat is total at every layer: absent `categoryDisputeRates` (fresh installation, no rollup yet, upstream-degraded read) → identical to pre-FP-J behaviour. The loader's `{}` default behaves as "no down-weighting" in the reconcile path, and the formatter's empty `disputeDisclosure` simply omits the footer.
+
+**Code targets (final):**
+- Layer 2: `packages/core/src/agents/prompts.ts` (FINDING_VERIFICATION_PROMPT — new INVALID condition; `buildVerifierPriorContext` lists prior suggestions), `packages/core/src/agents/reviewer.ts` (PreviousFinding widened with optional `suggestion`).
+- Layer 1: `packages/core/src/agents/reviewer.ts` (`reconcileMergeScore` extended with `categoryDisputeRates` input + dispute-aware softener tier; `ReviewPipelineOptions.categoryDisputeRates?` + `ReviewPipelineResult.disputeDisclosure?`), `packages/core/src/insights/dispute-rates.ts` (new — `loadCategoryDisputeRates` helper with `MIN_SURFACED = 5` filter), handler wiring in `packages/server/src/review-processor.ts` + `packages/lambda/src/handlers/review-agent.ts` (parallel-fetch alongside conventions + linters).
+- Layer 3: `packages/core/src/comment-formatter.ts` (FormatOptions gains `disputeDisclosure?` rendered as `<sub>` beneath the score line).
+
+**E2E targets:** [E2E-51](./../e2e/RUNBOOK.md#e2e-51-fp-j--verifier-honours-prior-recommendations) (Layer 2), [E2E-53](./../e2e/RUNBOOK.md#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) (Layer 1 + 3).
 
 ### FP-L — Propagate W2 verification to rendering surfaces  ✅ SHIPPED
 
@@ -237,7 +245,7 @@ Back-compat: a finding with `verification` absent is treated as a pre-W2 record 
 | **FP-G** | Linter-aware style agent | small | detection + prompt placeholder | ✅ SHIPPED |
 | **FP-H** | Anti-anchoring on prior findings (L1 + L2) | small | prompt extension + verifier ctx | ✅ SHIPPED |
 | **FP-I** | Verify suggestion-already-implemented (L1 + L2) | small | verifier prompt + structural helper | ✅ SHIPPED |
-| **FP-J** | Verifier honours prior recommendations | small (L2 only) | verifier prompt extension | ✅ SHIPPED (L2); L1+L3 pending FB-A data |
+| **FP-J** | Verifier honours prior recommendations + dispute-aware reconcile + disclosure | small (L2) + medium (L1 + L3) | verifier prompt + reconcile + formatter | ✅ SHIPPED (all 3 layers) |
 | **FP-L** | Propagate W2 verification tag to rendering surfaces | small | inline filter + comment-formatter split | ✅ SHIPPED |
 
 **Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / #163). **FP-H + FP-I + FP-J Layer 2** as a single follow-up bundle (#171). **FP-L** as a standalone PR (this PR) — pure rendering change, no prompt churn, isolated blast radius; tying it in with FP-K (verifier-extension) would have mixed prompt-and-render concerns in one diff.
