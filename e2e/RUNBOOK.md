@@ -170,10 +170,10 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
-| [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table-target) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) — **TARGET** | 2m | 60s | FB-H |
+| [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) | 2m | 60s | FB-H |
 | [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart-target) | Warnings dispute-rate vs criticals dispute-rate over time, with annotation when warnings exceed criticals × 1.5 for ≥ 2 weeks (FB-I) — **TARGET** | 2m | 60s | FB-I |
-| [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap-target) | Org dashboard renders a per-repo × time heatmap of dispute rate (FB-J) — **TARGET** | 2m | 60s | FB-J |
-| [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta-target) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a one-click `.mergewatch.yml` snippet suggestion (FB-K) — **TARGET** | 2m | 60s | FB-K |
+| [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J |
+| [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K |
 | [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
 | [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
 | [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
@@ -1692,9 +1692,11 @@ Branch: `fixture/43-dispute-by-agent`. Pre-seeded data with a mix of disputed ca
 
 ---
 
-### E2E-44: FB-H — Top recurring FP themes table — TARGET
+### E2E-44: FB-H — Top recurring FP themes table
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-H](./../docs/false-positive-feedback-plan.md#fb-h--top-recurring-fp-themes-table).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-H](./../docs/false-positive-feedback-plan.md#fb-h--top-recurring-fp-themes-table--shipped).
+
+**Note on shape**: drill-through link to a filtered reviews view is deferred (the `/reviews` route doesn't yet accept a `match-key` query param). For v1 the row is expandable inline; the drill-through link can land when the reviews-filter API is added.
 
 **Behavior (intended, once FB-H ships):** sortable table on the `/insights` route. Reads `InstallationFPInsight.topClusters` (top 10 by default). Columns: representative title, sigTokens (as chips), surfaceCount, disputeCount, disputeRate, lastSeen, "View findings" drill-through (links to `/reviews?match-key=<sample>`). This is the actionable surface — everything else contextualises this view.
 
@@ -1738,9 +1740,11 @@ Branch: `fixture/45-severity-shopping`. Pre-seed with a 4-week pattern where war
 
 ---
 
-### E2E-46: FB-J — Per-repo FP heatmap — TARGET
+### E2E-46: FB-J — Per-repo FP heatmap
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-J](./../docs/false-positive-feedback-plan.md#fb-j--per-repo-fp-heatmap-org-wide).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-J](./../docs/false-positive-feedback-plan.md#fb-j--per-repo-fp-heatmap-org-wide--shipped).
+
+**Note on shape**: original spec said grid of repos × time buckets with cell colour = disputeRate. v1 ships a *horizontal bar* heatmap (one row per repo, bar width = surfaceCount, bar colour = disputeRate). Same data, simpler layout — true time-series cells need per-day rollup buckets the FB-E job doesn't yet emit. Repos with &lt; 3 surfacings render at 40% opacity to avoid noisy single-event highlights.
 
 **Behavior (intended, once FB-J ships):** grid heatmap on the `/insights` route. Rows = repos (top 20 by surfacings, expandable). Columns = day or week buckets. Cell colour = disputeRate (cool → warm). Reads `InstallationFPInsight.perRepo` cross-rollup-window.
 
@@ -1761,9 +1765,11 @@ Branch: `fixture/46-repo-heatmap`. Pre-seed 5 repos with distinct dispute patter
 
 ---
 
-### E2E-47: FB-K — Suggest `.mergewatch.yml` rule CTA — TARGET
+### E2E-47: FB-K — Suggest `.mergewatch.yml` rule CTA
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-K](./../docs/false-positive-feedback-plan.md#fb-k--suggest-mergewatchyml-rule-cta).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-K](./../docs/false-positive-feedback-plan.md#fb-k--suggest-mergewatchyml-rule-cta--shipped).
+
+**Note on shape**: the auto-generated snippet uses `customStyleRules` as a **soft guard** rather than a hard ignore. The style agent gets a "be cautious" instruction; the cluster pattern still gets evaluated, just with higher evidence bar. Hard suppression (a future `ignoreFindings` config field) would be a separate workstream — `customStyleRules` is the existing surface that lets prompt-level guidance shape agent behaviour today.
 
 **Behavior (intended, once FB-K ships):** on any row in the FB-H themes table with `disputeRate > 80%` AND `surfaceCount ≥ 5`, a "Suggest ignore rule" CTA appears. Clicking expands an inline pane showing a pre-generated `.mergewatch.yml` snippet built from the cluster's sigTokens + categories. One-click copy. No auto-write to the repo — user pastes manually.
 
