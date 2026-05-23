@@ -261,6 +261,15 @@ Mark the finding INVALID (valid=false) when:
 - The finding's suggested fix is already what the code does.
 - The cited line does not contain the construct the finding describes and no nearby line does either.
 - (FP-I) The finding's \`Suggestion\` field proposes code that is ALREADY implemented in the cited region of the file. Examine the suggestion's code-shaped content (anything inside backticks or appearing as code) — if a substantive line (≥10 chars, whitespace-normalised) matches a line in the file within ±5 lines of the cited location, the suggestion is redundant and the finding must be dropped. A finding that recommends what's already there is the LLM having pattern-matched on the code shape without reading what the code does.
+- (FP-K) The cited code path goes through one of these KNOWN-SAFE ABSTRACTIONS and the finding alleges the very threat that abstraction neutralises:
+  • **ORM query builders** (Drizzle \`eq()\` / \`and()\` / \`or()\` / \`inArray()\`, Prisma's \`where: {...}\`, Sequelize \`Op.eq\`, Knex \`.where(col, val)\`, TypeORM repository methods) — these parameterize ALL values. A finding alleging "SQL injection" / "NoSQL injection" / "command injection" on a value passed through one of these is INVALID.
+  • **AWS SDK ExpressionAttributeValues placeholders** (DynamoDB \`:foo\` syntax with the value in the \`ExpressionAttributeValues\` map, or \`ExpressionAttributeNames\` for keys) — these parameterize ALL values. A finding alleging "injection" via a value that arrives through one of these is INVALID.
+  • **\`encodeURIComponent\` on URL construction** — encodes every special character. A finding alleging "URL injection" / "SSRF via crafted URL" / "open redirect" on a value passed through \`encodeURIComponent\` BEFORE concatenation into the URL string is INVALID.
+  • **React JSX text rendering** (\`{x}\` inside JSX, no \`dangerouslySetInnerHTML\` on the surrounding element) — auto-escapes HTML. A finding alleging "XSS via text content" on a value rendered through plain JSX interpolation is INVALID.
+  • **Prepared statements / parameterized SQL** — the canonical case. A finding alleging "SQL injection" on a value passed as a query parameter (NOT string-concatenated into the SQL text) is INVALID.
+  • **Provable arithmetic non-negativity** — when each subtracted term \`tᵢ\` is itself bounded by \`Math.min(…, remaining_at_step_i)\` so the chain \`a - t₁ - t₂ - … - tₙ\` is non-negative by induction, a finding alleging "could go negative" is INVALID.
+
+  Fail-safe rule for FP-K: if you cannot tell from the provided file content whether the cited code path goes through one of these abstractions, treat the finding as VALID by default. Abstraction inference must NEVER false-negative a real defect — only drop the finding when the abstraction is unambiguously present on the cited path.
 
 ${PRIOR_CONTEXT_PLACEHOLDER}
 

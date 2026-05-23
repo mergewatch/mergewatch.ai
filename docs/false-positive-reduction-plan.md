@@ -213,6 +213,31 @@ Back-compat is total at every layer: absent `categoryDisputeRates` (fresh instal
 
 **E2E targets:** [E2E-51](./../e2e/RUNBOOK.md#e2e-51-fp-j--verifier-honours-prior-recommendations) (Layer 2), [E2E-53](./../e2e/RUNBOOK.md#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) (Layer 1 + 3).
 
+### FP-K — Abstraction-aware verifier  ✅ SHIPPED
+
+**Where the gap lived:** on PR #172 round-1, **three of five findings were abstraction-blind hallucinations** — the model saw a generic code shape and emitted a canonical security/correctness finding without modelling the abstraction layers that already neutralised the threat:
+- *"SQL injection via unvalidated installation_id"* on a `Drizzle eq(table.col, val)` call site (ORM parameterizes the value)
+- *"URL injection via unvalidated installationId prop"* on a value already passed through `encodeURIComponent` (encodes every special character)
+- *"Potential negative value despite Math.max guard"* on `a - b - c - d` where each subtracted term was bounded by `Math.min(…, remaining)` (provably non-negative by induction)
+
+All three patterns share the same structure: the model has a strong prior that *"user-input-shaped code is risky"* but doesn't trace the data flow far enough to see the safety abstraction. This is **distinct from FP-H/I/J** (which target the post-fix re-review hallucination class) — those guards only activate when `previousFindings` is non-empty. **First-review abstraction-blind FPs slipped through.** Filed as [#173](https://github.com/santthosh/mergewatch.ai/issues/173).
+
+**The fix:** `FINDING_VERIFICATION_PROMPT` gains a new INVALID block listing **six known-safe abstractions** with concrete prompt-side guidance for each:
+
+1. ORM query builders — Drizzle `eq()` / `and()` / `or()` / `inArray()`, Prisma `where: {...}`, Sequelize `Op.eq`, Knex `.where(col, val)`, TypeORM repository methods
+2. AWS SDK `ExpressionAttributeValues` (DynamoDB `:foo` placeholder syntax)
+3. `encodeURIComponent` on URL construction
+4. React JSX text rendering (no `dangerouslySetInnerHTML`)
+5. Prepared statements / parameterized SQL
+6. Provable arithmetic non-negativity (chained `Math.min(…, remaining)` subtractions)
+
+The block ends with a **fail-safe rule**: *"If you cannot tell from the file content whether the cited code path goes through one of these abstractions, treat the finding as VALID by default — abstraction inference must NEVER false-negative a real defect."* The default for "can't tell" is intentionally biased toward VALID so we don't over-suppress when the model is uncertain. The verifier only drops findings when the abstraction is unambiguously present on the cited path.
+
+**Implementation shape:** static block, always present in the verifier prompt (shape #1 in the issue spec). The token bump is small relative to the file content the verifier already carries, and a static block doesn't need separate detection logic to decide when to inject. Renders on first reviews independently of the FP-H/J Layer 2 prior-context block — the two are stacked (FP-K reads before prior-context).
+
+**Code targets (final):** `packages/core/src/agents/prompts.ts` (`FINDING_VERIFICATION_PROMPT` — new INVALID block for FP-K).
+**E2E target:** [E2E-54](./../e2e/RUNBOOK.md#e2e-54-fp-k--abstraction-aware-verifier).
+
 ### FP-L — Propagate W2 verification to rendering surfaces  ✅ SHIPPED
 
 **Where the gap lived:** on PR #172 round-2, W2 tagged a critical as `verification: 'unverified'` and W7 correctly clamped the merge score to 3 (advisory) — but **three other rendering surfaces still shouted "🔴 CRITICAL"**: the inline review comment at the cited line, the "Requires your attention" action-items table at the top of the review comment, and the "🔴 Critical (N)" detailed section in the middle. The reviewer experience was schizophrenic: the formal verdict said *"Downgraded to advisory — the PR is not blocked on unverified concerns"* while three of the five visual surfaces (and the most-disruptive one — the inline comment that fires a GitHub notification) looked blocking.
@@ -246,6 +271,7 @@ Back-compat: a finding with `verification` absent is treated as a pre-W2 record 
 | **FP-H** | Anti-anchoring on prior findings (L1 + L2) | small | prompt extension + verifier ctx | ✅ SHIPPED |
 | **FP-I** | Verify suggestion-already-implemented (L1 + L2) | small | verifier prompt + structural helper | ✅ SHIPPED |
 | **FP-J** | Verifier honours prior recommendations + dispute-aware reconcile + disclosure | small (L2) + medium (L1 + L3) | verifier prompt + reconcile + formatter | ✅ SHIPPED (all 3 layers) |
+| **FP-K** | Abstraction-aware verifier (drop "X injection" on known-safe abstractions) | small | verifier prompt extension | ✅ SHIPPED |
 | **FP-L** | Propagate W2 verification tag to rendering surfaces | small | inline filter + comment-formatter split | ✅ SHIPPED |
 
 **Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / #163). **FP-H + FP-I + FP-J Layer 2** as a single follow-up bundle (#171). **FP-L** as a standalone PR (this PR) — pure rendering change, no prompt churn, isolated blast radius; tying it in with FP-K (verifier-extension) would have mixed prompt-and-render concerns in one diff.
