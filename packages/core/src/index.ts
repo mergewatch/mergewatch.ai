@@ -77,6 +77,8 @@ export {
   CONVENTIONS_PLACEHOLDER,
   LINTER_AWARE_PLACEHOLDER,
   buildLinterAwareDirective,
+  KNOWN_FP_PATTERNS_PLACEHOLDER,
+  buildKnownFPPatternsDirective,
   PRIOR_CONTEXT_PLACEHOLDER,
   buildVerifierPriorContext,
   RESPOND_PROMPT,
@@ -87,6 +89,7 @@ export {
   AGENT_MODE_SUFFIX,
   AGENT_MODE_PLACEHOLDER,
 } from './agents/prompts.js';
+export type { KnownFPPattern } from './agents/prompts.js';
 
 // ─── GitHub client (portable Octokit ops) ───────────────────────────────────
 export {
@@ -159,12 +162,19 @@ export { buildInsightFromDispositions, WINDOW_LENGTH_MS } from './insights/rollu
 export { runInsightRollup } from './insights/run-rollup.js';
 export type { RollupStores, RollupRunResult } from './insights/run-rollup.js';
 
+// ─── Known-FP patterns loader (FB-L) ───────────────────────────────────────
+export { loadKnownFPPatterns } from './insights/known-fp-patterns.js';
+export type { FetchKnownFPPatternsOptions } from './insights/known-fp-patterns.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,
   DEFAULT_UX_CONFIG,
   DEFAULT_RULES_CONFIG,
   DEFAULT_AGENT_REVIEW_CONFIG,
+  DEFAULT_KNOWN_FP_TOP_K,
+  DEFAULT_KNOWN_FP_MIN_SURFACE_COUNT,
+  DEFAULT_KNOWN_FP_MIN_DISPUTE_RATE,
   PASS_THRESHOLDS,
   mergeConfig,
 } from './config/defaults.js';
@@ -175,6 +185,7 @@ export type {
   RulesConfig,
   AgentReviewConfig,
   AgentReviewDetectionConfig,
+  FeedbackConfig,
   PassThreshold,
 } from './config/defaults.js';
 export {

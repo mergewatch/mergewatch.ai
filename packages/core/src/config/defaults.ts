@@ -180,6 +180,48 @@ export interface MergeWatchConfig {
   pricing?: Record<string, { inputPer1M: number; outputPer1M: number }>;
   /** Agent-authored PR detection + strict-mode review settings */
   agentReview?: AgentReviewConfig;
+  /**
+   * FB-L — opt-in feedback-loop integration. When enabled, the dashboard's
+   * top disputed clusters (from the FB-E rollup) are injected into the
+   * finding-producing agents' prompts as "be cautious about these
+   * patterns" guidance. Off by default; an org explicitly opts in via
+   * .mergewatch.yml. See FeedbackConfig for thresholds.
+   */
+  feedback?: FeedbackConfig;
+}
+
+/**
+ * FB-L — feedback-loop integration. Controls whether (and how aggressively)
+ * the dashboard's disputed-cluster signal flows back into the agent prompts.
+ *
+ * Safety bias: all knobs lean conservative. The defaults below mean "only
+ * patterns disputed at high rate AND with enough sample size make it into
+ * the prompt", capping at 5 patterns so the prompt doesn't bloat.
+ */
+export interface FeedbackConfig {
+  /**
+   * Master switch. When false (the default), the
+   * `{{KNOWN_FP_PATTERNS}}` placeholder is stripped from every finding-
+   * producing agent's prompt — prompts are byte-identical to the
+   * pre-FB-L shape. When true, the handler reads the FB-E rollup and
+   * injects qualifying clusters.
+   */
+  learnFromDisputes: boolean;
+
+  /** Max number of clusters injected into each agent prompt. Default 5. */
+  knownFPPatternsTopK?: number;
+
+  /**
+   * Minimum surfaceCount for a cluster to qualify. Default 5 — keeps
+   * single-event noise out of the prompt.
+   */
+  knownFPPatternsMinSurfaceCount?: number;
+
+  /**
+   * Minimum disputeRate for a cluster to qualify (0–1). Default 0.75 —
+   * only patterns disputed at high rate flow through.
+   */
+  knownFPPatternsMinDisputeRate?: number;
 }
 
 export const DEFAULT_CONFIG: MergeWatchConfig = {
@@ -217,7 +259,15 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
   customAgents: [],
   ux: { ...DEFAULT_UX_CONFIG },
   rules: { ...DEFAULT_RULES_CONFIG },
+  // FB-L — off by default. Orgs opt in via .mergewatch.yml when they
+  // want the disputed-cluster signal to shape future review prompts.
+  feedback: { learnFromDisputes: false },
 };
+
+/** Default thresholds for the FB-L injection — locked in the plan doc. */
+export const DEFAULT_KNOWN_FP_TOP_K = 5;
+export const DEFAULT_KNOWN_FP_MIN_SURFACE_COUNT = 5;
+export const DEFAULT_KNOWN_FP_MIN_DISPUTE_RATE = 0.75;
 
 /**
  * Merges a partial user config (from .mergewatch.yml / DynamoDB) with defaults.

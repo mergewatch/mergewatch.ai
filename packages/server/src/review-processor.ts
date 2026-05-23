@@ -14,6 +14,7 @@ import {
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
   recordFindingSurfacings, recordDisputes, detectQuietDrops, recordQuietDrops,
   pollAndRecordInlineReactions,
+  loadKnownFPPatterns,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -245,7 +246,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -525,7 +526,7 @@ export async function processReviewJob(
     // and (FP-G) probe the repo root for known linter marker files in parallel.
     // detectLinters performs at most one root-listing API call + one extra
     // pyproject.toml fetch on Python repos; both are bounded and best-effort.
-    const [conventionsResult, detectedLinters] = await Promise.all([
+    const [conventionsResult, detectedLinters, knownFPPatterns] = await Promise.all([
       fetchConventions(octokit, owner, repo, ref, config.conventions),
       detectLinters(octokit, owner, repo, ref).catch((err) => {
         // Fail-open by design: linter detection is best-effort and a
@@ -539,12 +540,20 @@ export async function processReviewJob(
         console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
         return [] as DetectedLinter[];
       }),
+      // FB-L — load org's top disputed clusters when opted in. No-op
+      // (returns []) when `feedback.learnFromDisputes` is false (default)
+      // OR the store isn't wired OR the rollup has no qualifying clusters
+      // yet. Best-effort: store errors caught + logged inside the helper.
+      loadKnownFPPatterns(deps.fpInsightStore, installationId, { feedback: config.feedback }),
     ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
     }
     if (detectedLinters.length > 0) {
       console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
+    }
+    if (knownFPPatterns.length > 0) {
+      console.log('[fb-l] injected %d known-FP pattern%s', knownFPPatterns.length, knownFPPatterns.length === 1 ? '' : 's');
     }
 
     // Run review pipeline
@@ -577,6 +586,7 @@ export async function processReviewJob(
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
         detectedLinters,
+        knownFPPatterns,
       },
       { llm: deps.llm },
     );

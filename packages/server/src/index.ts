@@ -121,6 +121,7 @@ async function main() {
     installationStore,
     reviewStore,
     dispositionStore,
+    fpInsightStore,
     authProvider,
     llm,
     dashboardBaseUrl,

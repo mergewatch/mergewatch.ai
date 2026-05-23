@@ -63,7 +63,8 @@ import type {
 } from '@mergewatch/core';
 import { buildWorkDoneSection, computeReviewDelta } from '@mergewatch/core';
 import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
-import { DynamoReviewStore, DynamoFindingDispositionStore, DEFAULT_FINDING_DISPOSITIONS_TABLE } from '@mergewatch/storage-dynamo';
+import { DynamoReviewStore, DynamoFindingDispositionStore, DEFAULT_FINDING_DISPOSITIONS_TABLE, DynamoFPInsightStore, DEFAULT_FP_INSIGHTS_TABLE } from '@mergewatch/storage-dynamo';
+import { loadKnownFPPatterns } from '@mergewatch/core';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
@@ -75,6 +76,7 @@ const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const INSTALLATIONS_TABLE = process.env.INSTALLATIONS_TABLE ?? 'mergewatch-installations';
 const REVIEWS_TABLE = process.env.REVIEWS_TABLE ?? 'mergewatch-reviews';
 const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE;
+const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
 const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
@@ -83,6 +85,10 @@ const reviewStore = new DynamoReviewStore(dynamodb, REVIEWS_TABLE);
 // FB-A — per-finding cross-PR dispositions. Best-effort writes; if the
 // table doesn't exist yet (mid-deploy state) the store layer swallows.
 const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DISPOSITIONS_TABLE);
+// FB-L — read-only at review time; the nightly insights-rollup Lambda
+// writes here. Same instance powers both the cron (write) and the
+// review pipeline (read) paths.
+const fpInsightStore = new DynamoFPInsightStore(dynamodb, FP_INSIGHTS_TABLE);
 const llm = new BedrockLLMProvider();
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -640,7 +646,7 @@ export async function handler(
     // marker files in parallel. detectLinters performs at most one
     // root-listing API call + one extra pyproject.toml fetch on Python
     // repos; both are bounded and best-effort.
-    const [conventionsResult, detectedLinters] = await Promise.all([
+    const [conventionsResult, detectedLinters, knownFPPatterns] = await Promise.all([
       fetchConventions(octokit, owner, repo, headSha, runtimeConfig.conventions),
       detectLinters(octokit, owner, repo, headSha).catch((err) => {
         // Fail-open by design — see server/review-processor.ts for the
@@ -652,12 +658,18 @@ export async function handler(
         console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
         return [] as DetectedLinter[];
       }),
+      // FB-L — load org's top disputed clusters when opted in. No-op
+      // (returns []) when `feedback.learnFromDisputes` is false (default).
+      loadKnownFPPatterns(fpInsightStore, installationId, { feedback: runtimeConfig.feedback }),
     ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
     }
     if (detectedLinters.length > 0) {
       console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
+    }
+    if (knownFPPatterns.length > 0) {
+      console.log('[fb-l] injected %d known-FP pattern%s', knownFPPatterns.length, knownFPPatterns.length === 1 ? '' : 's');
     }
 
     const result = await runReviewPipeline({
@@ -687,6 +699,7 @@ export async function handler(
       conventions: conventionsResult?.content,
       agentAuthored: event.source === 'agent',
       detectedLinters,
+      knownFPPatterns,
     }, { llm });
 
     const reviewDetailUrl = `${DASHBOARD_BASE_URL}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;

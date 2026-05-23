@@ -174,7 +174,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart-target) | Warnings dispute-rate vs criticals dispute-rate over time, with annotation when warnings exceed criticals × 1.5 for ≥ 2 weeks (FB-I) — **TARGET** | 2m | 60s | FB-I |
 | [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J |
 | [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K |
-| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
+| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) | 3m | 90s | FB-L |
 | [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
 | [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
 | [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2 — Layer 1 + 3 pending FB-A data) | 2m | 60s | FP-J |
@@ -1792,9 +1792,9 @@ Branch: `fixture/47-suggest-rule`. Pre-seed a high-dispute-rate cluster (90% dis
 
 ---
 
-### E2E-48: FB-L — `{{KNOWN_FP_PATTERNS}}` prompt injection — TARGET
+### E2E-48: FB-L — `{{KNOWN_FP_PATTERNS}}` prompt injection
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-L](./../docs/false-positive-feedback-plan.md#fb-l--known_fp_patterns-prompt-injection-opt-in).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-L](./../docs/false-positive-feedback-plan.md#fb-l--known_fp_patterns-prompt-injection-opt-in--shipped).
 
 **Behavior (intended, once FB-L ships):** new placeholder `{{KNOWN_FP_PATTERNS}}` on every finding-producing agent prompt. **Off by default.** When the org has `feedback: { learnFromDisputes: true }` in `.mergewatch.yml`, the handler fetches the latest `InstallationFPInsight`, picks top-K clusters with `surfaceCount ≥ 5` AND `disputeRate ≥ 75%`, and renders them into a directive:
 

@@ -259,6 +259,63 @@ describe('runStyleAgent', () => {
     );
     expect(llm.calls[0].prompt).not.toContain('linters configured');
   });
+
+  // ─── FB-L — known-FP-patterns directive ──────────────────────────────────
+
+  it('FB-L — injects the known-FP-patterns directive when patterns are passed', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runSecurityAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      /* fileFetchOptions */ undefined,
+      /* tone */ undefined,
+      /* conventions */ undefined,
+      /* agentAuthored */ undefined,
+      /* knownFPPatterns */ [
+        { representativeTitle: 'Missing await on async X', sigTokens: ['missing', 'await', 'async'], rate: 0.87, surfaceCount: 12 },
+      ],
+    );
+    const prompt = llm.calls[0].prompt;
+    expect(prompt).toContain('In this organization the following finding patterns have been');
+    expect(prompt).toContain('Missing await on async X');
+    expect(prompt).toContain('disputed 87% of the time across 12 surfacings');
+    expect(prompt).toContain('sigTokens: missing, await, async');
+    expect(prompt).toContain('STRONG EVIDENCE');
+    expect(prompt).not.toContain('{{KNOWN_FP_PATTERNS}}');
+  });
+
+  it('FB-L — strips the placeholder when no patterns are passed (back-compat default)', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(llm.calls[0].prompt).not.toContain('{{KNOWN_FP_PATTERNS}}');
+    expect(llm.calls[0].prompt).not.toContain('have been explicitly disputed');
+  });
+
+  it('FB-L — strips the placeholder when an empty patterns list is passed', async () => {
+    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+    await runSecurityAgent(
+      sampleDiff, sampleContext, 'model-1', llm,
+      undefined, undefined, undefined, undefined,
+      /* knownFPPatterns */ [],
+    );
+    expect(llm.calls[0].prompt).not.toContain('have been explicitly disputed');
+  });
+
+  it('FB-L — injects into every finding-producing agent (security/bug/style/error/test/comment)', async () => {
+    const patterns = [{ representativeTitle: 'Test pattern', sigTokens: ['test'], rate: 0.9, surfaceCount: 10 }];
+    const agents: Array<[string, (llm: ReturnType<typeof createMockLLM>) => Promise<unknown>]> = [
+      ['security',  (llm) => runSecurityAgent(sampleDiff, sampleContext, 'm', llm, undefined, undefined, undefined, undefined, patterns)],
+      ['bug',       (llm) => runBugAgent(sampleDiff, sampleContext, 'm', llm, undefined, undefined, undefined, undefined, patterns)],
+      ['style',     (llm) => runStyleAgent(sampleDiff, sampleContext, 'm', llm, [], undefined, undefined, undefined, undefined, undefined, patterns)],
+      ['error',     (llm) => runErrorHandlingAgent(sampleDiff, sampleContext, 'm', llm, undefined, undefined, undefined, undefined, patterns)],
+      ['test',      (llm) => runTestCoverageAgent(sampleDiff, sampleContext, 'm', llm, undefined, undefined, undefined, undefined, patterns)],
+      ['comment',   (llm) => runCommentAccuracyAgent(sampleDiff, sampleContext, 'm', llm, undefined, undefined, undefined, undefined, patterns)],
+    ];
+    for (const [name, runFn] of agents) {
+      const llm = createMockLLM([JSON.stringify({ findings: [] })]);
+      await runFn(llm);
+      expect(llm.calls[0].prompt, `${name} agent`).toContain('Test pattern');
+    }
+  });
 });
 
 // ─── runSummaryAgent ────────────────────────────────────────────────────────

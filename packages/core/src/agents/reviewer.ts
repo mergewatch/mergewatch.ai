@@ -19,6 +19,9 @@ import {
   STYLE_REVIEWER_PROMPT,
   LINTER_AWARE_PLACEHOLDER,
   buildLinterAwareDirective,
+  KNOWN_FP_PATTERNS_PLACEHOLDER,
+  buildKnownFPPatternsDirective,
+  type KnownFPPattern,
   SUMMARY_PROMPT,
   DIAGRAM_PROMPT,
   PREVIOUS_DIAGRAM_PLACEHOLDER,
@@ -188,6 +191,7 @@ function buildPrompt(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): string {
   // Inject tone directive or strip placeholder
   const toneDirective = tone ? (TONE_DIRECTIVES[tone] ?? '') : '';
@@ -199,10 +203,22 @@ function buildPrompt(
   // Inject or strip the agent-mode block
   const withAgentMode = withConventions.replace(AGENT_MODE_PLACEHOLDER, buildAgentModeBlock(agentAuthored));
 
+  // FB-L — inject or strip the known-FP-patterns directive. The placeholder
+  // lives on every finding-producing agent prompt (security/bug/style/
+  // errorHandling/testCoverage/commentAccuracy + the custom-agent
+  // response format). Summary/diagram/etc. prompts don't carry it, so
+  // the replace is a no-op there. When `knownFPPatterns` is undefined
+  // or empty, the directive renders as '' and the placeholder strips —
+  // back-compat with the pre-FB-L prompt shape.
+  const withKnownFPPatterns = withAgentMode.replace(
+    KNOWN_FP_PATTERNS_PLACEHOLDER,
+    buildKnownFPPatternsDirective(knownFPPatterns ?? []),
+  );
+
   // Inject or strip the file request instruction placeholder
   const resolvedPrompt = agenticFetch
-    ? withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', FILE_REQUEST_INSTRUCTION)
-    : withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', '');
+    ? withKnownFPPatterns.replace('FILE_REQUEST_PLACEHOLDER', FILE_REQUEST_INSTRUCTION)
+    : withKnownFPPatterns.replace('FILE_REQUEST_PLACEHOLDER', '');
 
   const contextBlock = [
     `Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
@@ -276,8 +292,9 @@ export async function runSecurityAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
-  const prompt = buildPrompt(SECURITY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(SECURITY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -293,8 +310,9 @@ export async function runBugAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
-  const prompt = buildPrompt(BUG_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(BUG_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -312,6 +330,7 @@ export async function runStyleAgent(
   conventions?: string,
   agentAuthored?: boolean,
   detectedLinters?: readonly string[],
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
   let systemPrompt = STYLE_REVIEWER_PROMPT;
 
@@ -336,7 +355,7 @@ export async function runStyleAgent(
     buildLinterAwareDirective(detectedLinters ?? []),
   );
 
-  const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -765,8 +784,9 @@ export async function runErrorHandlingAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
-  const prompt = buildPrompt(ERROR_HANDLING_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(ERROR_HANDLING_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -782,8 +802,9 @@ export async function runTestCoverageAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
-  const prompt = buildPrompt(TEST_COVERAGE_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(TEST_COVERAGE_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -799,8 +820,9 @@ export async function runCommentAccuracyAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
-  const prompt = buildPrompt(COMMENT_ACCURACY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
+  const prompt = buildPrompt(COMMENT_ACCURACY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   return parsed.findings ?? [];
@@ -885,9 +907,10 @@ export async function runCustomAgent(
   fileFetchOptions?: FileFetchOptions,
   conventions?: string,
   agentAuthored?: boolean,
+  knownFPPatterns?: readonly KnownFPPattern[],
 ): Promise<AgentFinding[]> {
   const systemPrompt = `${agentDef.prompt}\n${CUSTOM_AGENT_RESPONSE_FORMAT}`;
-  const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
+  const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored, knownFPPatterns);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
   const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
   // Apply default severity if agent didn't specify
@@ -1114,6 +1137,17 @@ export interface ReviewPipelineOptions {
    * directive (back-compat: prompt is byte-identical to the pre-FP-G shape).
    */
   detectedLinters?: readonly string[];
+  /**
+   * FB-L — top disputed clusters from the latest `InstallationFPInsight`
+   * rollup. When non-empty, the `{{KNOWN_FP_PATTERNS}}` placeholder on
+   * every finding-producing agent's prompt is replaced with a "be
+   * cautious about these patterns — require strong evidence" directive.
+   * Empty/undefined → placeholder stripped, prompt byte-identical to
+   * the pre-FB-L shape. Opt-in via `.mergewatch.yml`
+   * `feedback.learnFromDisputes: true`; the handler is responsible for
+   * threshold filtering before passing patterns through here.
+   */
+  knownFPPatterns?: readonly KnownFPPattern[];
 }
 
 export interface ReviewPipelineResult {
@@ -1863,6 +1897,7 @@ export async function runReviewPipeline(
     conventions,
     agentAuthored,
     detectedLinters,
+    knownFPPatterns,
   } = options;
 
   // Wrap the LLM provider to track token usage across all agents
@@ -1884,22 +1919,22 @@ export async function runReviewPipeline(
     summary, diagramResult,
   ] = await withConcurrency<AgentFinding[] | string | DiagramResult>([
     () => enabledAgents.security
-      ? runSecurityAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runSecurityAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.bugs
-      ? runBugAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runBugAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.style
-      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, detectedLinters)
+      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, detectedLinters, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.errorHandling
-      ? runErrorHandlingAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runErrorHandlingAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.testCoverage
-      ? runTestCoverageAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runTestCoverageAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.commentAccuracy
-      ? runCommentAccuracyAgent(diff, context, lightModelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runCommentAccuracyAgent(diff, context, lightModelId, llm, fileFetchOptions, tone, conventions, agentAuthored, knownFPPatterns)
       : Promise.resolve([]),
     () => enabledAgents.summary
       ? runSummaryAgent(diff, context, lightModelId, llm, conventions, agentAuthored)
@@ -1918,7 +1953,7 @@ export async function runReviewPipeline(
   const customResults = enabledCustomAgents.length > 0
     ? await withConcurrency<AgentFinding[]>(
         enabledCustomAgents.map((agentDef) => () =>
-          runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored)
+          runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored, knownFPPatterns)
             .catch((err) => {
               console.warn(`Custom agent "${agentDef.name}" failed:`, err);
               return [] as AgentFinding[];

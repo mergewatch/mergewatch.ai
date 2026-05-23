@@ -281,7 +281,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-L — `{{KNOWN_FP_PATTERNS}}` prompt injection (opt-in)
+### FB-L — `{{KNOWN_FP_PATTERNS}}` prompt injection (opt-in)  ✅ SHIPPED
 
 **Where the gap lives:** The strongest closed-loop signal — top disputed clusters — never makes it back into the review pipeline. Every review starts fresh.
 
@@ -315,7 +315,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-I** | Severity-shopping detector | Surface | S | FB-G | ⏸ DEFERRED (needs severity on dispositions) |
 | **FB-J** | Per-repo FP heatmap | Surface | M | FB-E | ✅ SHIPPED (bar v1; grid pending per-day rollup) |
 | **FB-K** | Suggest `.mergewatch.yml` rule CTA | Surface | M | FB-H | ✅ SHIPPED (customStyleRules soft-guard v1) |
-| **FB-L** | `{{KNOWN_FP_PATTERNS}}` prompt injection | Learn | L | FB-E, FB-H | ★★★ (opt-in) |
+| **FB-L** | `{{KNOWN_FP_PATTERNS}}` prompt injection | Learn | L | FB-E, FB-H | ✅ SHIPPED (opt-in) |
 
 **Recommended bundling:**
 
