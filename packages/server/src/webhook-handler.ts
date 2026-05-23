@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
@@ -12,6 +12,13 @@ export interface WebhookDeps {
   /** FB-A — optional disposition store. Best-effort: when unset, writes are
    *  no-ops and the review pipeline runs unchanged. */
   dispositionStore?: IFindingDispositionStore;
+  /**
+   * FP-J L1 — optional FP-insight store. Read-only on the review path; the
+   * processor projects `perCategory` rates into the verdict-tier softener.
+   * When unset (or empty rollup), the verdict tier behaves identically to
+   * the pre-FP-J shape — no down-weighting.
+   */
+  fpInsightStore?: IFPInsightStore;
   authProvider: IGitHubAuthProvider;
   llm: ILLMProvider;
   dashboardBaseUrl: string;

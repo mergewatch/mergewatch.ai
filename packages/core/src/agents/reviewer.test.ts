@@ -2154,14 +2154,21 @@ describe('buildPreviousFindingsBlock — FP-H L1 anti-anchoring counter-instruct
 
 describe('reconcileMergeScore', () => {
   // Minimal helpers — only the fields the function reads.
-  function critical(over: Partial<AgentFinding> & { verification?: 'verified' | 'unverified' } = {}) {
+  // FP-J L1 reads `category` on the finding (which lives on
+  // OrchestratedFinding, not the narrower AgentFinding), so the override
+  // type widens to include it.
+  type ReconcileFindingOverrides = Partial<AgentFinding> & {
+    category?: string;
+    verification?: 'verified' | 'unverified';
+  };
+  function critical(over: ReconcileFindingOverrides = {}) {
     return {
       file: 'a.ts', line: 1, severity: 'critical' as const,
       category: 'security', title: 'X', description: '', suggestion: '',
       ...over,
     };
   }
-  function warning(over: Partial<AgentFinding> = {}) {
+  function warning(over: ReconcileFindingOverrides = {}) {
     return {
       file: 'a.ts', line: 1, severity: 'warning' as const,
       category: 'style', title: 'W', description: '', suggestion: '',
@@ -2258,5 +2265,131 @@ describe('reconcileMergeScore', () => {
     });
     expect(r.mergeScore).toBeGreaterThanOrEqual(3);
     expect(r.mergeScoreReason).toMatch(/net improvement/);
+  });
+
+  // ─── FP-J L1 — dispute-aware verdict softening ────────────────────────
+  describe('FP-J L1 — categoryDisputeRates', () => {
+    it('back-compat: absent categoryDisputeRates behaves identically to today (orchestrator score stands)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning({ category: 'style' }), warning({ category: 'style' })],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'red',
+      });
+      expect(r.mergeScore).toBe(2);
+      expect(r.disputeDisclosure).toBeUndefined();
+    });
+
+    it('empty categoryDisputeRates behaves identically to absent', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning({ category: 'style' })],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'red',
+        categoryDisputeRates: {},
+      });
+      expect(r.mergeScore).toBe(2);
+      expect(r.disputeDisclosure).toBeUndefined();
+    });
+
+    it('clamps red verdict (orchestratorScore=2) to 3 when MORE THAN HALF of action findings are from a chronically-disputed category', () => {
+      // 3 style warnings out of 3 — all from a 90% disputed category.
+      const r = reconcileMergeScore({
+        filteredFindings: [
+          warning({ category: 'style' }),
+          warning({ category: 'style' }),
+          warning({ category: 'style' }),
+        ],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'three style warnings',
+        categoryDisputeRates: { style: 0.9 },
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toMatch(/historically noisy|disputed/);
+      expect(r.disputeDisclosure).toBeDefined();
+      expect(r.disputeDisclosure).toMatch(/3 of 3 action findings/);
+    });
+
+    it('does NOT clamp when EXACTLY half of action findings are from disputed categories (strict majority required)', () => {
+      // 1 style (disputed) + 1 security (not disputed) → 50%, not a majority.
+      const r = reconcileMergeScore({
+        filteredFindings: [
+          warning({ category: 'style' }),
+          warning({ category: 'security' }),
+        ],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'two warnings',
+        categoryDisputeRates: { style: 0.9 },
+      });
+      expect(r.mergeScore).toBe(2);
+      // Disclosure still fires because at least one finding qualified.
+      expect(r.disputeDisclosure).toMatch(/1 of 2 action findings/);
+    });
+
+    it('does NOT clamp when orchestrator score is already ≥3 (softening only fires on the would-have-been-red path)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning({ category: 'style' }), warning({ category: 'style' })],
+        previousFindings: undefined,
+        orchestratorScore: 3, orchestratorReason: 'yellow',
+        categoryDisputeRates: { style: 0.9 },
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toBe('yellow'); // orchestrator reason preserved
+      // Disclosure still fires on the qualified-but-not-clamped path.
+      expect(r.disputeDisclosure).toBeDefined();
+    });
+
+    it('does NOT count a category whose rate is BELOW the 0.75 threshold', () => {
+      // 2 style warnings @ 0.5 dispute rate — below threshold.
+      const r = reconcileMergeScore({
+        filteredFindings: [warning({ category: 'style' }), warning({ category: 'style' })],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'red',
+        categoryDisputeRates: { style: 0.5 },
+      });
+      expect(r.mergeScore).toBe(2);
+      expect(r.disputeDisclosure).toBeUndefined();
+    });
+
+    it('disclosure fires WITHOUT clamping when a minority of findings are from disputed categories', () => {
+      // 1 of 3 from disputed category → no clamp, but disclose context.
+      const r = reconcileMergeScore({
+        filteredFindings: [
+          warning({ category: 'style' }),
+          warning({ category: 'security' }),
+          warning({ category: 'bug' }),
+        ],
+        previousFindings: undefined,
+        orchestratorScore: 2, orchestratorReason: 'three warnings',
+        categoryDisputeRates: { style: 0.9 },
+      });
+      expect(r.mergeScore).toBe(2); // not clamped (1/3 is not majority)
+      expect(r.disputeDisclosure).toMatch(/1 of 3 action findings is from a category/);
+    });
+
+    it('W7 unverified-criticals clamp still fires alongside FP-J L1 (both produce mergeScore=3 with W7\'s reason taking precedence)', () => {
+      // W7 path is checked BEFORE FP-J L1; reason text should be W7's.
+      const r = reconcileMergeScore({
+        filteredFindings: [
+          critical({ category: 'security', verification: 'unverified' }),
+        ],
+        previousFindings: undefined,
+        orchestratorScore: 1, orchestratorReason: 'one unverified critical',
+        categoryDisputeRates: { security: 0.9 },
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toMatch(/could not be confirmed|verification inconclusive/i);
+      // Disclosure rides along (different signal, same surface).
+      expect(r.disputeDisclosure).toBeDefined();
+    });
+
+    it('disclosure is omitted from the no-action-items path (nothing to disclose about)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 5, orchestratorReason: 'clean',
+        categoryDisputeRates: { style: 0.9 },
+      });
+      expect(r.mergeScore).toBe(5);
+      expect(r.disputeDisclosure).toBeUndefined();
+    });
   });
 });

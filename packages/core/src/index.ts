@@ -159,6 +159,9 @@ export { buildInsightFromDispositions, WINDOW_LENGTH_MS } from './insights/rollu
 export { runInsightRollup } from './insights/run-rollup.js';
 export type { RollupStores, RollupRunResult } from './insights/run-rollup.js';
 
+// ─── Dispute-rate loader (FP-J L1) ─────────────────────────────────────────
+export { loadCategoryDisputeRates } from './insights/dispute-rates.js';
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 export {
   DEFAULT_CONFIG,

@@ -348,6 +348,59 @@ describe('formatReviewComment', () => {
       expect(result).toContain('Requires your attention');
     });
   });
+
+  // ─── FP-J L3 — dispute-rate disclosure ─────────────────────────────────
+  describe('FP-J L3 disputeDisclosure', () => {
+    it('renders the disclosure as a quieter sub-line beneath the merge-score badge', () => {
+      const result = formatReviewComment(baseOptions({
+        mergeScore: 3,
+        mergeScoreReason: 'Review recommended',
+        disputeDisclosure: '2 of 3 action findings are from a category disputed ≥ 75% of the time',
+      }));
+      expect(result).toContain('📊');
+      expect(result).toContain('2 of 3 action findings');
+      // The disclosure renders inside a <sub> wrapper so it visually defers to the verdict
+      expect(result).toMatch(/<sub>.*📊.*<\/sub>/);
+    });
+
+    it('renders BELOW the merge-score line', () => {
+      const result = formatReviewComment(baseOptions({
+        mergeScore: 3,
+        mergeScoreReason: 'Review recommended',
+        disputeDisclosure: 'historically noisy categories',
+      }));
+      const scoreIdx = result.indexOf('Review recommended');
+      const disclosureIdx = result.indexOf('historically noisy');
+      expect(scoreIdx).toBeGreaterThan(-1);
+      expect(disclosureIdx).toBeGreaterThan(scoreIdx);
+    });
+
+    it('omits the disclosure entirely when disputeDisclosure is undefined', () => {
+      const result = formatReviewComment(baseOptions({
+        mergeScore: 3,
+        mergeScoreReason: 'Review recommended',
+      }));
+      expect(result).not.toContain('📊');
+    });
+
+    it('omits the disclosure when disputeDisclosure is empty whitespace', () => {
+      const result = formatReviewComment(baseOptions({
+        mergeScore: 3,
+        mergeScoreReason: 'Review recommended',
+        disputeDisclosure: '   ',
+      }));
+      expect(result).not.toContain('📊');
+    });
+
+    it('does NOT render the disclosure when mergeScore itself is omitted (the score line is the anchor)', () => {
+      // Without a merge score, there's no badge to anchor the disclosure under
+      // — skip rendering rather than dangle the sub-line.
+      const result = formatReviewComment(baseOptions({
+        disputeDisclosure: 'something',
+      }));
+      expect(result).not.toContain('📊');
+    });
+  });
 });
 
 describe('buildWorkDoneSection', () => {

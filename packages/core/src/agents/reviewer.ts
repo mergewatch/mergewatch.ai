@@ -1114,6 +1114,17 @@ export interface ReviewPipelineOptions {
    * directive (back-compat: prompt is byte-identical to the pre-FP-G shape).
    */
   detectedLinters?: readonly string[];
+
+  /**
+   * FP-J L1 — per-category historical dispute rate, derived from FB-E's
+   * `InstallationFPInsight.perCategory.rate` over the 30d rolling window.
+   * Passed through to `reconcileMergeScore` so the verdict tier can soften
+   * when most action findings come from chronically-disputed categories.
+   *
+   * The handler is responsible for filtering by `surfaceCount >= 5`
+   * before passing in. Absent / empty → no down-weighting (back-compat).
+   */
+  categoryDisputeRates?: Record<string, number>;
 }
 
 export interface ReviewPipelineResult {
@@ -1125,6 +1136,15 @@ export interface ReviewPipelineResult {
   diagramCaption: string;
   mergeScore: number;
   mergeScoreReason: string;
+  /**
+   * FP-J L3 — transparent footer text disclosing the dispute-rate context
+   * when one or more action findings come from chronically-disputed
+   * categories. Present when at least one action finding's category has
+   * `disputeRate >= 0.75` (FP-J L1 threshold); absent otherwise. Renders
+   * as a small annotation beneath the merge-score badge in the review
+   * comment. Does NOT change the verdict — purely contextual disclosure.
+   */
+  disputeDisclosure?: string;
   /** Number of findings suppressed by the orchestrator (deduplication + filtering) */
   suppressedCount: number;
   /** Number of enabled agents that ran */
@@ -1748,6 +1768,25 @@ function withCodeFingerprints<T extends OrchestratedFinding>(
 }
 
 /**
+ * FP-J L1 — minimum surfacing count for a category's dispute rate to be
+ * actionable in the verdict-tier softening. A category with 1 surfacing and
+ * 1 dispute reads as 100% disputed but is statistically unreliable; the
+ * floor matches FB-L's `surfaceCount >= 5` qualifier so both downstream
+ * uses (prompt injection + verdict softening) operate on the same trust
+ * threshold.
+ */
+const DISPUTE_RATE_MIN_SURFACED = 5;
+
+/**
+ * FP-J L1 — a category is considered "chronically disputed" when its rate
+ * meets or exceeds this fraction (and clears the min-surfaced floor above).
+ * 0.75 mirrors FB-L's threshold so both surfaces (verdict softening + the
+ * known-FP-patterns prompt directive) treat the same shape as "actionable
+ * dispute evidence" rather than "noisy single-event".
+ */
+const DISPUTE_RATE_HIGH_THRESHOLD = 0.75;
+
+/**
  * Reconcile the orchestrator's raw 1–5 score with the post-grounding /
  * post-line-filter / post-triage finding set. Pure function — extracted
  * from runReviewPipeline so the tiered scoring rules are directly
@@ -1768,15 +1807,45 @@ function withCodeFingerprints<T extends OrchestratedFinding>(
  *      one) still hit the orchestrator's full score (which can be ≤2).
  *      Back-compat: an absent `verification` field is treated as "W2
  *      didn't run on this finding" and does NOT trigger the clamp.
- *   5. **Default** → orchestrator's raw score (can be red).
+ *   5. **FP-J L1 — dispute-aware verdict softening** → 3 (clamped from
+ *      ≤2). When `categoryDisputeRates` is provided (via FB-A counters
+ *      aggregated through FB-E's rollup), action findings whose category
+ *      has been chronically disputed in this org get less weight. If
+ *      MORE than half of the action findings come from chronically-
+ *      disputed categories (rate ≥ 0.75 AND ≥ 5 surfacings), the verdict
+ *      tier softens from CHANGES_REQUESTED → COMMENTED. The orchestrator
+ *      score isn't lowered (the findings still surface) — only the
+ *      blocking-tier signal is calibrated against historical accuracy.
+ *      Back-compat: absent or empty `categoryDisputeRates` is identical
+ *      to today.
+ *   6. **Default** → orchestrator's raw score (can be red).
+ *
+ * `disputeDisclosure` (FP-J L3) is set whenever the L1 clamp engaged OR
+ * the action-finding set contains any chronically-disputed category —
+ * even if the tier didn't change. Gives the reviewer transparent context
+ * about WHY the verdict looks the way it does, without auto-suppressing
+ * the findings themselves.
  */
 export function reconcileMergeScore(input: {
   filteredFindings: OrchestratedFinding[];
   previousFindings: PreviousFinding[] | undefined;
   orchestratorScore: number;
   orchestratorReason: string;
-}): { mergeScore: number; mergeScoreReason: string } {
-  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason } = input;
+  /**
+   * FP-J L1 — historical dispute rate per finding `category` (security /
+   * bug / style / errorHandling / testCoverage / commentAccuracy / custom),
+   * derived from FB-E's `InstallationFPInsight.perCategory.rate` over the
+   * 30d rolling window. The handler is responsible for filtering by
+   * `surfaceCount >= DISPUTE_RATE_MIN_SURFACED` before passing in — every
+   * key present here is assumed to clear the threshold.
+   *
+   * Absent / empty → no down-weighting (back-compat with installations
+   * that lack accumulated dispute data, or with the SaaS path before
+   * Lambda wires the FP-insight store).
+   */
+  categoryDisputeRates?: Record<string, number>;
+}): { mergeScore: number; mergeScoreReason: string; disputeDisclosure?: string } {
+  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason, categoryDisputeRates } = input;
 
   const actionFindings = filteredFindings.filter(
     (f) => f.severity === 'critical' || f.severity === 'warning',
@@ -1806,6 +1875,21 @@ export function reconcileMergeScore(input: {
   const allCriticalsUnverified =
     currentCriticals.length > 0 && !hasAnyConfirmedOrUntaggedCritical;
 
+  // FP-J L1 — count action findings whose category is chronically disputed
+  // in this org. The handler has already filtered `categoryDisputeRates` to
+  // keys clearing DISPUTE_RATE_MIN_SURFACED, so any rate present here is
+  // statistically meaningful. The disclosure (L3) reuses this count
+  // regardless of whether the tier shifts.
+  const highDisputeActionCount = actionFindings.filter((f) => {
+    const rate = categoryDisputeRates?.[f.category];
+    return rate !== undefined && rate >= DISPUTE_RATE_HIGH_THRESHOLD;
+  }).length;
+  const highDisputeMajority =
+    actionFindings.length > 0 && highDisputeActionCount > actionFindings.length / 2;
+  const disputeDisclosure = highDisputeActionCount > 0
+    ? `${highDisputeActionCount} of ${actionFindings.length} action finding${actionFindings.length === 1 ? '' : 's'} ${highDisputeActionCount === 1 ? 'is' : 'are'} from a category disputed ≥ ${Math.round(DISPUTE_RATE_HIGH_THRESHOLD * 100)}% of the time in this org's recent reviews — the verdict tier reflects that historical accuracy.`
+    : undefined;
+
   if (noActionItems) {
     return {
       mergeScore: 5,
@@ -1818,12 +1902,14 @@ export function reconcileMergeScore(input: {
     return {
       mergeScore: Math.max(4, orchestratorScore),
       mergeScoreReason: `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review, no new criticals introduced.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
     };
   }
   if (isNetSecurityImprovement) {
     return {
       mergeScore: Math.max(3, orchestratorScore),
       mergeScoreReason: `Resolved ${resolvedCriticals} critical issue${resolvedCriticals === 1 ? '' : 's'} from prior review; introduced ${newCriticals} new — net improvement, but review the new findings.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
     };
   }
   if (allCriticalsUnverified && orchestratorScore <= 2) {
@@ -1831,9 +1917,26 @@ export function reconcileMergeScore(input: {
     return {
       mergeScore: 3,
       mergeScoreReason: `${n} critical finding${n === 1 ? '' : 's'} could not be confirmed against the source (W2 verification inconclusive). Downgraded to advisory — review carefully, but the PR is not blocked on unverified concerns.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
     };
   }
-  return { mergeScore: orchestratorScore, mergeScoreReason: orchestratorReason };
+  // FP-J L1 — dispute-aware softening. Only kicks in when the orchestrator
+  // wanted to BLOCK (score ≤ 2) AND the majority of action findings come
+  // from chronically-disputed categories. Same blocking-tier softening
+  // shape as the W7 unverified-criticals clamp above, but driven by FB-A
+  // dispute counters rather than W2 verification verdicts.
+  if (highDisputeMajority && orchestratorScore <= 2) {
+    return {
+      mergeScore: 3,
+      mergeScoreReason: `${highDisputeActionCount} of ${actionFindings.length} action finding${actionFindings.length === 1 ? '' : 's'} ${highDisputeActionCount === 1 ? 'comes' : 'come'} from category patterns this org has disputed ≥ ${Math.round(DISPUTE_RATE_HIGH_THRESHOLD * 100)}% of the time. Downgraded to advisory — review on the merits, but the PR is not blocked on historically noisy categories.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
+    };
+  }
+  return {
+    mergeScore: orchestratorScore,
+    mergeScoreReason: orchestratorReason,
+    ...(disputeDisclosure ? { disputeDisclosure } : {}),
+  };
 }
 
 /**
@@ -2113,11 +2216,12 @@ export async function runReviewPipeline(
     : null;
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
-  const { mergeScore, mergeScoreReason } = reconcileMergeScore({
+  const { mergeScore, mergeScoreReason, disputeDisclosure } = reconcileMergeScore({
     filteredFindings,
     previousFindings,
     orchestratorScore: orchestratorResult.mergeScore,
     orchestratorReason: orchestratorResult.mergeScoreReason,
+    categoryDisputeRates: options.categoryDisputeRates,
   });
 
   return {
@@ -2128,6 +2232,7 @@ export async function runReviewPipeline(
     diagramCaption: diagramResult.caption,
     mergeScore,
     mergeScoreReason,
+    ...(disputeDisclosure ? { disputeDisclosure } : {}),
     suppressedCount: Math.max(0, totalRawFindings - filteredFindings.length),
     enabledAgentCount,
     inputTokens: accumulator.totalInputTokens,

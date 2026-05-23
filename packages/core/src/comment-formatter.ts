@@ -63,6 +63,16 @@ interface FormatOptions {
   mergeScore?: number;
   /** One-line reason for the merge score */
   mergeScoreReason?: string;
+  /**
+   * FP-J L3 — transparent dispute-rate disclosure rendered as a small
+   * annotation beneath the merge-score line. Set by `reconcileMergeScore`
+   * when one or more action findings come from chronically-disputed
+   * categories (rate ≥ 75% over the 30d FB-E window, surfacings ≥ 5).
+   * Surfaced separately from `mergeScoreReason` so the verdict line stays
+   * concise and the context renders as an opt-in audit trail rather than
+   * a primary verdict signal. Omitted when no disputed categories qualify.
+   */
+  disputeDisclosure?: string;
   /** UX configuration */
   ux?: UXConfig;
   /** Work done stats for the work-done section */
@@ -223,6 +233,7 @@ export function formatReviewComment(options: FormatOptions): string {
     reviewDetailUrl,
     mergeScore,
     mergeScoreReason,
+    disputeDisclosure,
     ux,
     workDone,
     delta,
@@ -296,6 +307,14 @@ export function formatReviewComment(options: FormatOptions): string {
     const scoreDisplay = renderMergeScore(mergeScore);
     const reasonSuffix = mergeScoreReason ? ` \u2014 ${mergeScoreReason}` : '';
     lines.push(`> ${scoreDisplay}${reasonSuffix}`);
+    // FP-J L3 \u2014 dispute-rate disclosure renders as a quieter sub-line so the
+    // primary verdict stays the most visible signal. Only emitted when the
+    // reconcile pass identified at least one action finding from a
+    // chronically-disputed category (>= 5 surfacings AND >= 75% dispute rate
+    // over the 30d window). Omitted on the clean path.
+    if (disputeDisclosure && disputeDisclosure.trim()) {
+      lines.push(`> <sub>\ud83d\udcca ${disputeDisclosure.trim()}</sub>`);
+    }
     lines.push('');
   }
 
