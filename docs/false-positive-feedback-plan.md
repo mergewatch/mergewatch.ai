@@ -244,18 +244,23 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 
 ---
 
-### FB-I — Severity-shopping detector chart  ⏸ DEFERRED
+### FB-I — Severity-shopping detector chart  ✅ SHIPPED
 
-**Why deferred**: `FindingDispositionRecord` only tracks `category` (the producing agent — security / bug / style / …), not `severity` (critical / warning / info). Building a severity-shopping detector requires extending the disposition schema with a `severity` field, migrating both Postgres + DynamoDB, updating the writer in `disposition-writer.ts` to set it from `finding.severity`, and adding a `perSeverity` bucket to `InstallationFPInsight`. That's a self-contained follow-up PR (~M effort, low risk) and out of scope for the FB-F + FB-G chart bundle.
+**Where the gap lived:** FP-E extended W2 verification to warnings to close the severity-shopping loophole — the orchestrator could otherwise dodge W2/W7's critical-only attention by downgrading Critical → Warning. FP-E shipped the intervention; we had no way to *monitor* whether it stays effective. Over time the FP-E prompt could drift, a new agent could regress on the downgrade discipline, or a model swap could re-open the loophole — without surface visibility the regression is invisible until the warnings noise overwhelms reviewers.
 
-**Trigger to revisit**: once FB-F + FB-G are in production and operators ask for severity-shopping visibility.
+**The fix (data path + chart path):**
 
-**Where the gap lives:** FP-E extended verification to warnings to close the severity-shopping loophole — the orchestrator might still downgrade Critical → Warning to dodge attention. We need a way to see whether warnings dispute-rate stays disproportionately high relative to criticals over time.
+- **Data path** — `FindingDispositionRecord` gains an optional `severity?: 'critical' | 'warning' | 'info'` field. The disposition writer in `recordFindingSurfacings` threads `f.severity` through the attribution payload alongside `category`. Postgres migration `0006_vengeful_nightmare.sql` adds the column with `IF NOT EXISTS` so it's safe to apply on a running server; existing rows flow into the rollup's `uncategorized` bucket until they're written again. The Dynamo writer (UpdateExpression) and the Postgres writer (Drizzle `onConflictDoUpdate`) both gain the symmetric `severity = :severity` clause.
+- **Rollup path** — `InstallationFPInsight` gains a `perSeverity?: Record<string, { surfaced; disputed; rate }>` bucket parallel to `perCategory`. `buildInsightFromDispositions` aggregates by severity into this bucket using the same pattern. Postgres migration `0007_gigantic_shockwave.sql` adds the `per_severity` jsonb column with a `'{}'` default so pre-FB-I rollups remain valid; the next nightly run backfills.
+- **Chart path** — `InsightsClient.FBISeverityShoppingDetector` renders a two-line chart (warnings vs criticals dispute-rate) across the three rolling windows (7d → 30d → 90d) as x-axis points. An advisory banner fires when **both** of two adjacent windows (7d + 30d OR 30d + 90d) show `warning.rate ≥ critical.rate × 1.5` AND each side has at least 5 surfacings (small-N noise guard). One-window spikes are tolerated; only persistent skew triggers the banner.
 
-**The fix:** Overlay two lines (warnings dispute-rate vs criticals dispute-rate) on a single chart. Add an annotation when `warningsRate > criticalsRate * 1.5` over a ≥2-week window — surfaces a potential regression of the FP-E intent.
+**Design notes (decisions worth flagging):**
+- *Critical-only vs warning-only vs both severities*: the chart plots both; the `info` line is omitted (info-level findings rarely indicate severity-shopping intent). The `perSeverity` bucket carries all three so future surfaces can opt in.
+- *Time-series across windows, not within a window*: the FB-E rollup only stores one snapshot per (installation, window) tuple. A true time-series would need a history table or repeated daily snapshots, which is out of scope. The "windows-as-time-series" rendering trades granularity for shippability and reuses existing data.
+- *No automatic suppression*: the banner is purely advisory. A flagged installation may want to inspect the FB-G dispute-by-agent chart to identify the agent driving the warnings rate, or check `topClusters` for thematic patterns. Active suppression would require operator action — same posture as the rest of the FB-* surfaces.
 
-**Code targets:** `packages/dashboard/components/charts/SeverityShoppingDetector.tsx` (new).
-**E2E target:** [E2E-45](./../e2e/RUNBOOK.md#e2e-45-fb-i--severity-shopping-detector-chart-target).
+**Code targets (final):** `packages/core/src/types/db.ts` (`FindingDispositionRecord.severity?` + `InstallationFPInsight.perSeverity?`), `packages/core/src/storage/types.ts` (`FindingDispositionAttribution.severity?`), `packages/core/src/insights/disposition-writer.ts` (thread `f.severity`), `packages/core/src/insights/rollup.ts` (`perSeverity` aggregation), `packages/storage-postgres/src/schema.ts` + migrations `0006` + `0007`, `packages/storage-postgres/src/finding-disposition-store.ts` + `fp-insight-store.ts`, `packages/storage-dynamo/src/finding-disposition-store.ts` + `fp-insight-store.ts`, `packages/dashboard/components/InsightsClient.tsx` (`FBISeverityShoppingDetector` + `detectSeverityShopping`).
+**E2E target:** [E2E-45](./../e2e/RUNBOOK.md#e2e-45-fb-i--severity-shopping-detector-chart).
 
 ---
 
@@ -312,7 +317,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-F** | FP funnel chart | Surface | M | FB-E | ✅ SHIPPED |
 | **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ✅ SHIPPED (bar v1; line pending per-day) |
 | **FB-H** | Top recurring themes table | Surface | M | FB-E | ✅ SHIPPED |
-| **FB-I** | Severity-shopping detector | Surface | S | FB-G | ⏸ DEFERRED (needs severity on dispositions) |
+| **FB-I** | Severity-shopping detector | Surface | M | FB-G | ✅ SHIPPED |
 | **FB-J** | Per-repo FP heatmap | Surface | M | FB-E | ✅ SHIPPED (bar v1; grid pending per-day rollup) |
 | **FB-K** | Suggest `.mergewatch.yml` rule CTA | Surface | M | FB-H | ✅ SHIPPED (customStyleRules soft-guard v1) |
 | **FB-L** | `{{KNOWN_FP_PATTERNS}}` prompt injection | Learn | L | FB-E, FB-H | ★★★ (opt-in) |

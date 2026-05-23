@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FB-F + FB-G — FP-insights dashboard surface.
+ * FB-F + FB-G + FB-H + FB-I + FB-J + FB-K — FP-insights dashboard surface.
  *
  * Reads `/api/insights?installation_id=…` for the three rolling-window
  * `InstallationFPInsight` rows (7d / 30d / 90d) produced by the nightly
@@ -12,11 +12,13 @@
  *   - **FB-G** — dispute-rate by agent (horizontal bar): one bar per
  *     `perCategory` entry, height = `rate`. Tells the org which agent
  *     is the noisiest.
- *
- * FB-I (severity-shopping detector) is scoped to a follow-up PR — it
- * needs a `severity` field on `FindingDispositionRecord` that the data
- * shape doesn't yet carry. FB-H (top recurring themes table) and FB-J
- * (per-repo heatmap) ship in PR 5 alongside FB-K.
+ *   - **FB-H** — top recurring FP themes table (with FB-K CTA).
+ *   - **FB-I** — severity-shopping detector (two-line chart across the
+ *     three windows): warnings dispute-rate vs criticals dispute-rate. An
+ *     annotation banner fires when warningsRate > criticalsRate × 1.5
+ *     across two adjacent windows — a signal that agents are dodging W2
+ *     verification by downgrading Critical → Warning.
+ *   - **FB-J** — per-repo dispute heatmap (org-wide drill-down).
  *
  * Zero-state: when the API returns `insights: []` (fresh installation OR
  * a deployment without the FB-E table provisioned), the component renders
@@ -25,7 +27,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
 } from "recharts";
 import { ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
 
@@ -57,6 +59,8 @@ interface Insight {
   totalSilentDrops: number;
   totalAgreements: number;
   perCategory: Record<string, CategoryBucket>;
+  /** FB-I — buckets by severity. Optional for back-compat with pre-FB-I rollups (treated as `{}`). */
+  perSeverity?: Record<string, CategoryBucket>;
   perRepo: Record<string, CategoryBucket>;
   topClusters: ClusterRow[];
 }
@@ -344,6 +348,9 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
         )}
       </section>
 
+      {/* ─── FB-I: Severity-shopping detector ────────────────────────── */}
+      <FBISeverityShoppingDetector insights={insights} />
+
       {/* ─── FB-H: Top recurring FP themes (sortable table + FB-K CTA) ── */}
       <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
         <header className="mb-4">
@@ -620,5 +627,160 @@ function FBJHeatmap({ perRepo }: { perRepo: Record<string, CategoryBucket> }) {
         );
       })}
     </div>
+  );
+}
+
+// ─── FB-I — severity-shopping detector ────────────────────────────────────
+
+/**
+ * Threshold for the severity-shopping annotation. When warnings dispute-rate
+ * exceeds criticals dispute-rate by this factor across two adjacent windows
+ * (7d + 30d, OR 30d + 90d), we flag potential severity-shopping. Calibrated
+ * to be sensitive enough to surface a regression of the FP-E intent while
+ * tolerating short-lived anomalies in the 7d window only.
+ */
+const SEVERITY_SHOPPING_RATIO = 1.5;
+const SEVERITY_SHOPPING_MIN_SURFACED = 5; // require enough samples per side
+
+interface SeverityPoint {
+  window: "7d" | "30d" | "90d";
+  critical: number; // dispute rate (0..1)
+  warning: number;
+  info: number;
+  criticalSurfaced: number;
+  warningSurfaced: number;
+}
+
+function buildSeverityPoints(insights: Insight[]): SeverityPoint[] {
+  const order: SeverityPoint["window"][] = ["7d", "30d", "90d"];
+  return order
+    .map((w) => insights.find((i) => i.window === w))
+    .filter((i): i is Insight => Boolean(i))
+    .map((i) => {
+      const sev = i.perSeverity ?? {};
+      return {
+        window: i.window,
+        critical: sev.critical?.rate ?? 0,
+        warning:  sev.warning?.rate  ?? 0,
+        info:     sev.info?.rate     ?? 0,
+        criticalSurfaced: sev.critical?.surfaced ?? 0,
+        warningSurfaced:  sev.warning?.surfaced  ?? 0,
+      };
+    });
+}
+
+/**
+ * The detector fires when *two adjacent windows* both show the same
+ * severity-shopping shape (warning rate >> critical rate). One-window
+ * spikes are tolerated — only persistent skew triggers the annotation.
+ * Requires a minimum sample size per side to avoid the 1/2-disputed
+ * false-positive on a fresh installation.
+ */
+function detectSeverityShopping(points: SeverityPoint[]): boolean {
+  if (points.length < 2) return false;
+  const ratios = points.map((p) => {
+    const enough = p.criticalSurfaced >= SEVERITY_SHOPPING_MIN_SURFACED
+                && p.warningSurfaced >= SEVERITY_SHOPPING_MIN_SURFACED;
+    if (!enough) return null;
+    if (p.critical === 0) return p.warning > 0 ? Infinity : null;
+    return p.warning / p.critical;
+  });
+  for (let i = 0; i < ratios.length - 1; i++) {
+    if (ratios[i] !== null && ratios[i + 1] !== null
+      && ratios[i]! >= SEVERITY_SHOPPING_RATIO
+      && ratios[i + 1]! >= SEVERITY_SHOPPING_RATIO) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function FBISeverityShoppingDetector({ insights }: { insights: Insight[] }) {
+  const points = buildSeverityPoints(insights);
+  // Empty perSeverity across every window → nothing to plot. Treat as
+  // pre-FB-I rollup state and render an explanatory zero panel; charts
+  // with all-zero lines mislead more than they inform.
+  const hasAnySeverityData = points.some(
+    (p) => p.criticalSurfaced > 0 || p.warningSurfaced > 0,
+  );
+  const shopping = detectSeverityShopping(points);
+
+  return (
+    <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
+      <header className="mb-4">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Severity-shopping detector
+        </h2>
+        <p className="mt-1 text-xs text-text-secondary">
+          Warnings vs criticals dispute-rate across 7d / 30d / 90d windows. A
+          persistently higher warnings rate signals agents may be downgrading
+          findings to dodge W2/W7&apos;s critical-only attention rather than
+          letting verification do its job (FP-E loophole).
+        </p>
+      </header>
+
+      {shopping && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100"
+        >
+          <span aria-hidden="true">⚠️</span>
+          <div>
+            <strong className="font-semibold">Severity-shopping detected.</strong>{" "}
+            Warnings dispute-rate exceeds criticals by ≥{SEVERITY_SHOPPING_RATIO}×
+            across two adjacent windows. Inspect recent reviews where the
+            orchestrator downgraded Critical → Warning, and consider whether
+            FP-E verification scope still covers the relevant agent prompts.
+          </div>
+        </div>
+      )}
+
+      {!hasAnySeverityData ? (
+        <div className="text-xs text-text-secondary">
+          No severity data yet — needs at least one nightly rollup after FB-I
+          shipped (or backfill via subsequent surfacings).
+        </div>
+      ) : (
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={points} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis dataKey="window" fontSize={11} />
+              <YAxis
+                domain={[0, 1]}
+                tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                fontSize={11}
+              />
+              <Tooltip
+                formatter={(value: number, name: string, item) => {
+                  const payload = (item as { payload?: SeverityPoint } | undefined)?.payload;
+                  const surfaced = name === "critical"
+                    ? payload?.criticalSurfaced ?? 0
+                    : name === "warning"
+                    ? payload?.warningSurfaced ?? 0
+                    : 0;
+                  return [`${(value * 100).toFixed(1)}%  (${surfaced} surfaced)`, name];
+                }}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="critical"
+                stroke={SEGMENT_COLOURS.disputed}
+                strokeWidth={2}
+                dot={{ r: 4 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="warning"
+                stroke={SEGMENT_COLOURS.silentDropped}
+                strokeWidth={2}
+                dot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
   );
 }

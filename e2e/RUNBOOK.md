@@ -171,7 +171,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
 | [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) | 2m | 60s | FB-H |
-| [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart-target) | Warnings dispute-rate vs criticals dispute-rate over time, with annotation when warnings exceed criticals × 1.5 for ≥ 2 weeks (FB-I) — **TARGET** | 2m | 60s | FB-I |
+| [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart) | Warnings dispute-rate vs criticals dispute-rate across 7d/30d/90d windows, with annotation when warnings exceed criticals × 1.5 across two adjacent windows (FB-I) | 2m | 60s | FB-I |
 | [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J |
 | [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K |
 | [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
@@ -1719,25 +1719,36 @@ Branch: `fixture/44-themes-table`. Pre-seed with three recognisable clusters (e.
 
 ---
 
-### E2E-45: FB-I — Severity-shopping detector chart — TARGET
+### E2E-45: FB-I — Severity-shopping detector chart
 
-**Status:** **Not yet implemented.** See [`docs/false-positive-feedback-plan.md` → FB-I](./../docs/false-positive-feedback-plan.md#fb-i--severity-shopping-detector-chart).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-I](./../docs/false-positive-feedback-plan.md#fb-i--severity-shopping-detector-chart--shipped) and [`packages/dashboard/components/InsightsClient.tsx`](./../packages/dashboard/components/InsightsClient.tsx) (`FBISeverityShoppingDetector`).
 
-**Behavior (intended, once FB-I ships):** dual-line chart overlaying warnings dispute-rate and criticals dispute-rate over time. When `warningsRate > criticalsRate × 1.5` over a ≥ 2-week window, an annotation surfaces ("Warnings disputed disproportionately — possible severity-shopping regression"). FP-E ships verification on both severities; this chart confirms whether that intervention sticks long-term.
+**Behavior:** dual-line chart overlaying warnings dispute-rate vs criticals dispute-rate across the three rolling windows (7d / 30d / 90d) — the data the FB-E rollup natively produces. An advisory annotation banner ("Severity-shopping detected. Warnings dispute-rate exceeds criticals by ≥ 1.5× across two adjacent windows…") fires when **both** of two adjacent windows (7d + 30d OR 30d + 90d) cross the ratio threshold. One-window spikes are tolerated by design — only persistent skew triggers the banner. FP-E ships verification on both severities; this chart is the long-running regression monitor that confirms the intervention stays effective.
+
+The data plumbing: `FindingDispositionRecord` gains a nullable `severity` column (Postgres migration 0006); `InstallationFPInsight` gains a `perSeverity` bucket (Postgres migration 0007). The disposition writer in `recordFindingSurfacings` threads `f.severity` through the attribution payload, and `buildInsightFromDispositions` aggregates by severity into the new bucket. Pre-FB-I records (no severity column) land in the `uncategorized` bucket so totals stay consistent on partial-backfill data.
 
 **Setup**
 
-Branch: `fixture/45-severity-shopping`. Pre-seed with a 4-week pattern where warnings dispute-rate is 2× the criticals rate for the last 2 weeks. Render.
+Branch: `fixture/45-severity-shopping`. Two seeding paths:
+
+1. **Direct fixture** — seed `FindingDispositionRecord` rows where the 30d and 90d windows both show `warning.rate > critical.rate × 1.5` with each side carrying ≥ 5 surfacings (the `SEVERITY_SHOPPING_MIN_SURFACED` guard).
+2. **Live path** — run a series of PRs where the orchestrator emits warnings that are then disputed, while criticals stay rare and undisputed. Slow to seed but exercises the full pipeline.
 
 **Expected outcomes**
 
-- [ ] Two distinct lines (warnings & criticals)
-- [ ] Annotation appears for the ≥ 2-week period meeting the threshold
-- [ ] Annotation does NOT appear for short / noisy spikes
+- [x] Two distinct lines render (warnings amber, criticals red) across windows `7d / 30d / 90d` on the x-axis
+- [x] Annotation banner appears when two adjacent windows both cross the ≥ 1.5× threshold
+- [x] Annotation does NOT appear for single-window spikes (only one window crosses; the other doesn't)
+- [x] Annotation does NOT appear when either side has fewer than 5 surfacings (small-N noise guard)
+- [x] Empty severity data on all windows → renders the "No severity data yet — needs at least one nightly rollup after FB-I shipped" panel, not an all-zero chart
+- [x] Pre-FB-I records (severity = NULL) flow into the `uncategorized` bucket and don't pollute the critical/warning lines
+- [x] Tooltip shows raw `disputed / surfaced` counts alongside the rate for each window
 
 **Failure modes**
-- ❌ Annotation triggers on a single-day spike (smoothing window must be ≥ 2 weeks)
-- ❌ The detector reports severity-shopping when there are very few criticals — small-N criticalsRate is noisy; require a minimum criticals surfacings count before evaluating
+- ❌ Annotation triggers on a single-window spike (the two-adjacent-window guard regressed)
+- ❌ The detector reports severity-shopping when there are very few surfacings (the `SEVERITY_SHOPPING_MIN_SURFACED` floor regressed)
+- ❌ Pre-FB-I records (no severity field) pollute the `critical` or `warning` line instead of the `uncategorized` bucket (the rollup's `r.severity ?? 'uncategorized'` fallback regressed)
+- ❌ A division-by-zero on `warning / critical` when criticals rate is 0 — should evaluate to `Infinity` (handled) and the comparison `Infinity >= 1.5` correctly fires when warnings > 0
 
 ---
 

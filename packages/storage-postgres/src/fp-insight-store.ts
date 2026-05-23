@@ -38,6 +38,7 @@ export class PostgresFPInsightStore implements IFPInsightStore {
         totalSilentDrops: insight.totalSilentDrops,
         totalAgreements: insight.totalAgreements,
         perCategory: insight.perCategory as unknown,
+        perSeverity: (insight.perSeverity ?? {}) as unknown,
         perRepo: insight.perRepo as unknown,
         topClusters: insight.topClusters as unknown,
       })
@@ -53,6 +54,7 @@ export class PostgresFPInsightStore implements IFPInsightStore {
           totalSilentDrops: insight.totalSilentDrops,
           totalAgreements: insight.totalAgreements,
           perCategory: insight.perCategory as unknown,
+          perSeverity: (insight.perSeverity ?? {}) as unknown,
           perRepo: insight.perRepo as unknown,
           topClusters: insight.topClusters as unknown,
         },
@@ -95,6 +97,7 @@ function rowToInsight(row: Record<string, unknown>): InstallationFPInsight {
     totalSilentDrops: Number(row.totalSilentDrops ?? 0),
     totalAgreements: Number(row.totalAgreements ?? 0),
     perCategory: (row.perCategory as InstallationFPInsight['perCategory']) ?? {},
+    perSeverity: (row.perSeverity as InstallationFPInsight['perSeverity']) ?? {},
     perRepo: (row.perRepo as InstallationFPInsight['perRepo']) ?? {},
     topClusters: (row.topClusters as InstallationFPInsight['topClusters']) ?? [],
   };
