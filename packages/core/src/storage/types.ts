@@ -99,6 +99,8 @@ export interface FindingDispositionAttribution {
   category?: FindingDispositionRecord['category'];
   topAgent?: string;
   sigTokens?: string[];
+  /** FB-I — severity for the severity-shopping detector rollup. */
+  severity?: FindingDispositionRecord['severity'];
 }
 
 export interface IFindingDispositionStore {

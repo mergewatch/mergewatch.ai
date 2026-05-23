@@ -43,6 +43,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
           surfaceCount: 1,
           category: attribution?.category ?? null,
           topAgent: attribution?.topAgent ?? null,
+          severity: attribution?.severity ?? null,
           sigTokens: (attribution?.sigTokens as unknown) ?? null,
         })
         .onConflictDoUpdate({
@@ -64,6 +65,9 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
               : {}),
             ...(attribution?.topAgent !== undefined
               ? { topAgent: attribution.topAgent }
+              : {}),
+            ...(attribution?.severity !== undefined
+              ? { severity: attribution.severity }
               : {}),
             ...(attribution?.sigTokens !== undefined
               ? { sigTokens: attribution.sigTokens as unknown }
@@ -161,6 +165,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
       agreementCount: r.agreementCount,
       ...(r.category ? { category: r.category as FindingDispositionRecord['category'] } : {}),
       ...(r.topAgent ? { topAgent: r.topAgent } : {}),
+      ...(r.severity ? { severity: r.severity as FindingDispositionRecord['severity'] } : {}),
       ...(Array.isArray(r.sigTokens) ? { sigTokens: r.sigTokens as string[] } : {}),
       ...(Array.isArray(r.rejectReasons) ? { rejectReasons: r.rejectReasons as FindingDispositionRecord['rejectReasons'] } : {}),
     }));

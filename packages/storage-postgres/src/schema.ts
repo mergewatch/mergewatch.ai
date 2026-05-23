@@ -103,6 +103,11 @@ export const installationFpInsights = pgTable('installation_fp_insights', {
   totalSilentDrops: integer('total_silent_drops').notNull().default(0),
   totalAgreements: integer('total_agreements').notNull().default(0),
   perCategory: jsonb('per_category').notNull().default({}),
+  // FB-I — severity-shopping detector bucket (critical / warning / info /
+  // uncategorized). Populated by the nightly rollup once finding_dispositions
+  // rows carry the severity column. Defaults to `{}` so pre-FB-I rollups
+  // remain valid.
+  perSeverity: jsonb('per_severity').notNull().default({}),
   perRepo: jsonb('per_repo').notNull().default({}),
   topClusters: jsonb('top_clusters').notNull().default([]),
 }, (t) => ({
@@ -126,6 +131,10 @@ export const findingDispositions = pgTable('finding_dispositions', {
   agreementCount: integer('agreement_count').notNull().default(0),
   category: text('category'),
   topAgent: text('top_agent'),
+  // FB-I — severity for the severity-shopping detector rollup. Optional
+  // (nullable) so rows written before FB-I shipped don't need a backfill;
+  // they flow into the `uncategorized` bucket in the per-severity rollup.
+  severity: text('severity'),
   sigTokens: jsonb('sig_tokens'),
   rejectReasons: jsonb('reject_reasons'),
 }, (t) => ({

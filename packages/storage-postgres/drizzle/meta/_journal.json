@@ -43,6 +43,20 @@
       "when": 1779481196813,
       "tag": "0005_acoustic_puma",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779500064480,
+      "tag": "0006_vengeful_nightmare",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779500194638,
+      "tag": "0007_gigantic_shockwave",
+      "breakpoints": true
     }
   ]
 }

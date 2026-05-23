@@ -497,6 +497,16 @@ export interface FindingDispositionRecord {
 
   /** Last-seen finding category for this key (the few seen are stable; we keep the most recent). */
   category?: 'security' | 'bug' | 'style' | 'errorHandling' | 'testCoverage' | 'commentAccuracy' | 'custom';
+  /**
+   * FB-I — last-seen severity for this finding key. Drives the
+   * severity-shopping detector rollup (`perSeverity` on `InstallationFPInsight`).
+   * Optional for back-compat with pre-FB-I records that wrote the row before
+   * the column existed; rollups treat missing values as 'uncategorized'.
+   * Last-writer-wins is fine — severity for a given match key is highly
+   * stable in practice (only changes if the orchestrator deliberately
+   * down-/up-grades, which is exactly the signal FB-I exists to surface).
+   */
+  severity?: 'critical' | 'warning' | 'info';
   /** Last-seen producing agent (heuristic — same finding can drift agent across reviews). */
   topAgent?: string;
   /** W10 significant-token bag for this finding's title — drives cluster-level rollup in FB-E. */
@@ -551,6 +561,18 @@ export interface InstallationFPInsight {
 
   /** Bucketed by `FindingDispositionRecord.category` (security / bug / style / …). */
   perCategory: Record<string, { surfaced: number; disputed: number; rate: number }>;
+  /**
+   * FB-I — bucketed by `FindingDispositionRecord.severity` (critical / warning /
+   * info / uncategorized). Drives the severity-shopping detector chart:
+   * when `warning.rate > critical.rate * 1.5` consistently across both the
+   * 7d and 30d windows, it signals the orchestrator is downgrading findings
+   * to dodge W2/W7's critical-only attention rather than letting FP-E
+   * verification do its job.
+   *
+   * Optional for back-compat with rollups generated before FB-I shipped
+   * (those rows simply lack the bucket; consumers handle the undefined case).
+   */
+  perSeverity?: Record<string, { surfaced: number; disputed: number; rate: number }>;
   /** Bucketed by `FindingDispositionRecord.repoFullName`. */
   perRepo: Record<string, { surfaced: number; disputed: number; rate: number }>;
 

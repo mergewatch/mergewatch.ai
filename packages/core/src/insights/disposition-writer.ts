@@ -48,6 +48,10 @@ export async function recordFindingSurfacings(
       // narrows via the `FindingDispositionRecord['category']` type at
       // read time.
       ...(f.category ? { category: f.category as never } : {}),
+      // FB-I — severity drives the severity-shopping detector rollup. Pass
+      // it through so the store records the bucket; missing values flow as
+      // 'uncategorized' downstream (rollup defaults).
+      ...(f.severity ? { severity: f.severity } : {}),
       // Best-effort token bag — falls back to title-only if description
       // is empty. extractSignificantTokens strips stop-words for us; the
       // Array.from + slice trims to a reasonable cap (W10 clusters are

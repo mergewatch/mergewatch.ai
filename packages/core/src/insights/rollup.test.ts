@@ -121,6 +121,48 @@ describe('buildInsightFromDispositions — buckets', () => {
     expect(r.perRepo['org/api'].rate).toBeCloseTo(0.5);
     expect(r.perRepo['org/web'].rate).toBe(0);
   });
+
+  // FB-I — perSeverity bucket powers the severity-shopping detector
+  it('FB-I: buckets by severity and computes per-severity rate', () => {
+    const records = [
+      record({ severity: 'critical', surfaceCount: 10, disputeCount: 1  }),
+      record({ severity: 'warning',  surfaceCount: 20, disputeCount: 18 }),
+      record({ severity: 'critical', surfaceCount: 5,  disputeCount: 0  }),
+      record({ severity: 'info',     surfaceCount: 3,  disputeCount: 0  }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.perSeverity).toEqual({
+      critical: { surfaced: 15, disputed: 1,  rate: 1  / 15 },
+      warning:  { surfaced: 20, disputed: 18, rate: 18 / 20 },
+      info:     { surfaced: 3,  disputed: 0,  rate: 0       },
+    });
+  });
+
+  it('FB-I: lumps records without a severity under "uncategorized" (back-compat with pre-FB-I records)', () => {
+    const records = [
+      record({ severity: undefined, surfaceCount: 4, disputeCount: 2 }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.perSeverity).toEqual({
+      uncategorized: { surfaced: 4, disputed: 2, rate: 0.5 },
+    });
+  });
+
+  it('FB-I: perSeverity is empty {} when no records (no divide-by-zero, no implicit buckets)', () => {
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, []);
+    expect(r.perSeverity).toEqual({});
+  });
+
+  it('FB-I: severity-shopping signal — warning rate exceeds critical rate × 1.5', () => {
+    // Severity-shopping shape: agents downgrade Critical → Warning, so the
+    // warnings bucket disproportionately collects disputes.
+    const records = [
+      record({ severity: 'critical', surfaceCount: 20, disputeCount: 2  }), // 10% rate
+      record({ severity: 'warning',  surfaceCount: 30, disputeCount: 12 }), // 40% rate
+    ];
+    const r = buildInsightFromDispositions('42', '30d', WINDOW_END, records);
+    expect(r.perSeverity!.warning.rate).toBeGreaterThan(r.perSeverity!.critical.rate * 1.5);
+  });
 });
 
 // ─── Clusters ───────────────────────────────────────────────────────────────

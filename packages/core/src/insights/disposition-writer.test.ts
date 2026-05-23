@@ -122,6 +122,29 @@ describe('recordFindingSurfacings (FB-A)', () => {
     expect(store.calls.incrementUnverified).toHaveLength(1);
   });
 
+  // FB-I — severity flows into attribution so the rollup can bucket on it.
+  it('FB-I: attaches severity to the attribution payload', async () => {
+    const store = makeMockStore();
+    await recordFindingSurfacings(store, 42, 'org/repo', [
+      makeFinding({ severity: 'critical' }),
+    ], '2026-05-22T00:00:00Z');
+    const attribution = store.calls.upsertSurface[0][4] as { severity?: string };
+    expect(attribution.severity).toBe('critical');
+  });
+
+  it('FB-I: omits severity from attribution when the finding lacks one (back-compat)', async () => {
+    const store = makeMockStore();
+    // We can't construct an OrchestratedFinding without `severity` (required
+    // field), but the writer's guard is `f.severity ? { severity: … } : {}`,
+    // so an empty-string severity simulates the "no signal" path without
+    // breaking the type contract.
+    await recordFindingSurfacings(store, 42, 'org/repo', [
+      { ...makeFinding(), severity: '' as unknown as 'critical' },
+    ], '2026-05-22T00:00:00Z');
+    const attribution = store.calls.upsertSurface[0][4] as { severity?: string };
+    expect(attribution.severity).toBeUndefined();
+  });
+
   it('writes nothing when no store is provided (back-compat)', async () => {
     // Smoke test: undefined store must not throw — analytics is optional.
     await expect(

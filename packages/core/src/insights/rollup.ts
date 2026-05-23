@@ -65,8 +65,12 @@ export function buildInsightFromDispositions(
   }
   const disputeRate = totalFindingsSurfaced > 0 ? totalDisputes / totalFindingsSurfaced : 0;
 
-  // Per-category and per-repo buckets.
+  // Per-category, per-severity, and per-repo buckets. perSeverity is the
+  // FB-I addition — drives the severity-shopping detector chart (warnings
+  // dispute-rate vs criticals dispute-rate). Same shape as perCategory so
+  // the dashboard can reuse the rendering primitives.
   const perCategory: Record<string, { surfaced: number; disputed: number; rate: number }> = {};
+  const perSeverity: Record<string, { surfaced: number; disputed: number; rate: number }> = {};
   const perRepo:     Record<string, { surfaced: number; disputed: number; rate: number }> = {};
   for (const r of inWindow) {
     const cat = r.category ?? 'uncategorized';
@@ -74,11 +78,22 @@ export function buildInsightFromDispositions(
     perCategory[cat].surfaced += r.surfaceCount;
     perCategory[cat].disputed += r.disputeCount;
 
+    // FB-I — pre-FB-I records (no severity column) land in 'uncategorized'
+    // so the bucket totals match perCategory's behaviour. Once severity
+    // backfills naturally via subsequent surfacings, the bucket shrinks.
+    const sev = r.severity ?? 'uncategorized';
+    if (!perSeverity[sev]) perSeverity[sev] = { surfaced: 0, disputed: 0, rate: 0 };
+    perSeverity[sev].surfaced += r.surfaceCount;
+    perSeverity[sev].disputed += r.disputeCount;
+
     if (!perRepo[r.repoFullName]) perRepo[r.repoFullName] = { surfaced: 0, disputed: 0, rate: 0 };
     perRepo[r.repoFullName].surfaced += r.surfaceCount;
     perRepo[r.repoFullName].disputed += r.disputeCount;
   }
   for (const bucket of Object.values(perCategory)) {
+    bucket.rate = bucket.surfaced > 0 ? bucket.disputed / bucket.surfaced : 0;
+  }
+  for (const bucket of Object.values(perSeverity)) {
     bucket.rate = bucket.surfaced > 0 ? bucket.disputed / bucket.surfaced : 0;
   }
   for (const bucket of Object.values(perRepo)) {
@@ -100,6 +115,7 @@ export function buildInsightFromDispositions(
     totalSilentDrops,
     totalAgreements,
     perCategory,
+    perSeverity,
     perRepo,
     topClusters,
   };

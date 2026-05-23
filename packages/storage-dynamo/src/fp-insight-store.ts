@@ -49,6 +49,7 @@ export class DynamoFPInsightStore implements IFPInsightStore {
         totalSilentDrops: insight.totalSilentDrops,
         totalAgreements: insight.totalAgreements,
         perCategory: insight.perCategory,
+        perSeverity: insight.perSeverity ?? {},
         perRepo: insight.perRepo,
         topClusters: insight.topClusters,
       },
@@ -88,6 +89,7 @@ function itemToInsight(it: Record<string, unknown>): InstallationFPInsight {
     totalSilentDrops: Number(it.totalSilentDrops ?? 0),
     totalAgreements: Number(it.totalAgreements ?? 0),
     perCategory: (it.perCategory as InstallationFPInsight['perCategory']) ?? {},
+    perSeverity: (it.perSeverity as InstallationFPInsight['perSeverity']) ?? {},
     perRepo: (it.perRepo as InstallationFPInsight['perRepo']) ?? {},
     topClusters: (it.topClusters as InstallationFPInsight['topClusters']) ?? [],
   };

@@ -88,6 +88,11 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
       setExprs.push('topAgent = :topAgent');
       exprValues[':topAgent'] = attribution.topAgent;
     }
+    if (attribution?.severity !== undefined) {
+      // FB-I — severity drives the severity-shopping detector rollup.
+      setExprs.push('severity = :severity');
+      exprValues[':severity'] = attribution.severity;
+    }
     if (attribution?.sigTokens !== undefined) {
       setExprs.push('sigTokens = :sigTokens');
       exprValues[':sigTokens'] = attribution.sigTokens;
@@ -199,6 +204,7 @@ function itemToRecord(it: Record<string, unknown>): FindingDispositionRecord {
   };
   if (it.category) r.category = it.category as FindingDispositionRecord['category'];
   if (it.topAgent) r.topAgent = String(it.topAgent);
+  if (it.severity) r.severity = it.severity as FindingDispositionRecord['severity'];
   if (Array.isArray(it.sigTokens)) r.sigTokens = it.sigTokens as string[];
   if (Array.isArray(it.rejectReasons)) r.rejectReasons = it.rejectReasons as FindingDispositionRecord['rejectReasons'];
   return r;
