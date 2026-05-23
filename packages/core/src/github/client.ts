@@ -460,6 +460,13 @@ interface InlineCommentCandidate {
   title: string;
   description: string;
   suggestion: string;
+  /**
+   * FP-L — W2 verification verdict. When `'unverified'` the finding is dropped
+   * from the inline-comment surface entirely (it still appears in the top-level
+   * review comment under "Unverified concerns"). Absent → treated as a pre-W2
+   * record and surfaces normally for back-compat.
+   */
+  verification?: 'verified' | 'unverified';
 }
 
 /**
@@ -468,6 +475,11 @@ interface InlineCommentCandidate {
  * Only critical-severity findings whose file is in the changed file list
  * become inline comments. All are batched in a single createReview call
  * so GitHub sends only one notification.
+ *
+ * FP-L — unverified criticals (W2 couldn't confirm the defect) are skipped
+ * here so the most-disruptive surface (inline red-emoji comment at the cited
+ * line) doesn't fire on advisory-confidence findings. They still render in
+ * the top-level review comment under the "Unverified concerns" sub-section.
  */
 export function buildInlineComments(
   findings: InlineCommentCandidate[],
@@ -479,6 +491,10 @@ export function buildInlineComments(
   return findings
     .filter((f) => {
       if (f.severity !== 'critical' || !changedSet.has(f.file) || f.line <= 0) return false;
+      // FP-L — unverified criticals are demoted off the inline-comment surface.
+      // They still appear in the top-level review body under "Unverified
+      // concerns" so the finding isn't lost — just no inline red marker.
+      if (f.verification === 'unverified') return false;
       // When changedLines is available, require line to be exactly on a changed line
       if (changedLines) {
         const fileLines = changedLines.get(f.file);

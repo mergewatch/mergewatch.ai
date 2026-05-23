@@ -178,6 +178,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
 | [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
 | [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2 — Layer 1 + 3 pending FB-A data) | 2m | 60s | FP-J |
+| [E2E-52](#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces) | An unverified critical drops off the inline / action-table surfaces and lands in a dedicated "Unverified concerns" sub-section (FP-L) | 2m | 60s | FP-L |
 
 ---
 
@@ -1899,6 +1900,37 @@ Branch: `fixture/51-no-self-contradiction`. Two-commit sequence:
 **Failure modes**
 - ❌ Genuine new defects on code that happens to be near a prior fix get incorrectly dropped as "contradicting prior advice"
 - ❌ Prior recommendations are passed in raw verbatim, allowing prompt-injection via crafted prior suggestion text (sanitisation must already cover this — same `sanitizePreviousFindingString` path used by `buildPreviousFindingsBlock`)
+
+---
+
+### E2E-52: FP-L — propagate W2 verification to rendering surfaces
+
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-L](./../docs/false-positive-reduction-plan.md#fp-l--propagate-w2-verification-to-rendering-surfaces) and [`packages/core/src/comment-formatter.ts`](./../packages/core/src/comment-formatter.ts) / [`packages/core/src/github/client.ts`](./../packages/core/src/github/client.ts).
+
+**Behavior:** W2 already tags critical findings with `verification: 'unverified'` when the verifier can't confirm the defect against the source file, and W7 clamps the merge score to ≥ 3 for an all-unverified-criticals batch. **Before FP-L** the same finding still rendered as a 🔴 inline comment + a row in the "Requires your attention" table + a Critical-section entry — three visual surfaces shouting "blocking!" while the formal verdict whispered "advisory." **After FP-L** the verification tag propagates all the way to rendering: unverified criticals are dropped from `buildInlineComments` and from the action-items table, and surface instead in a new "⚠️ Unverified concerns (N)" sub-section with the disclaimer *"The verifier couldn't confirm these against the source. Review carefully; the PR is not blocked on them."*
+
+Pure rendering change — no model calls, no prompt changes, no schema migrations.
+
+**Setup**
+
+Branch: `fixture/52-unverified-critical-render`. The cleanest repro is to mock the W2 verifier path so a specific critical comes back as `verification: 'unverified'`. Alternatively, exercise the live path on a PR whose critical is shaped like a stale-claim (e.g. a "SQL injection" finding pointed at a Drizzle call site — the verifier cannot confirm against `db.query` and returns `unverified`).
+
+**Expected outcomes**
+
+- [x] **Inline-comment surface:** No 🔴 review comment is created at the cited line of the unverified critical (`buildInlineComments` filter rejects findings with `verification === 'unverified'`)
+- [x] **Action-items table:** The unverified critical does NOT appear in the top-of-comment "Requires your attention" table (`actionFindings` filter keeps warnings + verified criticals only)
+- [x] **Critical section:** The standard `### 🔴 Critical (N)` header counts only verified criticals — when all criticals in the batch are unverified, this header is omitted
+- [x] **Unverified concerns section:** A new `### ⚠️ Unverified concerns (M)` sub-section renders below, with the advisory subtitle *"The verifier couldn't confirm these against the source. Review carefully; the PR is not blocked on them."*
+- [x] **Empty-case omission:** When there are zero unverified criticals (the all-clean / verified-only path), the "Unverified concerns" sub-section is omitted entirely — no empty headers
+- [x] **W7 score-clamp unchanged:** The formal verdict subtitle still reads *"3/5 — Review recommended. Downgraded to advisory — the PR is not blocked on unverified concerns"* and `mergeScoreToReviewEvent` still returns `COMMENTED`
+- [x] **Back-compat:** A critical with no `verification` field at all (pre-W2 stored record OR a path where W2 didn't run) renders normally in all surfaces — inline, action-table, Critical section
+
+**Failure modes**
+- ❌ Unverified critical still renders as 🔴 inline at the cited line (Layer 1 filter regressed)
+- ❌ The action-items table still includes the unverified row (Layer 2 filter regressed)
+- ❌ The "Unverified concerns" header renders with `(0)` count when no unverified criticals exist (empty-omission check)
+- ❌ Verified criticals incorrectly land in the Unverified concerns section (the verification check is inverted)
+- ❌ Warnings tagged `verification: 'unverified'` get mis-routed to the Critical Unverified-concerns section (FP-L is explicitly critical-only; warnings retain their existing collapsed surface — see test `does not coerce unverified warnings into the Unverified concerns section`)
 
 ---
 

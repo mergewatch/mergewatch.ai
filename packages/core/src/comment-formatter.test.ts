@@ -271,6 +271,83 @@ describe('formatReviewComment', () => {
     const result = formatReviewComment(baseOptions({ deltaCaption: '   ' }));
     expect(result).not.toContain('📝');
   });
+
+  // ─── FP-L — verification-aware rendering ────────────────────────────────
+  describe('FP-L verification propagation', () => {
+    it('omits unverified critical from the "Requires your attention" action-items table', () => {
+      const findings = [
+        makeFinding({ title: 'Unverified SQL', verification: 'unverified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      // The action-items table header is suppressed when no action findings remain
+      expect(result).not.toContain('Requires your attention');
+      // But the finding still appears below in the Unverified concerns section
+      expect(result).toContain('Unverified SQL');
+    });
+
+    it('keeps verified criticals in the "Requires your attention" action-items table', () => {
+      const findings = [
+        makeFinding({ title: 'Confirmed SQL', verification: 'verified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      expect(result).toContain('Requires your attention');
+      expect(result).toContain('Confirmed SQL');
+    });
+
+    it('keeps criticals with no verification field in the action-items table (pre-W2 back-compat)', () => {
+      const findings = [makeFinding({ title: 'Legacy critical' })]; // no verification
+      const result = formatReviewComment(baseOptions({ findings }));
+      expect(result).toContain('Requires your attention');
+      expect(result).toContain('Legacy critical');
+    });
+
+    it('renders a separate "Unverified concerns" section for unverified criticals with the advisory subtitle', () => {
+      const findings = [
+        makeFinding({ title: 'Maybe-leak', verification: 'unverified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      expect(result).toContain('Unverified concerns (1)');
+      expect(result).toContain("verifier couldn't confirm");
+      expect(result).toContain('PR is not blocked');
+      expect(result).toContain('Maybe-leak');
+      // And the standard Critical (N) header is NOT emitted for an unverified-only batch
+      expect(result).not.toContain('Critical (1)');
+    });
+
+    it('renders both sections side by side when verified + unverified criticals coexist', () => {
+      const findings = [
+        makeFinding({ file: 'a.ts', title: 'Confirmed', verification: 'verified' }),
+        makeFinding({ file: 'b.ts', title: 'Maybe',     verification: 'unverified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      expect(result).toContain('Critical (1)');
+      expect(result).toContain('Unverified concerns (1)');
+      // Critical header appears before Unverified concerns
+      const criticalIdx = result.indexOf('Critical (1)');
+      const unverifiedIdx = result.indexOf('Unverified concerns');
+      expect(criticalIdx).toBeLessThan(unverifiedIdx);
+    });
+
+    it('omits the "Unverified concerns" sub-section entirely when there are no unverified criticals', () => {
+      const findings = [
+        makeFinding({ title: 'Confirmed', verification: 'verified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      expect(result).not.toContain('Unverified concerns');
+    });
+
+    it('does not coerce unverified warnings into the Unverified concerns section (warnings keep their own collapsed surface)', () => {
+      const findings = [
+        makeFinding({ severity: 'warning', title: 'Maybe-warning', verification: 'unverified' }),
+      ];
+      const result = formatReviewComment(baseOptions({ findings }));
+      // Sub-section is critical-only by design (issue spec — Layer 3)
+      expect(result).not.toContain('Unverified concerns');
+      // Warning still renders normally in the collapsed Warnings section + the action table
+      expect(result).toContain('Warnings (1)');
+      expect(result).toContain('Requires your attention');
+    });
+  });
 });
 
 describe('buildWorkDoneSection', () => {

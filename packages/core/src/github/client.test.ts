@@ -150,6 +150,41 @@ describe('buildInlineComments', () => {
     const result = buildInlineComments(findings, changedFiles);
     expect(result[0].body.startsWith(INLINE_BOT_COMMENT_MARKER)).toBe(true);
   });
+
+  // ─── FP-L — verification-aware skipping ─────────────────────────────────
+  it('FP-L: skips unverified critical findings — they render in the top-level body, not inline', () => {
+    const findings = [
+      { file: 'src/app.ts', line: 10, severity: 'critical' as const, title: 'Maybe SQL', description: 'd', suggestion: '', verification: 'unverified' as const },
+    ];
+    const result = buildInlineComments(findings, changedFiles);
+    expect(result).toHaveLength(0);
+  });
+
+  it('FP-L: keeps verified critical findings inline', () => {
+    const findings = [
+      { file: 'src/app.ts', line: 10, severity: 'critical' as const, title: 'Confirmed SQL', description: 'd', suggestion: '', verification: 'verified' as const },
+    ];
+    const result = buildInlineComments(findings, changedFiles);
+    expect(result).toHaveLength(1);
+  });
+
+  it('FP-L: keeps criticals with no verification field (pre-W2 back-compat)', () => {
+    const findings = [
+      { file: 'src/app.ts', line: 10, severity: 'critical' as const, title: 'Bug', description: 'd', suggestion: '' },
+    ];
+    const result = buildInlineComments(findings, changedFiles);
+    expect(result).toHaveLength(1);
+  });
+
+  it('FP-L: in a mixed batch, drops only the unverified critical', () => {
+    const findings = [
+      { file: 'src/app.ts',   line: 10, severity: 'critical' as const, title: 'Verified',     description: 'd', suggestion: '', verification: 'verified' as const },
+      { file: 'src/utils.ts', line: 20, severity: 'critical' as const, title: 'Unverified',   description: 'd', suggestion: '', verification: 'unverified' as const },
+    ];
+    const result = buildInlineComments(findings, changedFiles);
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe('src/app.ts');
+  });
 });
 
 // ---------------------------------------------------------------------------

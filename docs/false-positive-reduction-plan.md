@@ -205,6 +205,23 @@ Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted find
 **Code targets (final):** `packages/core/src/agents/prompts.ts` (FINDING_VERIFICATION_PROMPT — new INVALID condition; `buildVerifierPriorContext` lists prior suggestions), `packages/core/src/agents/reviewer.ts` (PreviousFinding widened with optional `suggestion`).
 **E2E target:** [E2E-51](./../e2e/RUNBOOK.md#e2e-51-fp-j--verifier-honours-prior-recommendations).
 
+### FP-L — Propagate W2 verification to rendering surfaces  ✅ SHIPPED
+
+**Where the gap lived:** on PR #172 round-2, W2 tagged a critical as `verification: 'unverified'` and W7 correctly clamped the merge score to 3 (advisory) — but **three other rendering surfaces still shouted "🔴 CRITICAL"**: the inline review comment at the cited line, the "Requires your attention" action-items table at the top of the review comment, and the "🔴 Critical (N)" detailed section in the middle. The reviewer experience was schizophrenic: the formal verdict said *"Downgraded to advisory — the PR is not blocked on unverified concerns"* while three of the five visual surfaces (and the most-disruptive one — the inline comment that fires a GitHub notification) looked blocking.
+
+Root cause: W7's score-clamp checks `verification: 'unverified'` and adjusts the merge score. But `buildInlineComments` filtered on `severity === 'critical'` only, `formatReviewComment`'s `actionFindings` filtered on `severity === 'critical' || severity === 'warning'` only, and the Critical section dumped everything from `grouped.get('critical')`. When W2 added the verification tag, the rendering layer was never wired to the same signal. Filed as [#175](https://github.com/santthosh/mergewatch.ai/issues/175).
+
+**The fix (three layers, all pure-rendering):**
+
+- **Layer 1** — `buildInlineComments` filter rejects findings with `verification === 'unverified'`. The finding still appears in the top-level review body (under Layer 3's new sub-section) — it just doesn't get the most-disruptive surface (inline 🔴 + GitHub notification + red diff marker).
+- **Layer 2** — `formatReviewComment`'s `actionFindings` filter excludes unverified criticals from the "Requires your attention" table. The table now matches the W7-clamped score (an advisory PR doesn't claim to require attention on the formal blocking surface).
+- **Layer 3** — the `### 🔴 Critical (N)` header is split. Verified criticals keep the existing header; unverified criticals get a separate `### ⚠️ Unverified concerns (M)` sub-section with the advisory subtitle *"The verifier couldn't confirm these against the source. Review carefully; the PR is not blocked on them."* The sub-section is omitted entirely when there are no unverified criticals — no empty headers on the clean path.
+
+Back-compat: a finding with `verification` absent is treated as a pre-W2 record and renders normally in all three surfaces (no behaviour change for callers that don't run W2).
+
+**Code targets (final):** `packages/core/src/github/client.ts` (`InlineCommentCandidate.verification?` + filter), `packages/core/src/comment-formatter.ts` (`Finding.verification?` + action-table filter + split Critical section).
+**E2E target:** [E2E-52](./../e2e/RUNBOOK.md#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces).
+
 ---
 
 ## Priority order
@@ -221,8 +238,9 @@ Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted find
 | **FP-H** | Anti-anchoring on prior findings (L1 + L2) | small | prompt extension + verifier ctx | ✅ SHIPPED |
 | **FP-I** | Verify suggestion-already-implemented (L1 + L2) | small | verifier prompt + structural helper | ✅ SHIPPED |
 | **FP-J** | Verifier honours prior recommendations | small (L2 only) | verifier prompt extension | ✅ SHIPPED (L2); L1+L3 pending FB-A data |
+| **FP-L** | Propagate W2 verification tag to rendering surfaces | small | inline filter + comment-formatter split | ✅ SHIPPED |
 
-**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / #163). **FP-H + FP-I + FP-J Layer 2** as a single follow-up bundle (this PR) — all three touch the same verifier prompt + reviewer surface, so bundling them is cheaper than three sequential PRs.
+**Recommended sequencing:** **FP-A + FP-B + FP-C** as one PR (shipped — #159) — all three are tiny, deterministic, target the orchestrator boundary, and stack cleanly. Then FP-D as a separate Mermaid-focused PR (shipped — #160). Then FP-E / FP-F / FP-G as individual polish PRs (shipped — #161 / #162 / #163). **FP-H + FP-I + FP-J Layer 2** as a single follow-up bundle (#171). **FP-L** as a standalone PR (this PR) — pure rendering change, no prompt churn, isolated blast radius; tying it in with FP-K (verifier-extension) would have mixed prompt-and-render concerns in one diff.
 
 ---
 
