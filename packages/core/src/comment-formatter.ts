@@ -20,6 +20,15 @@ export interface Finding {
   title: string;
   description: string;
   suggestion: string;
+  /**
+   * FP-L — W2 verification verdict. When `'unverified'` and severity is
+   * critical, the finding is rendered in the "Unverified concerns" sub-section
+   * (advisory) instead of the "Critical" section, and excluded from the
+   * top-level "Requires your attention" table. The W7 score-clamp uses the
+   * same field; FP-L closes the propagation gap between scoring and rendering.
+   * Absent → treated as a pre-W2 record and rendered as a normal critical.
+   */
+  verification?: 'verified' | 'unverified';
 }
 
 export interface WorkDoneSection {
@@ -308,8 +317,15 @@ export function formatReviewComment(options: FormatOptions): string {
   }
 
   // 7. Action items — critical + warning findings as checkboxes (single appearance)
+  // FP-L — unverified criticals are excluded from the action-items table. They
+  // render below under "Unverified concerns" instead, so the top-of-comment
+  // "Requires your attention" surface stays aligned with the W7-clamped score.
   const grouped = groupBySeverity(findings);
-  const actionFindings = findings.filter((f) => f.severity === 'critical' || f.severity === 'warning');
+  const actionFindings = findings.filter((f) => {
+    if (f.severity === 'warning') return true;
+    if (f.severity === 'critical' && f.verification !== 'unverified') return true;
+    return false;
+  });
   const infoFindings = grouped.get('info') ?? [];
 
   if (findings.length === 0) {
@@ -344,13 +360,33 @@ export function formatReviewComment(options: FormatOptions): string {
 
   // 8. Detailed findings — critical uncollapsed, warning/info collapsed
   if (showIssuesTable && findings.length > 0) {
-    const criticalFindings = grouped.get('critical') ?? [];
+    const allCriticals = grouped.get('critical') ?? [];
+    // FP-L — split criticals on verification. Verified criticals keep the
+    // 🔴 Critical header; unverified criticals render in a separate advisory
+    // sub-section so the visual hierarchy matches the W7-clamped merge score.
+    const criticalFindings = allCriticals.filter((f) => f.verification !== 'unverified');
+    const unverifiedCriticals = allCriticals.filter((f) => f.verification === 'unverified');
     const warningFindings = grouped.get('warning') ?? [];
 
-    // Critical — shown open (not collapsed)
+    // Critical (verified only) — shown open (not collapsed)
     if (criticalFindings.length > 0) {
       lines.push(`### ${SEVERITY_META.critical.emoji} Critical (${criticalFindings.length})`);
       for (const f of criticalFindings) {
+        lines.push(renderFinding(f, showConfidence));
+      }
+      lines.push('');
+    }
+
+    // FP-L — Unverified concerns (advisory). Only emitted when at least one
+    // unverified critical exists; otherwise the sub-section is omitted entirely
+    // so there's no empty header on the clean path.
+    if (unverifiedCriticals.length > 0) {
+      lines.push(`### ⚠️ Unverified concerns (${unverifiedCriticals.length})`);
+      lines.push(
+        "> The verifier couldn't confirm these against the source. Review carefully; the PR is not blocked on them.",
+      );
+      lines.push('');
+      for (const f of unverifiedCriticals) {
         lines.push(renderFinding(f, showConfidence));
       }
       lines.push('');
