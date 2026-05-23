@@ -180,6 +180,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2) | 2m | 60s | FP-J |
 | [E2E-52](#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces) | An unverified critical drops off the inline / action-table surfaces and lands in a dedicated "Unverified concerns" sub-section (FP-L) | 2m | 60s | FP-L |
 | [E2E-53](#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) | Red verdict (orchestrator score ≤ 2) is softened to advisory when majority of action findings come from chronically-disputed categories (FP-J L1); disclosure footer renders under the merge score (FP-J L3) | 3m | 60s | FP-J |
+| [E2E-54](#e2e-54-fp-k--abstraction-aware-verifier) | Findings alleging "SQL injection on Drizzle eq()", "URL injection on encodeURIComponent", "XSS on JSX text" are dropped by the verifier as abstraction-safe; raw string-concat SQL is still kept (FP-K) | 4m | 90s | FP-K |
 
 ---
 
@@ -1983,6 +1984,56 @@ Branch: `fixture/53-dispute-aware-reconcile`. Two seeding paths:
 - ❌ The disclosure renders above the merge-score line, obscuring the primary verdict
 - ❌ A category with `surfaceCount < 5` makes it into the loader's output (small-N noise guard regressed in `loadCategoryDisputeRates`)
 - ❌ The clamp triggers when the orchestrator already scored ≥ 3 (the `orchestratorScore <= 2` gate regressed — this would be an unwanted *upward* shift since the W7-shaped clamp only ever should soften a would-be-red verdict)
+
+---
+
+### E2E-54: FP-K — abstraction-aware verifier
+
+**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-K](./../docs/false-positive-reduction-plan.md#fp-k--abstraction-aware-verifier--shipped) and [`packages/core/src/agents/prompts.ts`](./../packages/core/src/agents/prompts.ts) (`FINDING_VERIFICATION_PROMPT` — FP-K block).
+
+**Behavior:** the W2 verifier prompt now carries a static "known-safe abstractions" block listing six concrete patterns where a generic injection / XSS / overflow finding is unambiguously neutralised by the surrounding code:
+
+1. **ORM query builders** (Drizzle `eq()` / `and()` / `or()` / `inArray()`, Prisma `where: {...}`, Sequelize `Op.eq`, Knex `.where(col, val)`, TypeORM repository methods) — parameterize all values
+2. **AWS SDK `ExpressionAttributeValues`** placeholders (DynamoDB `:foo` syntax) — parameterize all values
+3. **`encodeURIComponent`** on URL construction — encodes every special character
+4. **React JSX text rendering** (`{x}` interpolation, no `dangerouslySetInnerHTML`) — auto-escapes HTML
+5. **Prepared statements / parameterized SQL** — the canonical case
+6. **Provable arithmetic non-negativity** (chained `Math.min(…, remaining)` subtractions) — non-negative by induction
+
+The block ends with a **fail-safe rule**: *"If you cannot tell from the file content whether the cited code path goes through one of these abstractions, treat the finding as VALID by default — abstraction inference must NEVER false-negative a real defect."* This is the critical guard against over-suppression — the verifier only drops findings when the abstraction is unambiguously present on the cited path, never on ambiguous data flows.
+
+Targets the abstraction-blind hallucination class observed on PR #172 round-1:
+- "SQL injection via unvalidated installation_id" on a `Drizzle eq()` call site
+- "URL injection via unvalidated installationId prop" on a value already passed through `encodeURIComponent`
+- "Potential negative value despite Math.max guard" on arithmetic provably non-negative by induction
+
+Distinct from FP-H/I/J — those guards only activate when `previousFindings` is non-empty. **FP-K fires on first reviews**, where abstraction-blind FPs slip through with no prior signal to discount them against.
+
+**Setup**
+
+Branch: `fixture/54-abstraction-aware`. Three test PRs in sequence:
+
+1. PR-A — uses `Drizzle eq(table.installationId, installationId)` to query a value from a URL parameter. Stub the LLM verifier to return `{"valid": false, "reason": "abstraction-safe — Drizzle eq() parameterizes the value"}` when given the FP-K-augmented prompt.
+2. PR-B — uses `fetch(`/api/foo?id=${encodeURIComponent(id)}`)` to construct a URL from a prop.
+3. PR-C — renders `{user.name}` in JSX (no `dangerouslySetInnerHTML` on the surrounding element).
+4. PR-D (regression guard) — uses raw `db.query(`SELECT * FROM users WHERE id = ${id}`)` (no parameterization, raw concat).
+
+**Expected outcomes**
+
+- [x] PR-A — verifier drops the "SQL injection on Drizzle eq()" finding with `[finding-verify] dropped false-positive critical "SQL injection..." (...): abstraction-safe — Drizzle eq() parameterizes the value`
+- [x] PR-B — verifier drops the "URL injection on encodeURIComponent" finding similarly
+- [x] PR-C — verifier drops the "XSS via text content" finding similarly
+- [x] PR-D (regression) — verifier KEEPS the "SQL injection on raw concat" finding (the FP-K abstraction prefix is absent on the cited path → the model must return `valid: true`, the prompt instructs no override)
+- [x] **Back-compat**: a finding on info-only severity is NOT verified (info-level findings skip W2 entirely; no FP-K-augmented prompt is built for them)
+- [x] **Prompt-shape**: the FP-K block renders on FIRST reviews (`previousFindings` empty) — independent of the FP-H/J prior-context placeholder
+- [x] **Ordering**: FP-K block renders BEFORE the prior-context block on re-reviews, so the verifier reads abstraction guards before anti-anchoring guards
+- [x] **Fail-safe**: when the abstraction is ambiguous (e.g. a method call that COULD be ORM or COULD be raw SQL), the verifier returns VALID by default (the model is instructed; no client-side override forces a drop)
+
+**Failure modes**
+- ❌ Verifier drops a "SQL injection" finding on RAW string-concat SQL (the FP-K block's fail-safe / unambiguous-abstraction-required guard regressed; the model is incorrectly over-applying the abstraction-safe rule)
+- ❌ Verifier drops an "XSS via dangerouslySetInnerHTML" finding (the React JSX clause should NOT cover `dangerouslySetInnerHTML` — only plain `{x}` interpolation)
+- ❌ FP-K block fails to render on first reviews (the block must be in the static body of `FINDING_VERIFICATION_PROMPT`, not gated by `previousFindings.length > 0`)
+- ❌ The model over-suppresses on infrastructure-shaped ambiguous data flows (`store.query(input)` where the store's internal sanitization isn't visible from the cited file) — the fail-safe rule should bias toward VALID; if it fires INVALID anyway, the prompt didn't communicate the fail-safe clearly
 
 ---
 

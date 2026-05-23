@@ -2076,6 +2076,136 @@ describe('verifyFindings', () => {
     expect(llm.calls[0].prompt).not.toContain('{{PRIOR_CONTEXT}}');
     expect(llm.calls[0].prompt).not.toContain('Prior review context');
   });
+
+  // ─── FP-K — abstraction-aware verifier ──────────────────────────────────
+  describe('FP-K abstraction-aware INVALID block', () => {
+    const finding = {
+      file: 'src/a.ts',
+      line: 10,
+      severity: 'critical' as const,
+      category: 'security',
+      title: 'SQL injection via unvalidated installation_id',
+      description: 'User input flows to a database query.',
+      suggestion: 'Validate the value.',
+    };
+    const fileContents = { 'src/a.ts': 'await store.get(installationId);\n' };
+
+    async function getVerifierPrompt(): Promise<string> {
+      const llm = createMockLLM([JSON.stringify({ valid: true })]);
+      await verifyFindings([finding], fileContents, 'light', llm);
+      return llm.calls[0].prompt;
+    }
+
+    it('verifier prompt includes the FP-K known-safe-abstractions header', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('(FP-K)');
+      expect(prompt).toContain('KNOWN-SAFE ABSTRACTIONS');
+    });
+
+    it('names ORM query builders (Drizzle eq/and/or, Prisma where, Sequelize, Knex, TypeORM)', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('ORM query builders');
+      expect(prompt).toContain('Drizzle');
+      expect(prompt).toContain('eq()');
+      expect(prompt).toContain('Prisma');
+      expect(prompt).toContain('Sequelize');
+      expect(prompt).toContain('Knex');
+      expect(prompt).toContain('TypeORM');
+    });
+
+    it('names AWS SDK ExpressionAttributeValues + the :foo placeholder syntax', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('AWS SDK');
+      expect(prompt).toContain('ExpressionAttributeValues');
+      expect(prompt).toContain(':foo');
+    });
+
+    it('names encodeURIComponent on URL construction', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('encodeURIComponent');
+      expect(prompt).toMatch(/URL injection|SSRF/);
+    });
+
+    it('names React JSX text rendering with the no-dangerouslySetInnerHTML caveat', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('React JSX text rendering');
+      expect(prompt).toContain('dangerouslySetInnerHTML');
+      expect(prompt).toMatch(/XSS via text content/);
+    });
+
+    it('names prepared statements / parameterized SQL as the canonical case', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('Prepared statements');
+      expect(prompt).toMatch(/parameterized SQL/i);
+    });
+
+    it('names provable arithmetic non-negativity (the Math.min chain case)', async () => {
+      const prompt = await getVerifierPrompt();
+      expect(prompt).toContain('Provable arithmetic non-negativity');
+      expect(prompt).toContain('Math.min');
+      expect(prompt).toMatch(/could go negative/);
+    });
+
+    it('emits the fail-safe rule biasing toward VALID when the abstraction is ambiguous', async () => {
+      const prompt = await getVerifierPrompt();
+      // The fail-safe is the critical guard against over-suppression. Assert the
+      // verbatim "treat as VALID by default" + the "NEVER false-negative" framing.
+      expect(prompt).toContain('Fail-safe rule for FP-K');
+      expect(prompt).toContain('treat the finding as VALID by default');
+      expect(prompt).toMatch(/NEVER false-negative/);
+    });
+
+    it('FP-K block is present on FIRST reviews (no previousFindings) — independent of FP-H/J L2 prior context', async () => {
+      const llm = createMockLLM([JSON.stringify({ valid: true })]);
+      await verifyFindings([finding], fileContents, 'light', llm);
+      const prompt = llm.calls[0].prompt;
+      // FP-K is in the static body, not the conditional placeholder.
+      expect(prompt).toContain('(FP-K)');
+      // The prior-context block must remain absent on first reviews
+      // (back-compat with the pre-FP-H/J shape).
+      expect(prompt).not.toContain('Prior review context');
+    });
+
+    it('FP-K block coexists with prior-context block on RE-reviews', async () => {
+      const llm = createMockLLM([JSON.stringify({ valid: true })]);
+      const previous: PreviousFinding[] = [
+        { file: 'src/a.ts', line: 1, severity: 'warning', category: 'security', title: 'Old' },
+      ];
+      await verifyFindings([finding], fileContents, 'light', llm, previous);
+      const prompt = llm.calls[0].prompt;
+      expect(prompt).toContain('(FP-K)');
+      expect(prompt).toContain('Prior review context');
+      // Order matters: FP-K (static body) renders BEFORE the prior-context
+      // placeholder so the verifier reads abstraction guards before
+      // anti-anchoring guards.
+      const fpKIdx = prompt.indexOf('(FP-K)');
+      const priorIdx = prompt.indexOf('Prior review context');
+      expect(fpKIdx).toBeLessThan(priorIdx);
+    });
+
+    it('still drops the finding when the model returns valid:false citing the FP-K reason', async () => {
+      // End-to-end smoke: prompt instructs, model decides. We control the model
+      // decision via the mock; this asserts the verifier honours an
+      // abstraction-safe verdict identically to any other valid:false verdict.
+      const llm = createMockLLM([
+        '{"valid": false, "confidence": 0.92, "reason": "abstraction-safe — Drizzle eq() parameterizes the value"}',
+      ]);
+      const result = await verifyFindings([finding], fileContents, 'light', llm);
+      expect(result).toEqual([]);
+    });
+
+    it('still KEEPS the finding when the model returns valid:true (regression: FP-K must not over-suppress)', async () => {
+      // Regression guard for the acceptance-criterion case: a finding alleging
+      // SQL injection on RAW string-concatenated SQL must NOT be dropped.
+      // We assert the verifier path respects the model's "valid:true" return
+      // even with the FP-K block in the prompt (no client-side override).
+      const llm = createMockLLM([
+        '{"valid": true, "confidence": 0.85, "reason": "raw concat, no parameterization in sight"}',
+      ]);
+      const result = await verifyFindings([finding], fileContents, 'light', llm);
+      expect(result).toEqual([{ ...finding, verification: 'verified' }]);
+    });
+  });
 });
 
 // ─── suggestionMatchesExistingCode (FP-I L2) ────────────────────────────────
