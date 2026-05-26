@@ -98,6 +98,11 @@ Globals:
         REVIEWS_TABLE: !Ref ReviewsTable
         API_KEYS_TABLE: !Ref ApiKeysTable
         SESSIONS_TABLE: !Ref SessionsTable
+        # FB-A / FB-E: shared across ReviewAgent (writes) and InsightsRollup (reads/writes).
+        # Must be in Globals so ReviewAgent's best-effort writes don't silently fall back
+        # to the unsuffixed default name and ResourceNotFoundException into a void.
+        FINDING_DISPOSITIONS_TABLE: !Ref FindingDispositionsTable
+        FP_INSIGHTS_TABLE: !Ref FpInsightsTable
 
         # SSM parameter paths for GitHub App credentials.
         # The Lambda functions read these at runtime via the AWS SDK.
@@ -398,12 +403,8 @@ Resources:
 
       Role: !GetAtt LambdaExecutionRole.Arn
 
-      Environment:
-        Variables:
-          STAGE: !Ref Stage
-          INSTALLATIONS_TABLE: !Ref InstallationsTable
-          FINDING_DISPOSITIONS_TABLE: !Ref FindingDispositionsTable
-          FP_INSIGHTS_TABLE: !Ref FpInsightsTable
+      # No Environment block — inherits STAGE / INSTALLATIONS_TABLE /
+      # FINDING_DISPOSITIONS_TABLE / FP_INSIGHTS_TABLE from Globals.
 
       # EventBridge schedule trigger — 03:00 UTC daily.
       Events:
