@@ -38,6 +38,8 @@ import {
   type ReviewThreadComment,
 } from '../github/client.js';
 import { findingMatchKeys, type FindingLike } from '../review-delta.js';
+import type { IReviewStore } from '../storage/types.js';
+import type { ReviewItem } from '../types/db.js';
 import type { Octokit } from '@octokit/rest';
 
 /** Max number of bot replies permitted in a single thread before we stop engaging. */
@@ -277,6 +279,94 @@ export function enrichResolvedFindingKeys(
     }
   }
   return Array.from(enriched);
+}
+
+/**
+ * FP-F — defensive cap on the persisted `inlineResolvedKeys` set.
+ *
+ * Each key is roughly `<file>::T::<title>` or `<file>::F::<fingerprint>` —
+ * a few hundred bytes at most. 500 keys keeps the field comfortably under
+ * the row-size limits both backends impose (DynamoDB items: 400 KB hard
+ * limit; Postgres jsonb: practically unbounded but rebuild time matters
+ * once you cross the page boundary). Matches the same defensive cap the
+ * W3 triage path uses for its disputed-keys list, so a misbehaving caller
+ * can't blow up either column independently.
+ */
+export const MAX_INLINE_RESOLVED_KEYS = 500;
+
+/**
+ * FP-F — persist the developer's inline-resolve memory onto the prior
+ * review record's `inlineResolvedKeys`. Encapsulates: the diagnostic
+ * drop-point logs (no prior review / no resolved keys derived), the
+ * fingerprint enrichment, the bounded merge, the actual store write,
+ * and the success-conditional log.
+ *
+ * Extracted so the lambda and server wrappers can share one path —
+ * eliminates ~30 lines of duplicate logic per handler and fixes the
+ * "success-log fires regardless of `.catch`" misleading-logging bug
+ * by gating the log on actual `await` completion via try/catch.
+ *
+ * Best-effort: failures log a warning and return `persisted: false`,
+ * never throw — the caller's PR review must not crash on a failed
+ * `inlineResolvedKeys` write.
+ */
+export async function persistInlineResolveMemory(opts: {
+  reviewStore: IReviewStore;
+  /**
+   * Latest complete review for this PR. The persist target. When
+   * `undefined`, the no-prior-review diagnostic fires and the call
+   * is a no-op — handlers can pass through whatever `find` returned
+   * without pre-checking.
+   */
+  latestReview: ReviewItem | undefined;
+  /**
+   * The match keys the inline-resolve fast path derived from the thread
+   * root. When empty/undefined, the no-keys-derived diagnostic fires and
+   * the call is a no-op — handlers can pass `result.resolvedFindingKeys`
+   * directly without pre-checking.
+   */
+  resolvedFindingKeys: string[] | undefined;
+  repoFullName: string;
+  prNumber: number;
+}): Promise<{ persisted: boolean; enrichedCount: number }> {
+  const { reviewStore, latestReview, resolvedFindingKeys, repoFullName, prNumber } = opts;
+  if (!latestReview) {
+    console.warn(
+      '[fp-f] no prior complete review found for %s#%d — inline-resolve memory not persisted',
+      repoFullName, prNumber,
+    );
+    return { persisted: false, enrichedCount: 0 };
+  }
+  if (!resolvedFindingKeys || resolvedFindingKeys.length === 0) {
+    console.warn(
+      '[fp-f] resolve fired but no resolved keys derived for %s#%d — root inline comment likely missing path or `**🔴 <title>**` shape',
+      repoFullName, prNumber,
+    );
+    return { persisted: false, enrichedCount: 0 };
+  }
+  const enriched = enrichResolvedFindingKeys(resolvedFindingKeys, latestReview.findings);
+  const existing = new Set(latestReview.inlineResolvedKeys ?? []);
+  for (const k of enriched) existing.add(k);
+  const merged = Array.from(existing).slice(0, MAX_INLINE_RESOLVED_KEYS);
+  try {
+    await reviewStore.updateStatus(
+      repoFullName,
+      latestReview.prNumberCommitSha as string,
+      latestReview.status as 'complete',
+      { inlineResolvedKeys: merged },
+    );
+    console.log(
+      '[fp-f] persisted %d inline-resolved key%s (%d after fingerprint enrichment) on %s#%d',
+      resolvedFindingKeys.length,
+      resolvedFindingKeys.length === 1 ? '' : 's',
+      enriched.length,
+      repoFullName, prNumber,
+    );
+    return { persisted: true, enrichedCount: enriched.length };
+  } catch (err) {
+    console.warn('[fp-f] failed to persist inline-resolve keys for %s#%d:', repoFullName, prNumber, err);
+    return { persisted: false, enrichedCount: enriched.length };
+  }
 }
 
 /** Parsed JSON response from the inline reply agent. */

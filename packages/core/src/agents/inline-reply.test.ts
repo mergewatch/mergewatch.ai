@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Octokit } from '@octokit/rest';
 import type { ILLMProvider } from '../llm/types.js';
 import {
@@ -6,9 +6,13 @@ import {
   detectResolveIntent,
   parseRejectIntent,
   enrichResolvedFindingKeys,
+  persistInlineResolveMemory,
+  MAX_INLINE_RESOLVED_KEYS,
   REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
 } from './inline-reply.js';
+import type { IReviewStore } from '../storage/types.js';
+import type { ReviewItem } from '../types/db.js';
 
 // ─── detectResolveIntent ────────────────────────────────────────────────────
 
@@ -134,6 +138,173 @@ describe('enrichResolvedFindingKeys', () => {
     const enriched = enrichResolvedFindingKeys(resolved, prev);
     expect(enriched).toHaveLength(2);
     expect(new Set(enriched)).toEqual(new Set(['src/a.ts::T::T', 'src/a.ts::F::fp']));
+  });
+});
+
+// ─── persistInlineResolveMemory (FP-F regression #182 + review feedback) ───
+
+describe('persistInlineResolveMemory', () => {
+  type UpdateStatusArgs = Parameters<IReviewStore['updateStatus']>;
+  type UpdateStatusFn = (...args: UpdateStatusArgs) => Promise<void>;
+  interface MockReviewStore extends IReviewStore {
+    updateStatusCalls: UpdateStatusArgs[];
+    updateStatusImpl: UpdateStatusFn;
+  }
+
+  function makeReviewStore(): MockReviewStore {
+    const updateStatusCalls: UpdateStatusArgs[] = [];
+    let updateStatusImpl: UpdateStatusFn = async () => {};
+    const store: MockReviewStore = {
+      updateStatusCalls,
+      get updateStatusImpl() { return updateStatusImpl; },
+      set updateStatusImpl(v: UpdateStatusFn) { updateStatusImpl = v; },
+      async upsert() {},
+      async claimReview() { return true; },
+      async updateStatus(repoFullName, key, status, extra) {
+        const args: UpdateStatusArgs = [repoFullName, key, status, extra];
+        updateStatusCalls.push(args);
+        return updateStatusImpl(...args);
+      },
+      async queryByPR() { return []; },
+    };
+    return store;
+  }
+
+  function makeLatestReview(over: Partial<ReviewItem> = {}): ReviewItem {
+    return {
+      repoFullName: 'o/r',
+      prNumberCommitSha: '42#abc',
+      status: 'complete',
+      createdAt: '2026-05-01T00:00:00Z',
+      ...over,
+    } as ReviewItem;
+  }
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it('no-ops + logs the no-prior-review diagnostic when latestReview is undefined', async () => {
+    const store = makeReviewStore();
+    const r = await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview: undefined,
+      resolvedFindingKeys: ['a::T::x'],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    expect(r).toEqual({ persisted: false, enrichedCount: 0 });
+    expect(store.updateStatusCalls).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/no prior complete review found/),
+      'o/r', 42,
+    );
+  });
+
+  it('no-ops + logs the no-keys diagnostic when resolvedFindingKeys is empty', async () => {
+    const store = makeReviewStore();
+    const r = await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview: makeLatestReview(),
+      resolvedFindingKeys: [],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    expect(r).toEqual({ persisted: false, enrichedCount: 0 });
+    expect(store.updateStatusCalls).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/no resolved keys derived/),
+      'o/r', 42,
+    );
+  });
+
+  it('persists + logs success on the happy path, enriching with fingerprints from the prior findings', async () => {
+    const store = makeReviewStore();
+    const latestReview = makeLatestReview({
+      findings: [
+        { file: 'src/a.ts', line: 1, severity: 'critical', title: 'T', description: '', suggestion: '', fingerprint: 'fp1' } as ReviewItem['findings'] extends (infer X)[] | undefined ? X : never,
+      ],
+    });
+    const r = await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview,
+      resolvedFindingKeys: ['src/a.ts::T::T'],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    expect(r.persisted).toBe(true);
+    expect(r.enrichedCount).toBe(2);
+    expect(store.updateStatusCalls).toHaveLength(1);
+    const [repo, key, status, extra] = store.updateStatusCalls[0];
+    expect(repo).toBe('o/r');
+    expect(key).toBe('42#abc');
+    expect(status).toBe('complete');
+    expect(new Set((extra as { inlineResolvedKeys: string[] }).inlineResolvedKeys)).toEqual(
+      new Set(['src/a.ts::T::T', 'src/a.ts::F::fp1']),
+    );
+    expect(logSpy).toHaveBeenCalled();
+  });
+
+  it('unions enriched keys with the existing inlineResolvedKeys on the review (preserves prior memory)', async () => {
+    const store = makeReviewStore();
+    const latestReview = makeLatestReview({
+      inlineResolvedKeys: ['old/key::T::Foo'],
+      findings: [],
+    });
+    await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview,
+      resolvedFindingKeys: ['new/key::T::Bar'],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    const merged = (store.updateStatusCalls[0][3] as { inlineResolvedKeys: string[] }).inlineResolvedKeys;
+    expect(new Set(merged)).toEqual(new Set(['old/key::T::Foo', 'new/key::T::Bar']));
+  });
+
+  it('caps the merged set at MAX_INLINE_RESOLVED_KEYS (defensive row-size guard)', async () => {
+    const store = makeReviewStore();
+    const existing = Array.from({ length: MAX_INLINE_RESOLVED_KEYS + 50 }, (_, i) => `e::T::${i}`);
+    await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview: makeLatestReview({ inlineResolvedKeys: existing, findings: [] }),
+      resolvedFindingKeys: ['new::T::X'],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    const merged = (store.updateStatusCalls[0][3] as { inlineResolvedKeys: string[] }).inlineResolvedKeys;
+    expect(merged).toHaveLength(MAX_INLINE_RESOLVED_KEYS);
+  });
+
+  it('reports persisted=false + warn-logs (does NOT log success) when updateStatus throws — fixes the misleading-log bug from the PR #185 review', async () => {
+    // The pre-fix bug: success log fired regardless of `.catch`. The new
+    // contract: log success ONLY on actual await completion, log failure
+    // on throw, never both. This guards against the regression.
+    const store = makeReviewStore();
+    store.updateStatusImpl = async () => { throw new Error('dynamo blew up'); };
+    const r = await persistInlineResolveMemory({
+      reviewStore: store,
+      latestReview: makeLatestReview({ findings: [] }),
+      resolvedFindingKeys: ['a::T::x'],
+      repoFullName: 'o/r',
+      prNumber: 42,
+    });
+    expect(r.persisted).toBe(false);
+    expect(r.enrichedCount).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/failed to persist inline-resolve keys/),
+      'o/r', 42,
+      expect.any(Error),
+    );
+    // Success log MUST NOT fire.
+    expect(logSpy).not.toHaveBeenCalled();
   });
 });
 

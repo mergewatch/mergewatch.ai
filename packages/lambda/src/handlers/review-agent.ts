@@ -44,7 +44,7 @@ import {
   loadCategoryDisputeRates,
   type DetectedLinter,
   handleInlineReply,
-  enrichResolvedFindingKeys,
+  persistInlineResolveMemory,
   fetchTriageComments,
   computeDisputedKeys,
   partitionDisputed,
@@ -236,44 +236,21 @@ async function handleInlineReplyMode(
       ).catch((err) => console.warn('Failed to roll up inline reply cost:', err));
     }
 
-    // FP-F — persist inline-resolve memory; mirrors the server handler. See
-    // packages/server/src/review-processor.ts for the rationale.
+    // FP-F — persist inline-resolve memory + record dispute analytics.
+    // The shared helper handles drop-point diagnostics, fingerprint
+    // enrichment, the bounded merge, and the success-conditional log
+    // (only fires on actual await completion via try/catch, not
+    // `.then`-orphaned). recordDisputes runs independently — its
+    // analytics signal is decoupled from inlineResolvedKeys persistence.
     if (result.action === 'resolved') {
-      // Diagnostic — fixes #182 silent-failure mode. Each drop point logs
-      // *why* the persist would have skipped, so the next time inline-resolve
-      // fails to suppress on re-review the CloudWatch trail makes the cause
-      // obvious instead of leaving the operator to guess between 4 hypotheses.
-      if (!latestReview) {
-        console.warn('[fp-f] no prior complete review found for %s#%d — inline-resolve memory not persisted', repoFullName, prNumber);
-      } else if (!result.resolvedFindingKeys || result.resolvedFindingKeys.length === 0) {
-        console.warn('[fp-f] resolve fired but no resolved keys derived for %s#%d — root inline comment likely missing path or `**🔴 <title>**` shape', repoFullName, prNumber);
-      } else {
-        // Enrich with fingerprint keys from the prior review's findings.
-        // Title-only persistence is brittle: the next round's LLM can
-        // reword the title even when the cited code is unchanged, and a
-        // pure title match would miss. Looking up the matching prior
-        // finding by title key and unioning its `findingMatchKeys` adds
-        // the `file::F::<fingerprint>` form so suppression survives
-        // title drift.
-        const enriched = enrichResolvedFindingKeys(result.resolvedFindingKeys, latestReview.findings);
-        const existing = new Set(latestReview.inlineResolvedKeys ?? []);
-        for (const k of enriched) existing.add(k);
-        const merged = Array.from(existing).slice(0, 500);
-        await reviewStore.updateStatus(
-          repoFullName,
-          latestReview.prNumberCommitSha as string,
-          latestReview.status as 'complete',
-          { inlineResolvedKeys: merged },
-        ).catch((err) => console.warn('[fp-f] failed to persist inline-resolve keys:', err));
-        console.log(
-          '[fp-f] persisted %d inline-resolved key%s (%d after fingerprint enrichment) on %s#%d',
-          result.resolvedFindingKeys.length,
-          result.resolvedFindingKeys.length === 1 ? '' : 's',
-          enriched.length,
-          repoFullName,
-          prNumber,
-        );
-        // FB-A — every inline-resolve is also an explicit dispute for analytics.
+      await persistInlineResolveMemory({
+        reviewStore,
+        latestReview,
+        resolvedFindingKeys: result.resolvedFindingKeys,
+        repoFullName,
+        prNumber,
+      });
+      if (result.resolvedFindingKeys && result.resolvedFindingKeys.length > 0) {
         await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
       }
     }
