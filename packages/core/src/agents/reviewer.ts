@@ -1844,8 +1844,22 @@ export function reconcileMergeScore(input: {
    * Lambda wires the FP-insight store).
    */
   categoryDisputeRates?: Record<string, number>;
+  /**
+   * FP-L (regression #183) — number of Critical findings the orchestrator
+   * emitted **before** any post-orchestrator filtering (grounding /
+   * verification / line-proximity / W3 dispute). When this is > 0 but
+   * `filteredFindings` contains no criticals, the orchestrator's score
+   * and reason were based on findings the downstream pipeline dropped —
+   * the FP-L clamp below regenerates both so the verdict surfaces agree
+   * with what actually renders.
+   *
+   * Defaults to 0 / treated as absent for back-compat. Callers without
+   * the pre-filter count get the original "trust the orchestrator"
+   * behavior — the same as before this regression fix.
+   */
+  orchestratorCriticalsCount?: number;
 }): { mergeScore: number; mergeScoreReason: string; disputeDisclosure?: string } {
-  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason, categoryDisputeRates } = input;
+  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason, categoryDisputeRates, orchestratorCriticalsCount } = input;
 
   const actionFindings = filteredFindings.filter(
     (f) => f.severity === 'critical' || f.severity === 'warning',
@@ -1917,6 +1931,32 @@ export function reconcileMergeScore(input: {
     return {
       mergeScore: 3,
       mergeScoreReason: `${n} critical finding${n === 1 ? '' : 's'} could not be confirmed against the source (W2 verification inconclusive). Downgraded to advisory — review carefully, but the PR is not blocked on unverified concerns.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
+    };
+  }
+  // FP-L (regression #183) — orchestrator scored blocking because of a
+  // critical that a downstream stage (verifier / grounding / line-filter /
+  // W3 dispute) subsequently dropped entirely. The orchestrator's reason
+  // text still names the dropped critical and the score still maps to
+  // REQUEST_CHANGES, but the rendered body has no critical row and the
+  // check conclusion is success (since it follows post-filter criticals).
+  // Three surfaces disagree.
+  //
+  // Gated on `orchestratorCriticalsCount > 0` so callers without the
+  // pre-filter count keep the legacy "trust the orchestrator" behavior.
+  // When the count is present and the post-filter view has zero criticals,
+  // downgrade to the warning tier and regenerate the reason from a
+  // deterministic template — the verdict prose stops referencing findings
+  // that no longer appear, and the review-event state matches the check
+  // conclusion.
+  const droppedAllCriticals =
+    (orchestratorCriticalsCount ?? 0) > 0 && currentCriticals.length === 0;
+  if (droppedAllCriticals && orchestratorScore <= 2 && actionFindings.length > 0) {
+    const w = actionFindings.length;
+    const dropped = orchestratorCriticalsCount!;
+    return {
+      mergeScore: 3,
+      mergeScoreReason: `${dropped} critical finding${dropped === 1 ? ' was' : 's were'} dropped by post-orchestrator verification — ${w} warning${w === 1 ? '' : 's'} remain. Downgraded from a blocking verdict to advisory; review the warnings, but the PR is not blocked.`,
       ...(disputeDisclosure ? { disputeDisclosure } : {}),
     };
   }
@@ -2215,6 +2255,15 @@ export async function runReviewPipeline(
     ? await runDeltaCaptionAgent(delta, lightModelId, llm)
     : null;
 
+  // FP-L (regression #183) — count the criticals the orchestrator emitted
+  // *before* any downstream stage (grounding / verification / line-filter /
+  // W3 dispute) dropped them. Passed through to reconcileMergeScore so the
+  // verdict reconciler can detect when a blocking score was driven by a
+  // critical that no longer appears in the rendered surfaces.
+  const orchestratorCriticalsCount = orchestratorResult.findings.filter(
+    (f) => f.severity === 'critical',
+  ).length;
+
   // Reconcile the orchestrator's verdict with the post-filter findings.
   const { mergeScore, mergeScoreReason, disputeDisclosure } = reconcileMergeScore({
     filteredFindings,
@@ -2222,6 +2271,7 @@ export async function runReviewPipeline(
     orchestratorScore: orchestratorResult.mergeScore,
     orchestratorReason: orchestratorResult.mergeScoreReason,
     categoryDisputeRates: options.categoryDisputeRates,
+    orchestratorCriticalsCount,
   });
 
   return {

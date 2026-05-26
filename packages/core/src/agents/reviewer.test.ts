@@ -2397,6 +2397,131 @@ describe('reconcileMergeScore', () => {
     expect(r.mergeScoreReason).toMatch(/net improvement/);
   });
 
+  // ─── FP-L regression (#183) — verifier-dropped criticals ────────────────
+  //
+  // Scenario: orchestrator emitted a critical and scored 2 (blocking). The
+  // verifier (FP-E / FP-I L2 / FP-K "valid:false") subsequently dropped
+  // the critical entirely. Pre-fix: orchestrator score + reason pass
+  // through, producing a 3-way mismatch — verdict prose names a critical
+  // that doesn't render, review state is REQUEST_CHANGES, check
+  // conclusion is success. Post-fix: tier downgrades to 3 and the reason
+  // is regenerated from a deterministic template that matches what
+  // actually renders.
+  describe('FP-L #183 — verifier dropped all criticals from a blocking verdict', () => {
+    it('downgrades to 3 when orchestrator emitted criticals, post-filter has none, score ≤2, warnings remain', () => {
+      // The PR #71 scenario — orchestrator scored 2 because of a
+      // path-traversal critical the verifier subsequently dropped.
+      const r = reconcileMergeScore({
+        filteredFindings: [warning(), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'Critical path traversal and warnings; needs fixes before merging.',
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(3);
+      // Reason regenerated from the deterministic template — explicitly
+      // attributes the downgrade to post-orchestrator dropping rather
+      // than letting the stale orchestrator prose stand.
+      expect(r.mergeScoreReason).toMatch(/1 critical finding was dropped/i);
+      expect(r.mergeScoreReason).toMatch(/2 warnings remain/);
+      expect(r.mergeScoreReason).toMatch(/not blocked/i);
+      // The stale orchestrator prose ("Critical path traversal and …
+      // needs fixes before merging") must NOT leak into the reconciled
+      // reason — that exact phrase is the user-facing bug.
+      expect(r.mergeScoreReason).not.toContain('needs fixes before merging');
+    });
+
+    it('downgrades on orchestratorScore=1 (the strictest blocking tier) the same way', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 1,
+        orchestratorReason: 'multiple criticals',
+        orchestratorCriticalsCount: 3,
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toMatch(/3 critical findings were dropped/);
+      expect(r.mergeScoreReason).toMatch(/1 warning\b/);
+    });
+
+    it('does NOT fire when even one Critical survives post-filter (the surviving one still blocks)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [critical({ verification: 'verified' }), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'one critical + warning',
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(2);
+      expect(r.mergeScoreReason).toBe('one critical + warning');
+    });
+
+    it('does NOT fire when the orchestrator score is already ≥3 (only clamps a blocking verdict)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'yellow',
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toBe('yellow');
+    });
+
+    it('does NOT fire without orchestratorCriticalsCount (back-compat with callers that pre-date this fix)', () => {
+      // The exact same shape as the first case but with the count omitted.
+      // Behavior must match pre-#183: orchestrator score stands.
+      const r = reconcileMergeScore({
+        filteredFindings: [warning(), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'two warnings, blocking',
+      });
+      expect(r.mergeScore).toBe(2);
+      expect(r.mergeScoreReason).toBe('two warnings, blocking');
+    });
+
+    it('does NOT fire when orchestratorCriticalsCount is 0 (orchestrator never had criticals; warnings-only block is its judgment)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning(), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'two SQL injection warnings',
+        orchestratorCriticalsCount: 0,
+      });
+      expect(r.mergeScore).toBe(2);
+    });
+
+    it('falls through to the no-action-items branch (mergeScore=5) when the only critical was dropped AND only info remains', () => {
+      // No warnings either — actionFindings.length === 0 → noActionItems
+      // branch wins before the FP-L clamp is consulted, returning 5/5.
+      const r = reconcileMergeScore({
+        filteredFindings: [{ ...warning(), severity: 'info' }],
+        previousFindings: undefined,
+        orchestratorScore: 1,
+        orchestratorReason: 'critical security vuln',
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(5);
+      expect(r.mergeScoreReason).toMatch(/only informational/i);
+    });
+
+    it('W7 unverified-criticals clamp still takes precedence when criticals are present (FP-L only fires when post-filter criticals are 0)', () => {
+      // Documents the ordering: this new clamp checks
+      // `currentCriticals.length === 0`, so it never competes with W7
+      // (which only fires when criticals exist but are unverified).
+      const r = reconcileMergeScore({
+        filteredFindings: [critical({ verification: 'unverified' })],
+        previousFindings: undefined,
+        orchestratorScore: 1,
+        orchestratorReason: 'one critical',
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toMatch(/could not be confirmed|verification inconclusive/i);
+    });
+  });
+
   // ─── FP-J L1 — dispute-aware verdict softening ────────────────────────
   describe('FP-J L1 — categoryDisputeRates', () => {
     it('back-compat: absent categoryDisputeRates behaves identically to today (orchestrator score stands)', () => {
