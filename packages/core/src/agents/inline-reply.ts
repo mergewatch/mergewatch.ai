@@ -37,7 +37,7 @@ import {
   extractInlineCommentTitle,
   type ReviewThreadComment,
 } from '../github/client.js';
-import { findingMatchKeys } from '../review-delta.js';
+import { findingMatchKeys, type FindingLike } from '../review-delta.js';
 import type { Octokit } from '@octokit/rest';
 
 /** Max number of bot replies permitted in a single thread before we stop engaging. */
@@ -243,6 +243,40 @@ function deriveResolvedFindingKeys(root: ReviewThreadComment): string[] {
   // the emitted keys — the title key is `file::T::title`, which is exactly
   // what we want here (no fingerprint is recoverable from the comment body).
   return findingMatchKeys({ file: root.path, line: 0, title });
+}
+
+/**
+ * FP-F (regression #182) — Title-only persistence is fragile: the next
+ * review round's LLM can reword the title even when the cited code is
+ * unchanged, defeating the title-key match. The previous review's
+ * findings array carries the fingerprint for each finding (set by W8/W9
+ * during the original pipeline run), so the caller can union the
+ * fingerprint key with the resolved title key. With *both* keys in
+ * `inlineResolvedKeys`, the next round's `partitionDisputed` will
+ * suppress the finding via the fingerprint even if the title drifts.
+ *
+ * Looks up findings whose `findingMatchKeys` intersect `resolvedKeys`
+ * (the title key acts as the join), then unions in all of that
+ * finding's keys (which includes the `file::F::<fingerprint>` form when
+ * present). Pure / no I/O — safe to call from any handler wrapper.
+ *
+ * Returns `resolvedKeys` unchanged when `previousFindings` is missing
+ * or empty; never throws.
+ */
+export function enrichResolvedFindingKeys(
+  resolvedKeys: string[],
+  previousFindings: FindingLike[] | undefined | null,
+): string[] {
+  if (!previousFindings || previousFindings.length === 0) return [...resolvedKeys];
+  const seed = new Set(resolvedKeys);
+  const enriched = new Set(seed);
+  for (const f of previousFindings) {
+    const keys = findingMatchKeys(f);
+    if (keys.some((k) => seed.has(k))) {
+      for (const k of keys) enriched.add(k);
+    }
+  }
+  return Array.from(enriched);
 }
 
 /** Parsed JSON response from the inline reply agent. */

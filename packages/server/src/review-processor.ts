@@ -12,6 +12,7 @@ import {
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
+  enrichResolvedFindingKeys,
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
   recordFindingSurfacings, recordDisputes, detectQuietDrops, recordQuietDrops,
   pollAndRecordInlineReactions,
@@ -152,34 +153,48 @@ async function handleInlineReplyJob(
     // review record's `inlineResolvedKeys` set. The next full review unions
     // these with the live-computed W3 disputedKeys so the finding doesn't
     // get re-emitted under a slightly-different framing.
-    if (
-      latestReview &&
-      result.action === 'resolved' &&
-      result.resolvedFindingKeys &&
-      result.resolvedFindingKeys.length > 0
-    ) {
-      const existing = new Set(latestReview.inlineResolvedKeys ?? []);
-      for (const k of result.resolvedFindingKeys) existing.add(k);
-      // Bound the persisted set defensively — even a misbehaving caller
-      // can't blow up the row size. Same order-preserving cap as the W3
-      // path uses for triage keys.
-      const merged = Array.from(existing).slice(0, 500);
-      await deps.reviewStore.updateStatus(
-        repoFullName,
-        latestReview.prNumberCommitSha as string,
-        latestReview.status as 'complete',
-        { inlineResolvedKeys: merged },
-      ).catch((err) => console.warn('[fp-f] failed to persist inline-resolve keys:', err));
-      console.log(
-        '[fp-f] persisted %d inline-resolved key%s on %s#%d',
-        result.resolvedFindingKeys.length,
-        result.resolvedFindingKeys.length === 1 ? '' : 's',
-        repoFullName,
-        prNumber,
-      );
-      // FB-A — every inline-resolve also counts as an explicit per-finding
-      // dispute. Best-effort write; the helper logs+swallows on failure.
-      await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+    if (result.action === 'resolved') {
+      // Diagnostic — fixes #182 silent-failure mode. Each drop point logs
+      // *why* the persist would have skipped, so the next time inline-resolve
+      // fails to suppress on re-review the operator log makes the cause
+      // obvious instead of leaving the operator to guess between hypotheses.
+      if (!latestReview) {
+        console.warn('[fp-f] no prior complete review found for %s#%d — inline-resolve memory not persisted', repoFullName, prNumber);
+      } else if (!result.resolvedFindingKeys || result.resolvedFindingKeys.length === 0) {
+        console.warn('[fp-f] resolve fired but no resolved keys derived for %s#%d — root inline comment likely missing path or `**🔴 <title>**` shape', repoFullName, prNumber);
+      } else {
+        // Enrich with fingerprint keys from the prior review's findings.
+        // Title-only persistence is brittle: the next round's LLM can
+        // reword the title even when the cited code is unchanged, and a
+        // pure title match would miss. Looking up the matching prior
+        // finding by title key and unioning its `findingMatchKeys` adds
+        // the `file::F::<fingerprint>` form so suppression survives
+        // title drift.
+        const enriched = enrichResolvedFindingKeys(result.resolvedFindingKeys, latestReview.findings);
+        const existing = new Set(latestReview.inlineResolvedKeys ?? []);
+        for (const k of enriched) existing.add(k);
+        // Bound the persisted set defensively — even a misbehaving caller
+        // can't blow up the row size. Same order-preserving cap as the W3
+        // path uses for triage keys.
+        const merged = Array.from(existing).slice(0, 500);
+        await deps.reviewStore.updateStatus(
+          repoFullName,
+          latestReview.prNumberCommitSha as string,
+          latestReview.status as 'complete',
+          { inlineResolvedKeys: merged },
+        ).catch((err) => console.warn('[fp-f] failed to persist inline-resolve keys:', err));
+        console.log(
+          '[fp-f] persisted %d inline-resolved key%s (%d after fingerprint enrichment) on %s#%d',
+          result.resolvedFindingKeys.length,
+          result.resolvedFindingKeys.length === 1 ? '' : 's',
+          enriched.length,
+          repoFullName,
+          prNumber,
+        );
+        // FB-A — every inline-resolve also counts as an explicit per-finding
+        // dispute. Best-effort write; the helper logs+swallows on failure.
+        await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+      }
     }
 
     // FB-D — `/mergewatch reject` persists a categorised rejection per

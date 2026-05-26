@@ -5,6 +5,7 @@ import {
   handleInlineReply,
   detectResolveIntent,
   parseRejectIntent,
+  enrichResolvedFindingKeys,
   REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
 } from './inline-reply.js';
@@ -53,6 +54,86 @@ describe('detectResolveIntent', () => {
     expect(detectResolveIntent('resolves the issue in the next PR')).toBe(false);
     expect(detectResolveIntent('I cannot resolve this right now')).toBe(false);
     expect(detectResolveIntent('the bug will resolve itself')).toBe(false);
+  });
+});
+
+// ─── enrichResolvedFindingKeys (FP-F regression #182) ─────────────────────
+
+describe('enrichResolvedFindingKeys', () => {
+  it('adds the fingerprint key for any prior finding whose title key matches a resolved key', () => {
+    // Title-only persistence is brittle when the next review's LLM
+    // rewords the title; adding the fingerprint key from the prior
+    // round's findings makes suppression survive the rewording.
+    const resolved = ['src/admin.ts::T::Unauthenticated admin endpoint'];
+    const prev = [
+      { file: 'src/admin.ts', line: 8, title: 'Unauthenticated admin endpoint', fingerprint: 'abc123' },
+    ];
+    const enriched = enrichResolvedFindingKeys(resolved, prev);
+    expect(enriched).toContain('src/admin.ts::T::Unauthenticated admin endpoint');
+    expect(enriched).toContain('src/admin.ts::F::abc123');
+    expect(enriched).toHaveLength(2);
+  });
+
+  it('returns the seed unchanged when the prior finding has no fingerprint', () => {
+    const resolved = ['src/admin.ts::T::Title'];
+    const prev = [{ file: 'src/admin.ts', line: 8, title: 'Title' }];
+    const enriched = enrichResolvedFindingKeys(resolved, prev);
+    expect(enriched).toEqual(['src/admin.ts::T::Title']);
+  });
+
+  it('passes through resolved keys when previousFindings is empty / undefined / null', () => {
+    const resolved = ['src/admin.ts::T::Title'];
+    expect(enrichResolvedFindingKeys(resolved, undefined)).toEqual(resolved);
+    expect(enrichResolvedFindingKeys(resolved, null)).toEqual(resolved);
+    expect(enrichResolvedFindingKeys(resolved, [])).toEqual(resolved);
+  });
+
+  it('ignores prior findings that do not intersect the seed', () => {
+    // The join is "any of finding's keys is in the seed". If neither
+    // title nor fingerprint key matches a resolved key, do not enrich.
+    const resolved = ['src/a.ts::T::Resolved'];
+    const prev = [
+      { file: 'src/b.ts', line: 1, title: 'Unrelated', fingerprint: 'xyz' },
+      { file: 'src/a.ts', line: 1, title: 'Different title same file', fingerprint: 'qqq' },
+    ];
+    const enriched = enrichResolvedFindingKeys(resolved, prev);
+    expect(enriched).toEqual(['src/a.ts::T::Resolved']);
+  });
+
+  it('matches via fingerprint key when the seed already carries one', () => {
+    // Defensive: a future caller that hands enrich a fingerprint key
+    // should still pick up the title key from the matching prior finding.
+    const resolved = ['src/a.ts::F::fp1'];
+    const prev = [{ file: 'src/a.ts', line: 1, title: 'T', fingerprint: 'fp1' }];
+    const enriched = enrichResolvedFindingKeys(resolved, prev);
+    expect(new Set(enriched)).toEqual(new Set(['src/a.ts::F::fp1', 'src/a.ts::T::T']));
+  });
+
+  it('handles multiple resolved findings independently', () => {
+    const resolved = [
+      'src/a.ts::T::Alpha',
+      'src/b.ts::T::Beta',
+    ];
+    const prev = [
+      { file: 'src/a.ts', line: 1, title: 'Alpha', fingerprint: 'aaa' },
+      { file: 'src/b.ts', line: 1, title: 'Beta', fingerprint: 'bbb' },
+      { file: 'src/c.ts', line: 1, title: 'Gamma', fingerprint: 'ccc' },
+    ];
+    const enriched = new Set(enrichResolvedFindingKeys(resolved, prev));
+    expect(enriched).toEqual(new Set([
+      'src/a.ts::T::Alpha',
+      'src/a.ts::F::aaa',
+      'src/b.ts::T::Beta',
+      'src/b.ts::F::bbb',
+    ]));
+  });
+
+  it('deduplicates when seed and prior finding produce the same key', () => {
+    const resolved = ['src/a.ts::T::T', 'src/a.ts::F::fp'];
+    const prev = [{ file: 'src/a.ts', line: 1, title: 'T', fingerprint: 'fp' }];
+    const enriched = enrichResolvedFindingKeys(resolved, prev);
+    expect(enriched).toHaveLength(2);
+    expect(new Set(enriched)).toEqual(new Set(['src/a.ts::T::T', 'src/a.ts::F::fp']));
   });
 });
 
