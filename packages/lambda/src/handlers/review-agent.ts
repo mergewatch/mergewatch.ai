@@ -44,6 +44,7 @@ import {
   loadCategoryDisputeRates,
   type DetectedLinter,
   handleInlineReply,
+  persistInlineResolveMemory,
   fetchTriageComments,
   computeDisputedKeys,
   partitionDisputed,
@@ -235,32 +236,23 @@ async function handleInlineReplyMode(
       ).catch((err) => console.warn('Failed to roll up inline reply cost:', err));
     }
 
-    // FP-F — persist inline-resolve memory; mirrors the server handler. See
-    // packages/server/src/review-processor.ts for the rationale.
-    if (
-      latestReview &&
-      result.action === 'resolved' &&
-      result.resolvedFindingKeys &&
-      result.resolvedFindingKeys.length > 0
-    ) {
-      const existing = new Set(latestReview.inlineResolvedKeys ?? []);
-      for (const k of result.resolvedFindingKeys) existing.add(k);
-      const merged = Array.from(existing).slice(0, 500);
-      await reviewStore.updateStatus(
-        repoFullName,
-        latestReview.prNumberCommitSha as string,
-        latestReview.status as 'complete',
-        { inlineResolvedKeys: merged },
-      ).catch((err) => console.warn('[fp-f] failed to persist inline-resolve keys:', err));
-      console.log(
-        '[fp-f] persisted %d inline-resolved key%s on %s#%d',
-        result.resolvedFindingKeys.length,
-        result.resolvedFindingKeys.length === 1 ? '' : 's',
+    // FP-F — persist inline-resolve memory + record dispute analytics.
+    // The shared helper handles drop-point diagnostics, fingerprint
+    // enrichment, the bounded merge, and the success-conditional log
+    // (only fires on actual await completion via try/catch, not
+    // `.then`-orphaned). recordDisputes runs independently — its
+    // analytics signal is decoupled from inlineResolvedKeys persistence.
+    if (result.action === 'resolved') {
+      await persistInlineResolveMemory({
+        reviewStore,
+        latestReview,
+        resolvedFindingKeys: result.resolvedFindingKeys,
         repoFullName,
         prNumber,
-      );
-      // FB-A — every inline-resolve is also an explicit dispute for analytics.
-      await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+      });
+      if (result.resolvedFindingKeys && result.resolvedFindingKeys.length > 0) {
+        await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+      }
     }
 
     // FB-D — `/mergewatch reject` persists a categorised rejection per

@@ -47,6 +47,9 @@ export {
   handleInlineReply,
   detectResolveIntent,
   parseRejectIntent,
+  enrichResolvedFindingKeys,
+  persistInlineResolveMemory,
+  MAX_INLINE_RESOLVED_KEYS,
   REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
 } from './agents/inline-reply.js';
