@@ -1844,22 +1844,27 @@ export function reconcileMergeScore(input: {
    * Lambda wires the FP-insight store).
    */
   categoryDisputeRates?: Record<string, number>;
-  /**
-   * FP-L (regression #183) — number of Critical findings the orchestrator
-   * emitted **before** any post-orchestrator filtering (grounding /
-   * verification / line-proximity / W3 dispute). When this is > 0 but
-   * `filteredFindings` contains no criticals, the orchestrator's score
-   * and reason were based on findings the downstream pipeline dropped —
-   * the FP-L clamp below regenerates both so the verdict surfaces agree
-   * with what actually renders.
-   *
-   * Defaults to 0 / treated as absent for back-compat. Callers without
-   * the pre-filter count get the original "trust the orchestrator"
-   * behavior — the same as before this regression fix.
-   */
+  // FP-L — counts of findings the orchestrator emitted *before* any post-
+  // orchestrator stage (grounding, W2 verification, line-proximity filter,
+  // W3 dispute, W10 clustering). Two distinct uses:
+  //   • Criticals count drives the verifier-dropped clamp (#183) — if
+  //     the orchestrator scored blocking because of a critical that's
+  //     now gone, downgrade tier and regenerate the reason.
+  //   • Sum of both drives the narrative-staleness note (#185 follow-up)
+  //     — if the orchestrator's prose names more action findings than
+  //     render, append a "rendered list is authoritative" note so the
+  //     reader knows.
+  // Both default absent for back-compat with callers that pre-date the
+  // fixes; the narrative-staleness path requires both together (see
+  // `hasFullOrchestratorCounts` guard below).
   orchestratorCriticalsCount?: number;
+  orchestratorWarningsCount?: number;
 }): { mergeScore: number; mergeScoreReason: string; disputeDisclosure?: string } {
-  const { filteredFindings, previousFindings, orchestratorScore, orchestratorReason, categoryDisputeRates, orchestratorCriticalsCount } = input;
+  const {
+    filteredFindings, previousFindings, orchestratorScore, orchestratorReason,
+    categoryDisputeRates,
+    orchestratorCriticalsCount, orchestratorWarningsCount,
+  } = input;
 
   const actionFindings = filteredFindings.filter(
     (f) => f.severity === 'critical' || f.severity === 'warning',
@@ -1972,11 +1977,68 @@ export function reconcileMergeScore(input: {
       ...(disputeDisclosure ? { disputeDisclosure } : {}),
     };
   }
+  // FP-L narrative-staleness fix (#185 follow-up). The branches above all
+  // return their own deterministic reasons; this fall-through passes
+  // through the orchestrator's narrative. When the orchestrator's
+  // pre-filter action-finding count exceeded the post-filter count, the
+  // narrative may name findings that no longer render (the "Multiple
+  // warnings present regarding X, Y, and Z" case where only X is in the
+  // rendered table). The helper appends a single clarifying note.
   return {
     mergeScore: orchestratorScore,
-    mergeScoreReason: orchestratorReason,
+    mergeScoreReason: reconcileNarrativeStaleness(
+      orchestratorReason,
+      orchestratorCriticalsCount,
+      orchestratorWarningsCount,
+      actionFindings.length,
+    ),
     ...(disputeDisclosure ? { disputeDisclosure } : {}),
   };
+}
+
+/**
+ * Substring guard for idempotency: a re-reconcile of an already-appended
+ * reason must not stack duplicate notes. Used both for the staleness-note
+ * append below and as the back-out check that lets callers chain calls.
+ */
+const STALENESS_NOTE_MARKER = 'rendered list is authoritative';
+
+/**
+ * Decide whether the orchestrator's narrative needs a staleness note and
+ * return either the unmodified reason or the reason with the note appended.
+ *
+ * Requires **both** orchestrator counts together — partial provision
+ * (e.g. only `orchestratorCriticalsCount` with warnings omitted) could
+ * make `actionCount` artificially small and trigger the note spuriously
+ * when the orchestrator emitted warnings the caller didn't account for.
+ * Callers that can only supply one count get the no-op behavior, matching
+ * pre-fix semantics.
+ */
+function reconcileNarrativeStaleness(
+  reason: string,
+  orchestratorCriticalsCount: number | undefined,
+  orchestratorWarningsCount: number | undefined,
+  postFilterActionCount: number,
+): string {
+  if (orchestratorCriticalsCount === undefined || orchestratorWarningsCount === undefined) {
+    return reason;
+  }
+  const orchestratorActionCount = orchestratorCriticalsCount + orchestratorWarningsCount;
+  if (orchestratorActionCount <= 0 || postFilterActionCount >= orchestratorActionCount) {
+    return reason;
+  }
+  return appendStalenessNote(reason, orchestratorActionCount - postFilterActionCount);
+}
+
+/**
+ * Append a single-line clarifying note to the orchestrator's narrative.
+ * Idempotent via `STALENESS_NOTE_MARKER` — re-reconciles return unchanged.
+ */
+function appendStalenessNote(reason: string, droppedCount: number): string {
+  if (reason.includes(STALENESS_NOTE_MARKER)) return reason;
+  const noun = droppedCount === 1 ? 'finding was' : 'findings were';
+  const note = `Note: ${droppedCount} ${noun} dropped or clustered by post-orchestrator filtering — the ${STALENESS_NOTE_MARKER}.`;
+  return `${reason.trimEnd()}\n\n${note}`;
 }
 
 /**
@@ -2255,13 +2317,17 @@ export async function runReviewPipeline(
     ? await runDeltaCaptionAgent(delta, lightModelId, llm)
     : null;
 
-  // FP-L (regression #183) — count the criticals the orchestrator emitted
-  // *before* any downstream stage (grounding / verification / line-filter /
-  // W3 dispute) dropped them. Passed through to reconcileMergeScore so the
-  // verdict reconciler can detect when a blocking score was driven by a
-  // critical that no longer appears in the rendered surfaces.
+  // FP-L — count the orchestrator's pre-filter criticals + warnings on
+  // `orchestratorResult.findings` (the snapshot before grounding /
+  // verification / line-filter / W3 dispute / W10 clustering). Both
+  // counts feed `reconcileMergeScore`: criticals drive the
+  // verifier-dropped clamp (#183); their sum drives the narrative-
+  // staleness note (#185 follow-up).
   const orchestratorCriticalsCount = orchestratorResult.findings.filter(
     (f) => f.severity === 'critical',
+  ).length;
+  const orchestratorWarningsCount = orchestratorResult.findings.filter(
+    (f) => f.severity === 'warning',
   ).length;
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
@@ -2272,6 +2338,7 @@ export async function runReviewPipeline(
     orchestratorReason: orchestratorResult.mergeScoreReason,
     categoryDisputeRates: options.categoryDisputeRates,
     orchestratorCriticalsCount,
+    orchestratorWarningsCount,
   });
 
   return {

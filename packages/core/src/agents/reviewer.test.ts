@@ -2522,6 +2522,144 @@ describe('reconcileMergeScore', () => {
     });
   });
 
+  // ─── FP-L narrative-staleness fix (follow-up to PR #185 review) ────────
+  //
+  // Scenario: orchestrator emits a richer set of findings than the
+  // post-filter pipeline keeps (verifier drops, W10 clustering, line-
+  // filter, W3 dispute). The orchestrator's narrative text references
+  // findings that no longer render — "Multiple warnings present
+  // regarding X, Y, and Z" when only X is in the table. The reconciled
+  // reason appends a clarifying note so the reader knows the rendered
+  // list is authoritative.
+  describe('FP-L narrative-staleness append', () => {
+    it('appends a clarifying note when orchestrator pre-filter action count exceeds post-filter count', () => {
+      // The PR #185 scenario: orchestrator emitted 3 warnings; W10
+      // clustered one + the verifier dropped one; rendered = 1 warning.
+      const r = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Multiple warnings present regarding error handling, code duplication, and DoS — review recommended before merging.',
+        orchestratorWarningsCount: 3,
+        orchestratorCriticalsCount: 0,
+      });
+      expect(r.mergeScore).toBe(3);
+      // Original narrative preserved.
+      expect(r.mergeScoreReason).toContain('Multiple warnings present');
+      // Clarifying note appended.
+      expect(r.mergeScoreReason).toMatch(/2 findings were dropped or clustered/);
+      expect(r.mergeScoreReason).toMatch(/rendered list is authoritative/);
+    });
+
+    it('uses singular grammar when exactly one finding was dropped', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning(), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Two warnings plus a DoS concern.',
+        orchestratorWarningsCount: 3,
+        orchestratorCriticalsCount: 0,
+      });
+      expect(r.mergeScoreReason).toMatch(/1 finding was dropped or clustered/);
+    });
+
+    it('counts criticals + warnings together for the staleness threshold', () => {
+      // Orchestrator: 1 critical + 2 warnings = 3 action findings.
+      // Post-filter: 1 critical + 1 warning = 2.  Delta = 1.
+      const r = reconcileMergeScore({
+        filteredFindings: [critical({ verification: 'verified' }), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'One critical, two warnings.',
+        orchestratorWarningsCount: 2,
+        orchestratorCriticalsCount: 1,
+      });
+      // Surviving critical → orchestrator score stands; note appended.
+      expect(r.mergeScore).toBe(2);
+      expect(r.mergeScoreReason).toMatch(/1 finding was dropped or clustered/);
+    });
+
+    it('does NOT append when post-filter action count equals orchestrator action count (nothing dropped)', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [warning(), warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Two style warnings.',
+        orchestratorWarningsCount: 2,
+        orchestratorCriticalsCount: 0,
+      });
+      expect(r.mergeScoreReason).toBe('Two style warnings.');
+    });
+
+    it('back-compat: omitting both counts leaves the orchestrator reason verbatim (pre-fix behavior)', () => {
+      // Same shape as the first test but without the counts passed.
+      const r = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Multiple warnings present regarding X, Y, and Z.',
+      });
+      expect(r.mergeScoreReason).toBe('Multiple warnings present regarding X, Y, and Z.');
+    });
+
+    it('partial counts (only criticals OR only warnings) are conservatively treated as absent', () => {
+      // PR #187 review feedback: the prior "fill missing with 0" shape
+      // could spuriously fire the note when a caller passed
+      // orchestratorCriticalsCount but omitted the warnings count and
+      // the post-filter set was warnings-only. Guard: require BOTH or
+      // skip. Documents the partial-provision contract.
+      const criticalsOnly = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Original prose.',
+        orchestratorCriticalsCount: 2,
+      });
+      expect(criticalsOnly.mergeScoreReason).toBe('Original prose.');
+      const warningsOnly = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: 'Original prose.',
+        orchestratorWarningsCount: 2,
+      });
+      expect(warningsOnly.mergeScoreReason).toBe('Original prose.');
+    });
+
+    it('idempotent: a reason that already carries the marker phrase is not double-appended', () => {
+      // Defensive — if a future caller passes a previously-reconciled
+      // reason back through, we should NOT stack two notes on it.
+      const alreadyAppended = 'Original prose.\n\nNote: 2 findings were dropped or clustered by post-orchestrator filtering — the rendered list is authoritative.';
+      const r = reconcileMergeScore({
+        filteredFindings: [warning()],
+        previousFindings: undefined,
+        orchestratorScore: 3,
+        orchestratorReason: alreadyAppended,
+        orchestratorWarningsCount: 4,
+        orchestratorCriticalsCount: 0,
+      });
+      // Count the marker — should appear exactly once, not twice.
+      const occurrences = (r.mergeScoreReason.match(/rendered list is authoritative/g) ?? []).length;
+      expect(occurrences).toBe(1);
+    });
+
+    it('does NOT apply when an earlier branch returned its own reason (noActionItems, W7, FP-J L1, pure improvement)', () => {
+      // noActionItems branch returns 5/5 with its own reason — the FP-L
+      // append only runs on the orchestrator-passthrough branch, so the
+      // earlier-branch reasons are never touched.
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 2,
+        orchestratorReason: 'Multiple things flagged.',
+        orchestratorWarningsCount: 3,
+        orchestratorCriticalsCount: 1,
+      });
+      expect(r.mergeScore).toBe(5);
+      expect(r.mergeScoreReason).not.toMatch(/dropped or clustered/);
+    });
+  });
+
   // ─── FP-J L1 — dispute-aware verdict softening ────────────────────────
   describe('FP-J L1 — categoryDisputeRates', () => {
     it('back-compat: absent categoryDisputeRates behaves identically to today (orchestrator score stands)', () => {
