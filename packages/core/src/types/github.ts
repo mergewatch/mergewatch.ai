@@ -57,6 +57,16 @@ export interface GitHubPullRequest {
   /** ISO-8601 timestamps. */
   created_at: string;
   updated_at: string;
+  /**
+   * Whether the PR has been merged. Present on `closed` webhook payloads
+   * (true when the close was a merge, false when closed without merging)
+   * and on the REST PR object. Absent on some narrower API responses.
+   */
+  merged?: boolean;
+  /** ISO-8601 — set when the PR was merged; null otherwise. */
+  merged_at?: string | null;
+  /** ISO-8601 — set when the PR was closed (merged or not); null while open. */
+  closed_at?: string | null;
   /** List of changed file paths — only present on certain API responses. */
   changed_files?: number;
 }

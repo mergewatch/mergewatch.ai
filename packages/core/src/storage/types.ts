@@ -11,6 +11,7 @@ import type {
   ReviewItem, ReviewStatus,
   FindingDispositionRecord,
   InstallationFPInsight,
+  PRLifecycleRecord,
 } from '../types/db.js';
 
 export interface IInstallationStore {
@@ -175,4 +176,73 @@ export interface IFPInsightStore {
    * Returns the rows in `window` order ('7d', '30d', '90d').
    */
   listByInstallation(installationId: string): Promise<InstallationFPInsight[]>;
+}
+
+// ─── TTM — PR-lifecycle store (#194) ───────────────────────────────────────
+
+/** Identity + creation data for the open-state upsert. */
+export interface PRLifecycleOpenInput {
+  installationId: string;
+  repoFullName: string;
+  prNumber: number;
+  /** ISO 8601 — PR `created_at` from GitHub. */
+  prCreatedAt: string;
+}
+
+/** Identity + timestamps for a terminal (merged / closed) transition. */
+export interface PRLifecycleCloseInput {
+  installationId: string;
+  repoFullName: string;
+  prNumber: number;
+  /** ISO 8601 — PR `created_at` (authoritative from the closed payload). */
+  prCreatedAt: string;
+  /** ISO 8601 — `merged_at` (markMerged) or `closed_at` (markClosedUnmerged). */
+  at: string;
+}
+
+/**
+ * Persists one `PRLifecycleRecord` per pull request. All writes are
+ * best-effort (swallow-and-log) so a lifecycle write can never block the
+ * review pipeline — mirrors `IFindingDispositionStore`.
+ *
+ * Terminal-state discipline: once a row reaches `merged` / `closed_unmerged`,
+ * `upsertOpened` / `recordPush` must not resurrect it to `open`.
+ */
+export interface IPRLifecycleStore {
+  /**
+   * Create the row on first sight (state='open', prCreatedAt set, counters 0).
+   * On an existing OPEN row, only refresh `updatedAt`. No-op on a terminal row.
+   */
+  upsertOpened(rec: PRLifecycleOpenInput): Promise<void>;
+
+  /**
+   * Increment `totalPushes`; when `firstReviewAt` is already set, also bump
+   * `pushesAfterFirstReview`. Creates the row (open) if missing.
+   */
+  recordPush(installationId: string, repoFullName: string, prNumber: number): Promise<void>;
+
+  /**
+   * Set `firstReviewAt` (only if currently unset) and `reviewed=true`.
+   * Creates the row if missing. Idempotent — later reviews don't move the
+   * first-review anchor.
+   */
+  markReviewed(installationId: string, repoFullName: string, prNumber: number, atIso: string): Promise<void>;
+
+  /** Set `skipped=true` (leaves `reviewed` untouched). Creates the row if missing. */
+  markSkipped(installationId: string, repoFullName: string, prNumber: number, atIso: string): Promise<void>;
+
+  /** Terminal: PR merged. Sets `mergedAt`, `state='merged'`, authoritative `prCreatedAt`. */
+  markMerged(rec: PRLifecycleCloseInput): Promise<void>;
+
+  /** Terminal: PR closed without merge. Sets `closedAt`, `state='closed_unmerged'`. */
+  markClosedUnmerged(rec: PRLifecycleCloseInput): Promise<void>;
+
+  /**
+   * Page through all lifecycle rows for an installation. Used by the nightly
+   * cycle-time rollup. Optional limit + cursor pagination (cap ~1000/page).
+   */
+  listByInstallation(
+    installationId: string,
+    opts?: { limit?: number; cursor?: string },
+  ): Promise<{ items: PRLifecycleRecord[]; nextCursor?: string }>;
 }

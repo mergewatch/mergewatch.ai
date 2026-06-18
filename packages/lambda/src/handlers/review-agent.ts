@@ -71,6 +71,8 @@ import {
   DEFAULT_FINDING_DISPOSITIONS_TABLE,
   DynamoFPInsightStore,
   DEFAULT_FP_INSIGHTS_TABLE,
+  DynamoPRLifecycleStore,
+  DEFAULT_PR_LIFECYCLE_TABLE,
 } from '@mergewatch/storage-dynamo';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
@@ -84,6 +86,7 @@ const INSTALLATIONS_TABLE = process.env.INSTALLATIONS_TABLE ?? 'mergewatch-insta
 const REVIEWS_TABLE = process.env.REVIEWS_TABLE ?? 'mergewatch-reviews';
 const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE;
 const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
+const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
@@ -97,6 +100,9 @@ const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DIS
 // so the verdict tier behaves identically to pre-FP-J when the table is
 // empty or unprovisioned (back-compat for the SaaS rollout window).
 const fpInsightStore = new DynamoFPInsightStore(dynamodb, FP_INSIGHTS_TABLE);
+// TTM (#194) — marks reviewed/skipped on the PR-lifecycle row the webhook
+// opened. Best-effort; swallows if the table isn't provisioned yet.
+const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
 const llm = new BedrockLLMProvider();
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -402,6 +408,7 @@ export async function handler(
       agentKind: event.agentKind,
     };
     await reviewStore.upsert(skippedRecord);
+    await prLifecycleStore.markSkipped(String(installationId), repoFullName, prNumber, new Date().toISOString());
 
     await createCheckRun(octokit, owner, repo, headSha, {
       status: 'completed',
@@ -518,6 +525,7 @@ export async function handler(
         completedAt: new Date().toISOString(),
         skipReason: rulesSkip.reason,
       });
+      await prLifecycleStore.markSkipped(String(installationId), repoFullName, prNumber, new Date().toISOString());
 
       // autoReviewOff is handled silently earlier (before any GitHub side
       // effect). Any rulesSkip seen here is a visible-skip kind: draft,
@@ -889,6 +897,10 @@ export async function handler(
         ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
         : {}),
     });
+
+    // TTM (#194) — anchor the first-review timestamp (set-once) for the
+    // time-from-first-review-to-merge metric.
+    await prLifecycleStore.markReviewed(String(installationId), repoFullName, prNumber, completedAt);
 
     // ── Record billing (SaaS only) ────
     // Retry once on failure. If both attempts fail, log as ERROR (not warn)

@@ -9,6 +9,7 @@ import {
   PostgresReviewStore,
   PostgresFindingDispositionStore,
   PostgresFPInsightStore,
+  PostgresPRLifecycleStore,
   runMigrations,
 } from '@mergewatch/storage-postgres';
 import { EnvGitHubAuthProvider } from './github-auth-env.js';
@@ -67,6 +68,7 @@ async function main() {
   const reviewStore = new PostgresReviewStore(db);
   const dispositionStore = new PostgresFindingDispositionStore(db);
   const fpInsightStore = new PostgresFPInsightStore(db);
+  const prLifecycleStore = new PostgresPRLifecycleStore(db);
   const authProvider = new EnvGitHubAuthProvider(githubAppId, githubPrivateKey);
   const llm = createLLMProvider();
 
@@ -122,6 +124,7 @@ async function main() {
     reviewStore,
     dispositionStore,
     fpInsightStore,
+    prLifecycleStore,
     authProvider,
     llm,
     dashboardBaseUrl,

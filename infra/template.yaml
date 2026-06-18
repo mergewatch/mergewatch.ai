@@ -103,6 +103,10 @@ Globals:
         # to the unsuffixed default name and ResourceNotFoundException into a void.
         FINDING_DISPOSITIONS_TABLE: !Ref FindingDispositionsTable
         FP_INSIGHTS_TABLE: !Ref FpInsightsTable
+        # TTM (#194): one row per PR. WebhookHandler writes lifecycle transitions
+        # (opened/synchronize/closed); ReviewAgent marks reviewed/skipped; the
+        # nightly InsightsRollup reads for cycle-time percentiles.
+        PR_LIFECYCLE_TABLE: !Ref PRLifecycleTable
 
         # SSM parameter paths for GitHub App credentials.
         # The Lambda functions read these at runtime via the AWS SDK.
@@ -755,6 +759,60 @@ Resources:
     UpdateReplacePolicy: Retain
 
   # ===========================================================================
+  # DynamoDB: PRLifecycle (TTM / #194)
+  # ===========================================================================
+  # One row per pull request MergeWatch saw — independent of the per-commit
+  # Reviews table. Drives the nightly cycle-time rollup (time-to-merge,
+  # time-from-first-review-to-merge, round-trips).
+  #
+  # Schema:
+  #   PK: pk  (String)  — "${installationId}#${repoFullName}"
+  #   SK: sk  (String)  — prNumber (stringified)
+  #
+  # Attributes (best-effort writes from webhook + review pipeline):
+  #   - prCreatedAt / firstReviewAt / mergedAt / closedAt / updatedAt (String, ISO 8601)
+  #   - state (String — open | merged | closed_unmerged)
+  #   - reviewed / skipped (Bool)
+  #   - totalPushes / pushesAfterFirstReview (Number)
+  #   - ttl (Number) — epoch seconds, ~90d past the terminal event
+  #
+  # TimeToLiveSpecification reaps terminal rows after the 90d window passes.
+
+  PRLifecycleTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-pr-lifecycle-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  # ===========================================================================
   # IAM Role: Lambda Execution Role
   # ===========================================================================
   # A single shared role for both Lambda functions. This simplifies management
@@ -830,6 +888,7 @@ Resources:
                   - !GetAtt SessionsTable.Arn
                   - !GetAtt FindingDispositionsTable.Arn
                   - !GetAtt FpInsightsTable.Arn
+                  - !GetAtt PRLifecycleTable.Arn
                   # Index ARNs (for future GSIs)
                   - !Sub '${InstallationsTable.Arn}/index/*'
                   - !Sub '${ReviewsTable.Arn}/index/*'
@@ -837,6 +896,7 @@ Resources:
                   - !Sub '${SessionsTable.Arn}/index/*'
                   - !Sub '${FindingDispositionsTable.Arn}/index/*'
                   - !Sub '${FpInsightsTable.Arn}/index/*'
+                  - !Sub '${PRLifecycleTable.Arn}/index/*'
 
         # --- SSM Parameter Store ---
         # Read-only access to GitHub credentials stored in SSM.
@@ -939,6 +999,10 @@ Outputs:
   FpInsightsTableName:
     Description: Name of the DynamoDB installation-fp-insights table (FB-E)
     Value: !Ref FpInsightsTable
+
+  PRLifecycleTableName:
+    Description: Name of the DynamoDB pr-lifecycle table (TTM / #194)
+    Value: !Ref PRLifecycleTable
 
   # The IAM role ARN — useful for debugging permission issues
   LambdaRoleArn:

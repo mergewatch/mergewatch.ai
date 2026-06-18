@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
@@ -19,6 +19,11 @@ export interface WebhookDeps {
    * the pre-FP-J shape — no down-weighting.
    */
   fpInsightStore?: IFPInsightStore;
+  /**
+   * TTM (#194) — optional PR-lifecycle store. Best-effort: when unset, merge
+   * tracking is a no-op and the review pipeline runs unchanged.
+   */
+  prLifecycleStore?: IPRLifecycleStore;
   authProvider: IGitHubAuthProvider;
   llm: ILLMProvider;
   dashboardBaseUrl: string;
@@ -72,9 +77,52 @@ export function createWebhookHandler(deps: WebhookDeps) {
   };
 }
 
+/**
+ * TTM (#194) — record PR-lifecycle transitions on the webhook path. Best-effort
+ * (the store swallows its own errors) and a no-op when no store is wired.
+ *
+ *   opened / reopened / ready_for_review → upsertOpened (anchors prCreatedAt)
+ *   synchronize                          → recordPush (round-trip proxy)
+ *   closed (merged)                      → markMerged (terminal)
+ *   closed (unmerged)                    → markClosedUnmerged (terminal)
+ */
+async function recordPrLifecycle(payload: PullRequestEvent, deps: WebhookDeps) {
+  const store = deps.prLifecycleStore;
+  if (!store || !payload.installation) return;
+  const { action, pull_request: pr, repository, installation } = payload;
+  const installationId = String(installation.id);
+  const repoFullName = repository.full_name;
+  const prNumber = pr.number;
+  try {
+    if (action === 'closed') {
+      if (pr.merged && pr.merged_at) {
+        await store.markMerged({ installationId, repoFullName, prNumber, prCreatedAt: pr.created_at, at: pr.merged_at });
+      } else {
+        await store.markClosedUnmerged({
+          installationId, repoFullName, prNumber,
+          prCreatedAt: pr.created_at,
+          at: pr.closed_at ?? new Date().toISOString(),
+        });
+      }
+    } else if (action === 'synchronize') {
+      await store.recordPush(installationId, repoFullName, prNumber);
+    } else if (action === 'opened' || action === 'reopened' || action === 'ready_for_review') {
+      await store.upsertOpened({ installationId, repoFullName, prNumber, prCreatedAt: pr.created_at });
+    }
+  } catch (err) {
+    console.warn('[ttm] lifecycle record failed for %s#%d (%s):', repoFullName, prNumber, action, err);
+  }
+}
+
 async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
   const { action, pull_request, repository, installation } = payload;
-  if (!installation || !(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
+  if (!installation) return;
+
+  // Record lifecycle for every relevant action (incl. `closed`) before the
+  // review gate — merges/closes terminate the lifecycle without a review.
+  await recordPrLifecycle(payload, deps);
+
+  if (!(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
 
   const owner = repository.owner.login;
   const repo = repository.name;

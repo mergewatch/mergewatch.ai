@@ -520,6 +520,72 @@ export interface FindingDispositionRecord {
 }
 
 /**
+ * TTM — Per-PR lifecycle record. One row per pull request MergeWatch saw,
+ * independent of the per-commit `ReviewItem` (a PR has N review rows, one per
+ * push, but exactly one lifecycle row). Drives the time-to-merge / cycle-time
+ * rollup (#194).
+ *
+ * Storage:
+ *   - DynamoDB (SaaS) table: mergewatch-pr-lifecycle
+ *     PK: `${installationId}#${repoFullName}`   SK: `prNumber` (string)
+ *   - Postgres (self-hosted) table: pr_lifecycle
+ *     PK: (installation_id, repo_full_name, pr_number)
+ *
+ * Write path (all best-effort — never blocks the review pipeline):
+ *   - webhook `opened` / `reopened` → upsertOpened (sets prCreatedAt, state=open)
+ *   - webhook `synchronize`         → recordPush (bumps push counters)
+ *   - webhook `closed` (merged)     → markMerged (terminal)
+ *   - webhook `closed` (unmerged)   → markClosedUnmerged (terminal)
+ *   - review processor on complete  → markReviewed (firstReviewAt set-once)
+ *   - review processor on skip      → markSkipped
+ *
+ * Read path: the nightly cycle-time rollup (Stage 2) pages these rows per
+ * installation and computes time-to-merge percentiles.
+ */
+export interface PRLifecycleRecord {
+  installationId: string;
+  repoFullName: string;
+  prNumber: number;
+
+  /** ISO 8601 — PR `created_at` from GitHub. The anchor for time-to-merge. */
+  prCreatedAt: string;
+  /**
+   * ISO 8601 — when MergeWatch first completed a review for this PR. Set once
+   * (never overwritten by later pushes). Unset if the PR was never reviewed.
+   * The anchor for time-from-first-review-to-merge.
+   */
+  firstReviewAt?: string;
+  /** ISO 8601 — PR `merged_at`. Set only on a merge. */
+  mergedAt?: string;
+  /** ISO 8601 — PR `closed_at` when closed WITHOUT merging. */
+  closedAt?: string;
+
+  /** Terminal-aware lifecycle state. Never downgrades once merged/closed. */
+  state: 'open' | 'merged' | 'closed_unmerged';
+
+  /** True once MergeWatch completed a review (segmentation: reviewed vs not). */
+  reviewed: boolean;
+  /** True when `shouldSkipPR` short-circuited the review (docs-only / lockfile / …). */
+  skipped: boolean;
+
+  /** Total `synchronize` (push) events seen on this PR. */
+  totalPushes: number;
+  /**
+   * Pushes observed AFTER `firstReviewAt` was set — the round-trip / iteration
+   * proxy the rollup reports. 0 until the first review lands.
+   */
+  pushesAfterFirstReview: number;
+
+  /** ISO 8601 — last time any field on this row was written. */
+  updatedAt: string;
+  /**
+   * Unix epoch seconds for DynamoDB TTL (≈90 days past the terminal event).
+   * Unset while open. Postgres ignores this (no TTL).
+   */
+  ttl?: number;
+}
+
+/**
  * FB-E — Per-installation FP insight rollup. Produced nightly by aggregating
  * `FindingDispositionRecord` rows over a rolling window (7d / 30d / 90d).
  *
