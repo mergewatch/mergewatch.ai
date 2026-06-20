@@ -6,6 +6,10 @@
  * Reads `/api/insights?installation_id=…` for the three rolling-window
  * `InstallationFPInsight` rows (7d / 30d / 90d) produced by the nightly
  * FB-E rollup, then renders:
+ *   - **TTM (#194)** — cycle-time section: time-to-merge percentiles
+ *     (median / p75 / p90), time-from-first-review-to-merge, round-trips,
+ *     and a reviewed-vs-unreviewed comparison ("did MergeWatch make us
+ *     faster?"). Computed from the `cycleTime` block on each insight row.
  *   - **FB-F** — FP funnel (stacked bar): unsignaled / agreed / silent-
  *     dropped / disputed counts per window. Single chart that answers
  *     "is the review noise increasing or decreasing for us?".
@@ -47,6 +51,26 @@ interface ClusterRow {
   rate: number;
 }
 
+interface Percentiles {
+  p50: number;
+  p75: number;
+  p90: number;
+}
+
+/** TTM (#194) — cycle-time block. Optional for back-compat with pre-Stage-2 rollups. */
+interface CycleTime {
+  mergedCount: number;
+  reviewedMergedCount: number;
+  unreviewedMergedCount: number;
+  closedUnmergedCount: number;
+  openCount: number;
+  timeToMergeHours: Percentiles | null;
+  timeToMergeHoursReviewed: Percentiles | null;
+  timeToMergeHoursUnreviewed: Percentiles | null;
+  timeToMergeFromFirstReviewHours: Percentiles | null;
+  roundTripsBeforeMerge: Percentiles | null;
+}
+
 interface Insight {
   installationId: string;
   window: "7d" | "30d" | "90d";
@@ -63,6 +87,8 @@ interface Insight {
   perSeverity?: Record<string, CategoryBucket>;
   perRepo: Record<string, CategoryBucket>;
   topClusters: ClusterRow[];
+  /** TTM (#194) — present only on rollups generated after Stage 2 shipped. */
+  cycleTime?: CycleTime;
 }
 
 interface InsightsClientProps {
@@ -80,7 +106,24 @@ const SEGMENT_COLOURS = {
 
 const AGENT_COLOUR = "#6366f1"; // indigo, neutral
 
+// TTM (#194) — reviewed-vs-unreviewed comparison palette.
+const CYCLE_COLOURS = {
+  reviewed: "#10b981",   // emerald — MergeWatch reviewed
+  unreviewed: "#94a3b8", // slate — not reviewed (baseline)
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Format a duration given in hours as a compact human string:
+ *   < 1h → minutes, < 48h → hours, else → days. `null`/`undefined` → em-dash.
+ */
+function fmtHours(h: number | null | undefined): string {
+  if (h == null) return "—";
+  if (h < 1) return `${Math.round(h * 60)}m`;
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
 
 function pickWindow(insights: Insight[], window: "7d" | "30d" | "90d"): Insight | undefined {
   return insights.find((i) => i.window === window);
@@ -227,16 +270,25 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
     );
   }
 
-  if (insights.length === 0 || !active || active.totalFindingsSurfaced === 0) {
+  // TTM (#194) — cycle-time can have data even when no findings were ever
+  // surfaced (a repo with merges but a clean review history), so it must NOT
+  // be gated behind `totalFindingsSurfaced`. We show the page when EITHER
+  // signal has data, and gate each section independently below.
+  const cyc = active?.cycleTime;
+  const hasCycleData = !!cyc && (cyc.mergedCount > 0 || cyc.closedUnmergedCount > 0 || cyc.openCount > 0);
+  const hasFpData = (active?.totalFindingsSurfaced ?? 0) > 0;
+
+  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData)) {
     return (
       <div className="rounded-lg border border-border-default bg-surface-card p-6">
         <h2 className="text-base font-semibold text-text-primary">No insights yet</h2>
         <p className="mt-2 text-sm text-text-secondary">
           MergeWatch starts collecting per-finding feedback (👍 / 👎 reactions,
-          inline-thread resolves, <code>/mergewatch reject</code> commands)
-          from the moment the GitHub App is installed. The nightly rollup
-          aggregates that data into FP-insight rows. Once a few reviews
-          have run, you&apos;ll see funnel + dispute-rate charts here.
+          inline-thread resolves, <code>/mergewatch reject</code> commands) and
+          PR cycle-time from the moment the GitHub App is installed. The nightly
+          rollup aggregates that data. Once a few reviews have run — and PRs
+          start merging — you&apos;ll see cycle-time, funnel, and dispute-rate
+          charts here.
         </p>
       </div>
     );
@@ -272,6 +324,12 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
         </span>
       </div>
 
+      {/* ─── TTM (#194): Cycle time (time-to-merge) ──────────────────── */}
+      {hasCycleData && cyc && <CycleTimeSection cycleTime={cyc} window={activeWindow} />}
+
+      {/* ─── FB-F..FB-J: FP-feedback sections (only when findings exist) ── */}
+      {hasFpData && (
+      <Fragment>
       {/* ─── FB-F: FP funnel (stacked bar) ───────────────────────────── */}
       <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
         <header className="mb-4">
@@ -411,6 +469,8 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
         </header>
         <FBJHeatmap perRepo={active.perRepo} />
       </section>
+      </Fragment>
+      )}
     </div>
   );
 }
@@ -627,6 +687,125 @@ function FBJHeatmap({ perRepo }: { perRepo: Record<string, CategoryBucket> }) {
         );
       })}
     </div>
+  );
+}
+
+// ─── TTM (#194) — cycle-time section ───────────────────────────────────────
+
+/** Small headline metric card matching the dashboard StatCard pattern. */
+function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
+  return (
+    <div className="rounded-lg border border-border-default bg-surface-card p-4">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-text-secondary">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-text-primary tabular-nums">{value}</p>
+      {subtext && <p className="mt-0.5 text-xs text-text-secondary">{subtext}</p>}
+    </div>
+  );
+}
+
+/** Compact "p75 X · p90 Y" subtext for a percentile triple. */
+function spread(p: Percentiles | null, fmt: (n: number) => string): string | undefined {
+  if (!p) return undefined;
+  return `p75 ${fmt(p.p75)} · p90 ${fmt(p.p90)}`;
+}
+
+/**
+ * Cycle-time / time-to-merge section. Renders headline percentile stat cards
+ * plus a reviewed-vs-unreviewed median comparison — the "did MergeWatch make
+ * us faster?" view. Each percentile object can be null (empty sample), which
+ * the formatters render as an em-dash rather than a misleading "0".
+ */
+function CycleTimeSection({ cycleTime, window }: { cycleTime: CycleTime; window: string }) {
+  const c = cycleTime;
+  const reviewed = c.timeToMergeHoursReviewed;
+  const unreviewed = c.timeToMergeHoursUnreviewed;
+
+  // Reviewed-vs-unreviewed comparison: one group per percentile, two bars.
+  // Only rendered when at least one segment has data.
+  const comparisonData = (reviewed || unreviewed)
+    ? (["p50", "p75", "p90"] as const).map((k) => ({
+        stat: k === "p50" ? "Median" : k.toUpperCase(),
+        reviewed: reviewed ? reviewed[k] : null,
+        unreviewed: unreviewed ? unreviewed[k] : null,
+      }))
+    : [];
+
+  return (
+    <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
+      <header className="mb-4">
+        <h2 className="text-sm font-semibold text-text-primary">Cycle time — {window}</h2>
+        <p className="mt-1 text-xs text-text-secondary">
+          Time-to-merge for PRs merged in this window. {c.mergedCount.toLocaleString()} merged
+          {" "}({c.reviewedMergedCount.toLocaleString()} reviewed · {c.unreviewedMergedCount.toLocaleString()} not),
+          {" "}{c.openCount.toLocaleString()} still open, {c.closedUnmergedCount.toLocaleString()} closed without merge.
+          Merge times are skewed, so we show percentiles, not averages.
+        </p>
+      </header>
+
+      {c.mergedCount === 0 ? (
+        <div className="text-xs text-text-secondary">
+          No PRs merged in this window yet — cycle-time stats appear once
+          MergeWatch-tracked PRs start merging.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard
+              label="Median time to merge"
+              value={fmtHours(c.timeToMergeHours?.p50)}
+              subtext={spread(c.timeToMergeHours, fmtHours)}
+            />
+            <StatCard
+              label="From first review"
+              value={fmtHours(c.timeToMergeFromFirstReviewHours?.p50)}
+              subtext={spread(c.timeToMergeFromFirstReviewHours, fmtHours)}
+            />
+            <StatCard
+              label="Round-trips before merge"
+              value={c.roundTripsBeforeMerge ? c.roundTripsBeforeMerge.p50.toFixed(1) : "—"}
+              subtext={spread(c.roundTripsBeforeMerge, (n) => n.toFixed(1))}
+            />
+            <StatCard
+              label="Merged in window"
+              value={c.mergedCount.toLocaleString()}
+              subtext={`${c.reviewedMergedCount} reviewed · ${c.unreviewedMergedCount} not`}
+            />
+          </div>
+
+          {comparisonData.length > 0 && (
+            <div className="mt-5">
+              <h3 className="mb-1 text-xs font-semibold text-text-primary">
+                Reviewed vs not-reviewed — time to merge
+              </h3>
+              <p className="mb-3 text-[11px] text-text-secondary">
+                Lower bars for reviewed PRs suggest MergeWatch is shortening the
+                review loop. Compare like-for-like — a segment with few PRs is noisy.
+              </p>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={comparisonData} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="stat" fontSize={11} />
+                    <YAxis tickFormatter={(v) => fmtHours(v)} fontSize={11} width={48} />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [
+                        fmtHours(value),
+                        name === "reviewed" ? "Reviewed" : "Not reviewed",
+                      ]}
+                    />
+                    <Legend
+                      formatter={(value) => (value === "reviewed" ? "Reviewed" : "Not reviewed")}
+                    />
+                    <Bar dataKey="reviewed" fill={CYCLE_COLOURS.reviewed} />
+                    <Bar dataKey="unreviewed" fill={CYCLE_COLOURS.unreviewed} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
