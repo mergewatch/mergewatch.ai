@@ -122,6 +122,13 @@ export class DynamoPRLifecycleStore implements IPRLifecycleStore {
     // DynamoDB can't gate arithmetic on attribute existence inside one SET, so
     // this is a separate conditional update; the conditional failure is the
     // common (pre-review) case and is swallowed.
+    //
+    // The two writes are intentionally NON-transactional. If this second write
+    // fails for a non-conditional reason, totalPushes advances while
+    // pushesAfterFirstReview lags by one — an acceptable skew because both are
+    // best-effort analytics feeding a round-trip *proxy*, not a correctness
+    // invariant, and the lag self-heals on the next push. We log (below) so a
+    // persistent divergence is visible rather than silent.
     try {
       await this.client.send(new UpdateCommand({
         TableName: this.tableName,

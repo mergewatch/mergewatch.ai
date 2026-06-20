@@ -98,6 +98,12 @@ async function recordPrLifecycle(payload: PullRequestEvent, deps: WebhookDeps) {
       if (pr.merged && pr.merged_at) {
         await store.markMerged({ installationId, repoFullName, prNumber, prCreatedAt: pr.created_at, at: pr.merged_at });
       } else {
+        // GitHub always sends closed_at on a `closed` action; a missing value
+        // signals an unexpected payload, so surface it rather than silently
+        // substituting now() (which would skew the cycle-time stat).
+        if (!pr.closed_at) {
+          console.warn('[ttm] closed PR missing closed_at — using now() (%s#%d):', repoFullName, prNumber);
+        }
         await store.markClosedUnmerged({
           installationId, repoFullName, prNumber,
           prCreatedAt: pr.created_at,
