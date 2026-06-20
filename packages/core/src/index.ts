@@ -165,6 +165,10 @@ export { buildInsightFromDispositions, WINDOW_LENGTH_MS } from './insights/rollu
 export { runInsightRollup } from './insights/run-rollup.js';
 export type { RollupStores, RollupRunResult } from './insights/run-rollup.js';
 
+// ─── Cycle-time rollup (TTM / #194) ────────────────────────────────────────
+export { buildCycleTimeInsight, percentile, percentilesOf } from './insights/cycle-time.js';
+export type { CycleTimeInsight } from './insights/cycle-time.js';
+
 // ─── Dispute-rate loader (FP-J L1) ─────────────────────────────────────────
 export { loadCategoryDisputeRates } from './insights/dispute-rates.js';
 
@@ -251,6 +255,7 @@ export type {
   UpdateReviewInput,
   FindingDispositionRecord,
   InstallationFPInsight,
+  CycleTimePercentiles,
   PRLifecycleRecord,
 } from './types/db.js';
 

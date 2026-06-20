@@ -654,6 +654,48 @@ export interface InstallationFPInsight {
     disputeCount: number;
     rate: number;
   }>;
+
+  /**
+   * TTM (#194) — time-to-merge / cycle-time block, computed from
+   * `PRLifecycleRecord` rows in the same window. Optional: present only on
+   * rollups generated after Stage 2 shipped AND when a PR-lifecycle store is
+   * wired into the rollup. Consumers must handle the undefined case.
+   *
+   * A PR is windowed by its terminal (or, for still-open PRs, creation)
+   * timestamp: merged → `mergedAt`, closed-unmerged → `closedAt`, open →
+   * `prCreatedAt`. Percentiles are in HOURS; each percentile object is null
+   * when its underlying sample is empty (no merged PRs, no reviewed merges,
+   * etc.) so the dashboard can distinguish "0 hours" from "no data".
+   */
+  cycleTime?: {
+    /** Merged in-window. The denominator for the time-to-merge stats. */
+    mergedCount: number;
+    /** Of `mergedCount`, those MergeWatch reviewed vs not (segmentation). */
+    reviewedMergedCount: number;
+    unreviewedMergedCount: number;
+    /** Closed without merging in-window — excluded from time stats. */
+    closedUnmergedCount: number;
+    /** Still open (created in-window) — no merge time yet. */
+    openCount: number;
+
+    /** created_at → merged_at, all merged PRs. */
+    timeToMergeHours: CycleTimePercentiles | null;
+    /** created_at → merged_at, reviewed merged PRs only. */
+    timeToMergeHoursReviewed: CycleTimePercentiles | null;
+    /** created_at → merged_at, unreviewed merged PRs only. */
+    timeToMergeHoursUnreviewed: CycleTimePercentiles | null;
+    /** first_review_at → merged_at, reviewed merged PRs only. */
+    timeToMergeFromFirstReviewHours: CycleTimePercentiles | null;
+    /** pushesAfterFirstReview distribution, reviewed merged PRs only. */
+    roundTripsBeforeMerge: CycleTimePercentiles | null;
+  };
+}
+
+/** Median / p75 / p90 of a cycle-time sample. */
+export interface CycleTimePercentiles {
+  p50: number;
+  p75: number;
+  p90: number;
 }
 
 /**

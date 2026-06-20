@@ -186,3 +186,74 @@ describe('runInsightRollup (FB-E orchestrator)', () => {
     expect(result.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 });
+
+// ─── TTM (#194) — cycle-time wiring ────────────────────────────────────────
+
+import type { PRLifecycleRecord } from '../types/db.js';
+
+function prRecord(over: Partial<PRLifecycleRecord> = {}): PRLifecycleRecord {
+  return {
+    installationId: '42',
+    repoFullName: 'org/repo',
+    prNumber: 1,
+    prCreatedAt: '2026-05-20T00:00:00.000Z',
+    mergedAt: '2026-05-21T00:00:00.000Z',
+    state: 'merged',
+    reviewed: true,
+    skipped: false,
+    totalPushes: 2,
+    pushesAfterFirstReview: 1,
+    updatedAt: '2026-05-21T00:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('runInsightRollup — cycle-time block', () => {
+  it('attaches a cycleTime block to every window when prLifecycleStore is wired', async () => {
+    const stores = makeStores({ installationIds: ['42'], recordsByInstallation: { '42': [] } });
+    const prCalls: Array<{ id: string; cursor?: string }> = [];
+    const withPr: RollupStores & { upserts: InstallationFPInsight[] } = {
+      ...stores,
+      prLifecycleStore: {
+        listByInstallation: vi.fn(async (id: string, opts?: { cursor?: string }) => {
+          prCalls.push({ id, cursor: opts?.cursor });
+          return { items: [prRecord()] };
+        }),
+      },
+    };
+    await runInsightRollup(withPr, WINDOW_END);
+    expect(prCalls).toEqual([{ id: '42', cursor: undefined }]);
+    expect(stores.upserts).toHaveLength(3);
+    for (const u of stores.upserts) {
+      expect(u.cycleTime).toBeDefined();
+      expect(u.cycleTime?.mergedCount).toBe(1);
+      expect(u.cycleTime?.reviewedMergedCount).toBe(1);
+      expect(u.cycleTime?.timeToMergeHours).toEqual({ p50: 24, p75: 24, p90: 24 });
+      expect(u.cycleTime?.roundTripsBeforeMerge).toEqual({ p50: 1, p75: 1, p90: 1 });
+    }
+  });
+
+  it('omits cycleTime entirely when no prLifecycleStore is wired (back-compat)', async () => {
+    const stores = makeStores({ installationIds: ['42'], recordsByInstallation: { '42': [] } });
+    await runInsightRollup(stores, WINDOW_END);
+    for (const u of stores.upserts) {
+      expect(u.cycleTime).toBeUndefined();
+    }
+  });
+
+  it('follows cursor pagination across multiple pages of PR-lifecycle records', async () => {
+    const stores = makeStores({ installationIds: ['42'], recordsByInstallation: { '42': [] } });
+    const withPr: RollupStores & { upserts: InstallationFPInsight[] } = {
+      ...stores,
+      prLifecycleStore: {
+        listByInstallation: async (_id: string, opts?: { cursor?: string }) => {
+          if (!opts?.cursor) return { items: [prRecord({ prNumber: 1 })], nextCursor: 'p2' };
+          return { items: [prRecord({ prNumber: 2 })] };
+        },
+      },
+    };
+    await runInsightRollup(withPr, WINDOW_END);
+    // Both pages' merged PRs counted into each window.
+    expect(stores.upserts[0].cycleTime?.mergedCount).toBe(2);
+  });
+});

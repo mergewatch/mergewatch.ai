@@ -14,6 +14,7 @@ import type {
   IFindingDispositionStore,
   IFPInsightStore,
   IInstallationStore,
+  IPRLifecycleStore,
 } from '@mergewatch/core';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,6 +26,8 @@ export interface InsightsCronStores {
   installationStore: IInstallationStore;
   dispositionStore: IFindingDispositionStore;
   fpInsightStore: IFPInsightStore;
+  /** TTM (#194) — feeds the cycle-time block of each insight row. */
+  prLifecycleStore?: IPRLifecycleStore;
 }
 
 export interface InsightsCronHandle {

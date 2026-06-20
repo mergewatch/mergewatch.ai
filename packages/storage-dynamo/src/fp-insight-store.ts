@@ -52,6 +52,9 @@ export class DynamoFPInsightStore implements IFPInsightStore {
         perSeverity: insight.perSeverity ?? {},
         perRepo: insight.perRepo,
         topClusters: insight.topClusters,
+        // TTM (#194) — null (not undefined) when absent: DynamoDB rejects
+        // undefined attribute values, and null round-trips back to undefined.
+        cycleTime: insight.cycleTime ?? null,
       },
     }));
   }
@@ -92,5 +95,7 @@ function itemToInsight(it: Record<string, unknown>): InstallationFPInsight {
     perSeverity: (it.perSeverity as InstallationFPInsight['perSeverity']) ?? {},
     perRepo: (it.perRepo as InstallationFPInsight['perRepo']) ?? {},
     topClusters: (it.topClusters as InstallationFPInsight['topClusters']) ?? [],
+    // TTM (#194) — absent on pre-Stage-2 rows; null coerces back to undefined.
+    ...(it.cycleTime ? { cycleTime: it.cycleTime as InstallationFPInsight['cycleTime'] } : {}),
   };
 }
