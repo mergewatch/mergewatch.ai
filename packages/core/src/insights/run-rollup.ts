@@ -13,9 +13,11 @@ import type {
   IFindingDispositionStore,
   IFPInsightStore,
   IInstallationStore,
+  IPRLifecycleStore,
 } from '../storage/types.js';
-import type { FindingDispositionRecord, InstallationFPInsight } from '../types/db.js';
+import type { FindingDispositionRecord, InstallationFPInsight, PRLifecycleRecord } from '../types/db.js';
 import { buildInsightFromDispositions } from './rollup.js';
+import { buildCycleTimeInsight } from './cycle-time.js';
 
 const WINDOWS: InstallationFPInsight['window'][] = ['7d', '30d', '90d'];
 
@@ -23,6 +25,13 @@ export interface RollupStores {
   installationStore: Pick<IInstallationStore, 'listInstallationIds'>;
   dispositionStore: Pick<IFindingDispositionStore, 'listByInstallation'>;
   fpInsightStore: Pick<IFPInsightStore, 'upsert'>;
+  /**
+   * TTM (#194) — optional. When wired, each insight row gains a `cycleTime`
+   * block built from this installation's PR-lifecycle records. When absent
+   * (e.g. a deploy that hasn't provisioned the table yet) the rollup behaves
+   * exactly as before and `cycleTime` stays undefined.
+   */
+  prLifecycleStore?: Pick<IPRLifecycleStore, 'listByInstallation'>;
 }
 
 export interface RollupRunResult {
@@ -85,8 +94,24 @@ export async function runInsightRollup(
         cursor = page.nextCursor;
       } while (cursor);
 
+      // TTM (#194) — page the PR-lifecycle rows the same way (when the store
+      // is wired). Same cursor-pagination discipline so we never silently
+      // truncate a high-volume installation.
+      const prRecords: PRLifecycleRecord[] = [];
+      if (stores.prLifecycleStore) {
+        let prCursor: string | undefined;
+        do {
+          const page = await stores.prLifecycleStore.listByInstallation(installationId, { limit: 1000, cursor: prCursor });
+          prRecords.push(...page.items);
+          prCursor = page.nextCursor;
+        } while (prCursor);
+      }
+
       for (const window of WINDOWS) {
         const insight = buildInsightFromDispositions(installationId, window, windowEndIso, records);
+        if (stores.prLifecycleStore) {
+          insight.cycleTime = buildCycleTimeInsight(window, windowEndIso, prRecords);
+        }
         await stores.fpInsightStore.upsert(insight);
         rowsWritten++;
       }

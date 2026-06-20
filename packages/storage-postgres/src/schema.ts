@@ -110,6 +110,10 @@ export const installationFpInsights = pgTable('installation_fp_insights', {
   perSeverity: jsonb('per_severity').notNull().default({}),
   perRepo: jsonb('per_repo').notNull().default({}),
   topClusters: jsonb('top_clusters').notNull().default([]),
+  // TTM (#194) — cycle-time block (merge counts + time-to-merge percentiles).
+  // Nullable: pre-Stage-2 rows and rollups run without a PR-lifecycle store
+  // simply leave it NULL, which maps back to `undefined` on the typed shape.
+  cycleTime: jsonb('cycle_time'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.window] }),
 }));

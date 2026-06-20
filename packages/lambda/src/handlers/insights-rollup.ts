@@ -28,8 +28,10 @@ import {
   DynamoInstallationStore,
   DynamoFindingDispositionStore,
   DynamoFPInsightStore,
+  DynamoPRLifecycleStore,
   DEFAULT_FINDING_DISPOSITIONS_TABLE,
   DEFAULT_FP_INSIGHTS_TABLE,
+  DEFAULT_PR_LIFECYCLE_TABLE,
 } from '@mergewatch/storage-dynamo';
 
 const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -37,10 +39,13 @@ const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const INSTALLATIONS_TABLE = process.env.INSTALLATIONS_TABLE ?? 'mergewatch-installations';
 const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE;
 const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
+const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
 const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DISPOSITIONS_TABLE);
 const fpInsightStore = new DynamoFPInsightStore(dynamodb, FP_INSIGHTS_TABLE);
+// TTM (#194) — feeds the cycle-time block of each insight row.
+const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
 
 export async function handler(): Promise<{ statusCode: number; body: string }> {
   console.log('[fb-e] insights rollup starting');
@@ -48,6 +53,7 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
     installationStore,
     dispositionStore,
     fpInsightStore,
+    prLifecycleStore,
   });
   console.log(
     '[fb-e] rollup complete — processed=%d, rows=%d, failed=[%s], elapsed=%dms, windowEnd=%s',

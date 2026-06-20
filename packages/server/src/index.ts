@@ -76,7 +76,7 @@ async function main() {
   // (60s after init to let migrations complete) and every 24h after.
   // Errors are caught + logged inside; the cron handle is kept for
   // future graceful-shutdown support.
-  startInsightsCron({ installationStore, dispositionStore, fpInsightStore });
+  startInsightsCron({ installationStore, dispositionStore, fpInsightStore, prLifecycleStore });
 
   // Express app
   const app = express();
