@@ -181,6 +181,9 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-52](#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces) | An unverified critical drops off the inline / action-table surfaces and lands in a dedicated "Unverified concerns" sub-section (FP-L) | 2m | 60s | FP-L |
 | [E2E-53](#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) | Red verdict (orchestrator score ≤ 2) is softened to advisory when majority of action findings come from chronically-disputed categories (FP-J L1); disclosure footer renders under the merge score (FP-J L3) | 3m | 60s | FP-J |
 | [E2E-54](#e2e-54-fp-k--abstraction-aware-verifier) | Findings alleging "SQL injection on Drizzle eq()", "URL injection on encodeURIComponent", "XSS on JSX text" are dropped by the verifier as abstraction-safe; raw string-concat SQL is still kept (FP-K) | 4m | 90s | FP-K |
+| [E2E-55](#e2e-55-ttm--pr-lifecycle-capture-time-to-merge-stage-1) | Every PR writes one `PRLifecycleRecord`; open/synchronize/merge/close transitions captured; `closed` doesn't trigger a review; terminal-state + set-once discipline holds (TTM) | 3m | 90s | #196 |
+| [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Nightly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
+| [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
 
 ---
 
@@ -2034,6 +2037,86 @@ Branch: `fixture/54-abstraction-aware`. Three test PRs in sequence:
 - ❌ Verifier drops an "XSS via dangerouslySetInnerHTML" finding (the React JSX clause should NOT cover `dangerouslySetInnerHTML` — only plain `{x}` interpolation)
 - ❌ FP-K block fails to render on first reviews (the block must be in the static body of `FINDING_VERIFICATION_PROMPT`, not gated by `previousFindings.length > 0`)
 - ❌ The model over-suppresses on infrastructure-shaped ambiguous data flows (`store.query(input)` where the store's internal sanitization isn't visible from the cited file) — the fail-safe rule should bias toward VALID; if it fires INVALID anyway, the prompt didn't communicate the fail-safe clearly
+
+---
+
+### E2E-55: TTM — PR-lifecycle capture (time-to-merge, stage 1)
+
+**Status:** ✅ SHIPPED (#196). See [`docs/time-to-merge.md` → Stage 1](./../docs/time-to-merge.md#stage-1--capture-196).
+
+**Behavior:** every PR MergeWatch sees writes one `PRLifecycleRecord` (DynamoDB `mergewatch-pr-lifecycle`, Postgres `pr_lifecycle`) — one row per PR, independent of the per-commit `ReviewItem`. The webhook records `opened`/`reopened`/`ready_for_review` → `upsertOpened`, `synchronize` → `recordPush`, and the newly-handled `closed` → `markMerged` (merged) or `markClosedUnmerged` (closed without merge). The review pipeline sets `markReviewed` (set-once `firstReviewAt`) on completion and `markSkipped` when `shouldSkipPR` fires. Writes are best-effort and never block the pipeline.
+
+**Setup**
+
+Branch: `fixture/55-ttm-capture`. Open a PR, push once more to it, then merge it. Separately, open a second PR and close it **without** merging.
+
+**Expected outcomes**
+
+- [ ] After open: a lifecycle row exists with `state=open`, `prCreatedAt` set, counters 0.
+- [ ] After the extra push: `totalPushes` increments; `pushesAfterFirstReview` increments only once a review has landed (`firstReviewAt` set).
+- [ ] After the review completes: `reviewed=true`, `firstReviewAt` set once (a later re-review does NOT move it).
+- [ ] After merge: `state=merged`, `mergedAt` set, `prCreatedAt` authoritative from the closed payload, `ttl` populated.
+- [ ] The closed-without-merge PR: `state=closed_unmerged`, `closedAt` set, NO `mergedAt`.
+- [ ] The `closed` action does NOT trigger a review (no eyes reaction, no new review comment on close).
+
+**Failure modes**
+- ❌ A `closed` event triggers a fresh review (the close path must terminate the lifecycle, not enqueue a job).
+- ❌ A merged row downgrades to `closed_unmerged`, or `upsertOpened`/`recordPush` resurrects a terminal row (terminal-state discipline regressed).
+- ❌ A lifecycle write throwing blocks or fails the review (writes must be best-effort).
+- ❌ `firstReviewAt` moves on a re-review (it must be set-once).
+
+---
+
+### E2E-56: TTM — cycle-time rollup (time-to-merge, stage 2)
+
+**Status:** ✅ SHIPPED (#198). See [`docs/time-to-merge.md` → Stage 2](./../docs/time-to-merge.md#stage-2--rollup-198).
+
+**Behavior:** the nightly rollup pages each installation's `PRLifecycleRecord` rows and attaches a `cycleTime` block to every window's `InstallationFPInsight`: merge counts (merged / reviewed / unreviewed / closed-unmerged / open) plus **median/p75/p90** percentiles (in hours) for time-to-merge, time-from-first-review-to-merge, and round-trips — segmented reviewed vs unreviewed. Percentiles use R-7 linear interpolation; an empty sample yields `null`, not `0`. Back-compat: when the PR-lifecycle store isn't wired, `cycleTime` is omitted and the rollup is unchanged.
+
+**Setup**
+
+Branch: `fixture/56-ttm-rollup`. Pre-seed an installation with ~15 lifecycle rows: a mix of reviewed-merged, unreviewed-merged, closed-without-merge, and still-open PRs, with merge spans spread across hours/days. Trigger the rollup manually (SaaS: invoke `mergewatch-insights-rollup-prod`; self-hosted: the nightly cron / admin trigger).
+
+**Expected outcomes**
+
+- [ ] Each window's insight row carries a `cycleTime` block with the right counts (`mergedCount = reviewedMergedCount + unreviewedMergedCount`).
+- [ ] `timeToMergeHours` p50/p75/p90 match a hand-computed percentile of the seeded merge spans.
+- [ ] `timeToMergeHoursReviewed` and `timeToMergeHoursUnreviewed` segment correctly; a segment with no PRs is `null` (not `0`).
+- [ ] Closed-without-merge and still-open PRs are counted but excluded from every duration percentile.
+- [ ] A row with the `prCreatedAt=''` sentinel still counts toward `mergedCount` but is omitted from created→merged percentiles.
+- [ ] An installation with no merges yields all-zero counts and `null` percentiles (no crash).
+
+**Failure modes**
+- ❌ Open or closed-unmerged PRs leak into the time percentiles (skews "faster merges" upward/downward).
+- ❌ A negative span (clock skew) feeds the stats instead of being dropped.
+- ❌ An empty sample serializes as `{p50:0,p75:0,p90:0}` rather than `null` (dashboard then shows a misleading "0h").
+- ❌ Wiring the lifecycle store changes the FP-feedback numbers (the two rollups must be independent).
+
+---
+
+### E2E-57: TTM — dashboard cycle-time section (time-to-merge, stage 3)
+
+**Status:** ✅ SHIPPED (#199). See [`docs/time-to-merge.md` → Stage 3](./../docs/time-to-merge.md#stage-3--dashboard-199).
+
+**Behavior:** `/dashboard/insights` renders a **Cycle time** section above the FP-feedback charts: StatCards (median time-to-merge, from-first-review, round-trips, merged count, each with a p75 · p90 spread) plus a reviewed-vs-unreviewed time-to-merge bar comparison. Durations format as `m`/`h`/`d`; a `null` percentile renders as `—`. The zero-state gate is relaxed so the page shows when **either** FP-feedback **or** cycle-time has data, each section gated independently. No new API route — `/api/insights` returns the `cycleTime` block.
+
+**Setup**
+
+Branch: `fixture/57-ttm-dashboard`. Use the E2E-56 seeded installation. Open `/dashboard/insights?org=<installationId>` and switch the 7d/30d/90d window selector.
+
+**Expected outcomes**
+
+- [ ] The Cycle time section renders above the FP funnel with correct StatCard values for the active window.
+- [ ] The reviewed-vs-unreviewed bar chart shows both series; a tooltip formats hours as `m`/`h`/`d`.
+- [ ] Switching the window selector updates the cycle-time numbers.
+- [ ] A `null` percentile (e.g. no unreviewed merges) renders `—`, never `0h`.
+- [ ] A repo with merges but **zero findings ever surfaced** still shows the Cycle time section (the relaxed gate); a fresh install with neither shows the "No insights yet" panel.
+- [ ] An older rollup row without a `cycleTime` block renders the page unchanged (no Cycle time section, FP charts as before).
+
+**Failure modes**
+- ❌ The page hides everything when `totalFindingsSurfaced === 0`, hiding cycle-time for a merge-active repo (the old gate; must be relaxed).
+- ❌ A `null` percentile renders as `0h` (misleading "instant merge").
+- ❌ The section throws on a pre-Stage-2 rollup with no `cycleTime` (must be optional).
 
 ---
 
