@@ -16,3 +16,7 @@ export {
   DynamoFPInsightStore,
   DEFAULT_FP_INSIGHTS_TABLE,
 } from './fp-insight-store.js';
+export {
+  DynamoPRLifecycleStore,
+  DEFAULT_PR_LIFECYCLE_TABLE,
+} from './pr-lifecycle-store.js';

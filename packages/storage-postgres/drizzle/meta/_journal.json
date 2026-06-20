@@ -57,6 +57,13 @@
       "when": 1779500194638,
       "tag": "0007_gigantic_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781801985919,
+      "tag": "0008_nappy_blue_blade",
+      "breakpoints": true
     }
   ]
 }

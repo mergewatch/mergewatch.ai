@@ -231,7 +231,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -327,6 +327,7 @@ export async function processReviewJob(
     : shouldSkipPR(prContext.files || [], includePatterns);
   if (skipReason) {
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', { completedAt: now, skipReason });
+    await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, now);
     await createCheckRun(octokit, owner, repo, headSha, {
       status: 'completed',
       conclusion: 'neutral',
@@ -384,6 +385,7 @@ export async function processReviewJob(
   });
   if (rulesSkip) {
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', { completedAt: now, skipReason: rulesSkip.reason });
+    await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, now);
     // autoReviewOff is handled silently earlier (before any GitHub side
     // effect). Any rulesSkip seen here is a visible-skip kind: draft,
     // maxFiles, labelIgnored, reviewOnMentionOff.
@@ -768,6 +770,10 @@ export async function processReviewJob(
         ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
         : {}),
     });
+
+    // TTM (#194) — anchor the first-review timestamp (set-once) for the
+    // time-from-first-review-to-merge metric. Later re-reviews don't move it.
+    await deps.prLifecycleStore?.markReviewed(instId, repoFullName, prNumber, new Date().toISOString());
 
     // Create structured check run (matches Lambda pattern)
     const hasCritical = criticalCount > 0;

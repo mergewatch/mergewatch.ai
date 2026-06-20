@@ -10,6 +10,9 @@ export type {
   IMcpSessionStore,
   IFindingDispositionStore,
   IFPInsightStore,
+  IPRLifecycleStore,
+  PRLifecycleOpenInput,
+  PRLifecycleCloseInput,
   FindingDispositionAttribution,
   ApiKeyRecord,
   McpSessionRecord,
@@ -248,6 +251,7 @@ export type {
   UpdateReviewInput,
   FindingDispositionRecord,
   InstallationFPInsight,
+  PRLifecycleRecord,
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';

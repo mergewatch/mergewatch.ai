@@ -34,6 +34,7 @@ import type {
   ReviewJobPayload,
   AgentReviewConfig,
 } from '@mergewatch/core';
+import { DynamoPRLifecycleStore, DEFAULT_PR_LIFECYCLE_TABLE } from '@mergewatch/storage-dynamo';
 import { SSMGitHubAuthProvider, getWebhookSecret } from '../github-auth-ssm.js';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,11 @@ import { SSMGitHubAuthProvider, getWebhookSecret } from '../github-auth-ssm.js';
 const lambda = new LambdaClient({});
 const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const authProvider = new SSMGitHubAuthProvider();
+
+// TTM (#194) — PR-lifecycle store. The webhook records open/push/close
+// transitions directly (no review needed); ReviewAgent marks reviewed/skipped.
+const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
+const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
 
 // ---------------------------------------------------------------------------
 // Signature verification
@@ -145,18 +151,58 @@ async function storeInstallation(event: InstallationEvent): Promise<void> {
 // Pull request event handler
 // ---------------------------------------------------------------------------
 
+/**
+ * TTM (#194) — record PR-lifecycle transitions. Best-effort (the store
+ * swallows its own errors); mirrors the self-hosted webhook handler.
+ */
+async function recordPrLifecycle(event: PullRequestEvent, installationId: number): Promise<void> {
+  const { action, pull_request: pr, repository } = event;
+  const instId = String(installationId);
+  const repoFullName = repository.full_name;
+  const prNumber = pr.number;
+  try {
+    if (action === 'closed') {
+      if (pr.merged && pr.merged_at) {
+        await prLifecycleStore.markMerged({ installationId: instId, repoFullName, prNumber, prCreatedAt: pr.created_at, at: pr.merged_at });
+      } else {
+        // GitHub always sends closed_at on a `closed` action; a missing value
+        // signals an unexpected payload, so surface it rather than silently
+        // substituting now() (which would skew the cycle-time stat).
+        if (!pr.closed_at) {
+          console.warn('[ttm] closed PR missing closed_at — using now() (%s#%d):', repoFullName, prNumber);
+        }
+        await prLifecycleStore.markClosedUnmerged({
+          installationId: instId, repoFullName, prNumber,
+          prCreatedAt: pr.created_at,
+          at: pr.closed_at ?? new Date().toISOString(),
+        });
+      }
+    } else if (action === 'synchronize') {
+      await prLifecycleStore.recordPush(instId, repoFullName, prNumber);
+    } else if (action === 'opened' || action === 'reopened' || action === 'ready_for_review') {
+      await prLifecycleStore.upsertOpened({ installationId: instId, repoFullName, prNumber, prCreatedAt: pr.created_at });
+    }
+  } catch (err) {
+    console.warn('[ttm] lifecycle record failed for %s#%d (%s):', repoFullName, prNumber, action, err);
+  }
+}
+
 async function handlePullRequestEvent(
   event: PullRequestEvent
 ): Promise<void> {
   const { action, pull_request: pr, repository, installation } = event;
-
-  if (!(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
 
   const installationId = installation?.id;
   if (!installationId) {
     console.warn("pull_request event missing installation ID — skipping");
     return;
   }
+
+  // Record lifecycle for every relevant action (incl. `closed`) before the
+  // review gate — merges/closes terminate the lifecycle without a review.
+  await recordPrLifecycle(event, installationId);
+
+  if (!(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
 
   const owner = repository.owner.login;
   const repo = repository.name;

@@ -141,3 +141,26 @@ export const findingDispositions = pgTable('finding_dispositions', {
   pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.findingMatchKey] }),
   installationIdx: index('finding_dispositions_installation_idx').on(t.installationId),
 }));
+
+// TTM (#194) — one row per pull request MergeWatch saw, independent of the
+// per-commit `reviews` table. Drives the nightly cycle-time rollup. See
+// PRLifecycleRecord in @mergewatch/core for the typed shape and lifecycle
+// semantics. installation_id is indexed for the rollup's per-install scan.
+export const prLifecycle = pgTable('pr_lifecycle', {
+  installationId: text('installation_id').notNull(),
+  repoFullName: text('repo_full_name').notNull(),
+  prNumber: integer('pr_number').notNull(),
+  prCreatedAt: text('pr_created_at').notNull(),
+  firstReviewAt: text('first_review_at'),
+  mergedAt: text('merged_at'),
+  closedAt: text('closed_at'),
+  state: text('state').notNull().default('open'),
+  reviewed: boolean('reviewed').notNull().default(false),
+  skipped: boolean('skipped').notNull().default(false),
+  totalPushes: integer('total_pushes').notNull().default(0),
+  pushesAfterFirstReview: integer('pushes_after_first_review').notNull().default(0),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.prNumber] }),
+  installationIdx: index('pr_lifecycle_installation_idx').on(t.installationId),
+}));

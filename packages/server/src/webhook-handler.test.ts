@@ -25,7 +25,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
 import { verifySignature, parseReviewMode, isMergeWatchCheckRun, createWebhookHandler } from './webhook-handler.js';
 import type { WebhookDeps } from './webhook-handler.js';
 import { MERGEWATCH_CHECK_RUN_NAME } from '@mergewatch/core';
-import type { IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, PullRequestEvent, CheckRunEvent, IssueCommentEvent, PullRequestReviewCommentEvent } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, IPRLifecycleStore, PullRequestEvent, CheckRunEvent, IssueCommentEvent, PullRequestReviewCommentEvent } from '@mergewatch/core';
 
 // ---------------------------------------------------------------------------
 // verifySignature
@@ -281,6 +281,117 @@ describe('createWebhookHandler — pull_request classification', () => {
     expect(callArgs[2]).toBeDefined();
     expect(callArgs[2].enabled).toBe(true);
     expect(callArgs[2].detection).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TTM (#194) — PR-lifecycle recording on pull_request events
+// ---------------------------------------------------------------------------
+
+function makeLifecycleStore(): IPRLifecycleStore {
+  return {
+    upsertOpened: vi.fn().mockResolvedValue(undefined),
+    recordPush: vi.fn().mockResolvedValue(undefined),
+    markReviewed: vi.fn().mockResolvedValue(undefined),
+    markSkipped: vi.fn().mockResolvedValue(undefined),
+    markMerged: vi.fn().mockResolvedValue(undefined),
+    markClosedUnmerged: vi.fn().mockResolvedValue(undefined),
+    listByInstallation: vi.fn().mockResolvedValue({ items: [] }),
+  };
+}
+
+describe('createWebhookHandler — PR lifecycle recording', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    mockFindExistingBotComment.mockResolvedValue(null);
+  });
+
+  async function run(event: PullRequestEvent) {
+    const prLifecycleStore = makeLifecycleStore();
+    const deps = { ...makeDeps(), prLifecycleStore };
+    const handler = createWebhookHandler(deps);
+    const body = JSON.stringify(event);
+    const { req, res } = makeReqRes(body);
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+    return prLifecycleStore;
+  }
+
+  it('records upsertOpened on `opened` and still enqueues the review', async () => {
+    const store = await run(makePullRequestEvent({ action: 'opened' }));
+    expect(store.upsertOpened).toHaveBeenCalledTimes(1);
+    expect(store.upsertOpened).toHaveBeenCalledWith({
+      installationId: '999',
+      repoFullName: 'octo/repo',
+      prNumber: 7,
+      prCreatedAt: '2026-04-01T00:00:00Z',
+    });
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('records recordPush on `synchronize`', async () => {
+    const store = await run(makePullRequestEvent({ action: 'synchronize' }));
+    expect(store.recordPush).toHaveBeenCalledWith('999', 'octo/repo', 7);
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('records markMerged on `closed` with merged=true and does NOT enqueue a review', async () => {
+    const base = makePullRequestEvent({ action: 'closed' });
+    const event: PullRequestEvent = {
+      ...base,
+      pull_request: {
+        ...base.pull_request,
+        state: 'closed',
+        merged: true,
+        merged_at: '2026-04-03T12:00:00Z',
+        closed_at: '2026-04-03T12:00:00Z',
+      },
+    };
+    const store = await run(event);
+    expect(store.markMerged).toHaveBeenCalledWith({
+      installationId: '999',
+      repoFullName: 'octo/repo',
+      prNumber: 7,
+      prCreatedAt: '2026-04-01T00:00:00Z',
+      at: '2026-04-03T12:00:00Z',
+    });
+    expect(store.markClosedUnmerged).not.toHaveBeenCalled();
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('records markClosedUnmerged on `closed` with merged=false and does NOT enqueue a review', async () => {
+    const base = makePullRequestEvent({ action: 'closed' });
+    const event: PullRequestEvent = {
+      ...base,
+      pull_request: {
+        ...base.pull_request,
+        state: 'closed',
+        merged: false,
+        closed_at: '2026-04-03T12:00:00Z',
+      },
+    };
+    const store = await run(event);
+    expect(store.markClosedUnmerged).toHaveBeenCalledWith({
+      installationId: '999',
+      repoFullName: 'octo/repo',
+      prNumber: 7,
+      prCreatedAt: '2026-04-01T00:00:00Z',
+      at: '2026-04-03T12:00:00Z',
+    });
+    expect(store.markMerged).not.toHaveBeenCalled();
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when no prLifecycleStore is wired (best-effort no-op)', async () => {
+    const deps = makeDeps(); // no prLifecycleStore
+    const handler = createWebhookHandler(deps);
+    const body = JSON.stringify(makePullRequestEvent({ action: 'opened' }));
+    const { req, res } = makeReqRes(body);
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
   });
 });
 
