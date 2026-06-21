@@ -18,6 +18,7 @@ import type {
 import type { FindingDispositionRecord, InstallationFPInsight, PRLifecycleRecord } from '../types/db.js';
 import { buildInsightFromDispositions } from './rollup.js';
 import { buildCycleTimeInsight } from './cycle-time.js';
+import { buildEngagementInsight } from './engagement.js';
 
 const WINDOWS: InstallationFPInsight['window'][] = ['7d', '30d', '90d'];
 
@@ -112,6 +113,10 @@ export async function runInsightRollup(
         if (stores.prLifecycleStore) {
           insight.cycleTime = buildCycleTimeInsight(window, windowEndIso, prRecords);
         }
+        // #195 — engagement always computes: it only needs the (mandatory)
+        // disposition records; PR-lifecycle records refine the re-review KPIs
+        // when the store is wired and are simply empty otherwise.
+        insight.engagement = buildEngagementInsight(window, windowEndIso, records, prRecords);
         await stores.fpInsightStore.upsert(insight);
         rowsWritten++;
       }

@@ -78,6 +78,13 @@
       "when": 1782001388109,
       "tag": "0010_lying_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782005497573,
+      "tag": "0011_soft_liz_osborn",
+      "breakpoints": true
     }
   ]
 }

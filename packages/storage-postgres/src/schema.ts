@@ -114,6 +114,9 @@ export const installationFpInsights = pgTable('installation_fp_insights', {
   // Nullable: pre-Stage-2 rows and rollups run without a PR-lifecycle store
   // simply leave it NULL, which maps back to `undefined` on the typed shape.
   cycleTime: jsonb('cycle_time'),
+  // #195 — developer-engagement block (acceptance / command-usage / re-review
+  // KPIs). Nullable: pre-engagement rollups leave it NULL → `undefined`.
+  engagement: jsonb('engagement'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.window] }),
 }));
