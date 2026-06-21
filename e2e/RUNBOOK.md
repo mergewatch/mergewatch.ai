@@ -184,7 +184,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-55](#e2e-55-ttm--pr-lifecycle-capture-time-to-merge-stage-1) | Every PR writes one `PRLifecycleRecord`; open/synchronize/merge/close transitions captured; `closed` doesn't trigger a review; terminal-state + set-once discipline holds (TTM) | 3m | 90s | #196 |
 | [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Nightly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
 | [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
-| [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #TBD |
+| [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
 
 ---
 
@@ -2123,7 +2123,7 @@ Branch: `fixture/57-ttm-dashboard`. Use the E2E-56 seeded installation. Open `/d
 
 ### E2E-58: Engagement — `/resolve` capture (engagement metrics, stage 1)
 
-**Status:** ⏳ IN REVIEW (#TBD). See [`docs/pending/engagement-metrics.md` → Stage 1](./../docs/pending/engagement-metrics.md#stage-1--resolve-capture).
+**Status:** ✅ SHIPPED (#207). See [`docs/pending/engagement-metrics.md` → Stage 1](./../docs/pending/engagement-metrics.md#stage-1--resolve-capture).
 
 **Behavior:** Replying `/resolve` (or `/mergewatch resolve`) on a MergeWatch inline-finding thread increments a new `resolveCount` on that finding's `FindingDispositionRecord` — a first-class positive engagement signal, recorded **in addition to** the existing FP-F `disputeCount` increment (resolve still counts toward the FP funnel). The thread is resolved as before. New records and pre-#195 records both default `resolveCount` to 0 (no backfill). Works for both DynamoDB (SaaS) and Postgres (self-hosted).
 
