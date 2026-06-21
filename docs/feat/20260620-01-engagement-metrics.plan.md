@@ -70,7 +70,7 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 
 ## Phased breakdown — one PR per phase, strict dep order
 
-### Phase 1 — `/resolve` capture completeness (storage) — [ ]
+### Phase 1 — `/resolve` capture completeness (storage) — [x] PR #207 (MergeWatch 5/5, 0 findings)
 - **Goal:** make `/mergewatch` command usage fully aggregatable before the rollup consumes it.
 - **Files:** `packages/core/src/types/db.ts` (`FindingDispositionRecord.resolveCount?`), `packages/core/src/storage/types.ts` (`IFindingDispositionStore.incrementResolve`), both `finding-disposition-store.ts` impls (atomic increment, mirror `incrementDispute`), `packages/storage-postgres/src/schema.ts` + generated migration (`ADD COLUMN IF NOT EXISTS resolve_count`), and the `/resolve` handler path (`inline-reply.ts` + `review-processor.ts` + Lambda review-agent) to call `incrementResolve` for each resolved key.
 - **RUNBOOK:** E2E-58 — `/resolve` increments `resolveCount` on the disposition record.
