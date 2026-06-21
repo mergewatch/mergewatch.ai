@@ -82,7 +82,7 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 - **RUNBOOK:** E2E-59 — nightly rollup attaches an `engagement` block (acceptance rate, command usage, re-review rate, approx action rate, reviewed-PR count) over each window; empty/low-volume installation yields `null` rates not crashes.
 - **Tests:** KPI math (acceptance/action/re-review rates, command counts, windowing), empty + single-record edge cases, back-compat when `satisfactionStore` absent.
 
-### Phase 3 — Engagement dashboard section (Tier 1 surfaced) — [x] (in review)
+### Phase 3 — Engagement dashboard section (Tier 1 surfaced) — [x] PR #209 (MergeWatch 5/5, 0 findings)
 - **Goal:** render the Tier 1 engagement metrics. Depends on Phase 2.
 - **Files:** `packages/dashboard/components/InsightsClient.tsx` — `EngagementSection` (StatCards: acceptance rate, command usage, re-review rate, approx action rate; trend across windows where useful), render after `CycleTimeSection`, relax zero-state gate (L281) to include `hasEngagementData`. No API route change.
 - **RUNBOOK:** E2E-60 — `/dashboard/insights` Engagement section: StatCards render; `null` rates show `—`; the action-rate card is labeled "approx."
