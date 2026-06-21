@@ -76,7 +76,7 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 - **RUNBOOK:** E2E-58 — `/resolve` increments `resolveCount` on the disposition record.
 - **Tests:** store increment (both backends, mock), handler wiring, migration idempotency (`migrations:check`).
 
-### Phase 2 — Engagement rollup (Tier 1 KPIs, core) — [x] (in review)
+### Phase 2 — Engagement rollup (Tier 1 KPIs, core) — [x] PR #208 (MergeWatch 5/5, 0 findings)
 - **Goal:** compute and persist the Tier 1 `engagement` block per 7d/30d/90d window. Depends on Phase 1 (`resolveCount`).
 - **Files:** `packages/core/src/types/db.ts` (`engagement?` block), new `packages/core/src/insights/engagement.ts` (pure `buildEngagementInsight` + helpers, exported via core index), `run-rollup.ts` (assign `insight.engagement`), both `fp-insight-store.ts` impls (persist + coerce), `schema.ts` + migration (`engagement` jsonb, idempotent).
 - **RUNBOOK:** E2E-59 — nightly rollup attaches an `engagement` block (acceptance rate, command usage, re-review rate, approx action rate, reviewed-PR count) over each window; empty/low-volume installation yields `null` rates not crashes.
