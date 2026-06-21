@@ -10,6 +10,10 @@
  *     (median / p75 / p90), time-from-first-review-to-merge, round-trips,
  *     and a reviewed-vs-unreviewed comparison ("did MergeWatch make us
  *     faster?"). Computed from the `cycleTime` block on each insight row.
+ *   - **#195** — developer-engagement section: Tier-1 behavioral KPIs
+ *     (acceptance rate, approx finding-action rate, `/mergewatch` command
+ *     usage, re-review rate) plus a cross-window acceptance/action trend.
+ *     Computed from the `engagement` block on each insight row.
  *   - **FB-F** — FP funnel (stacked bar): unsignaled / agreed / silent-
  *     dropped / disputed counts per window. Single chart that answers
  *     "is the review noise increasing or decreasing for us?".
@@ -71,6 +75,18 @@ interface CycleTime {
   roundTripsBeforeMerge: Percentiles | null;
 }
 
+/** #195 — developer-engagement block (Tier 1). Optional for pre-engagement rollups. */
+interface Engagement {
+  acceptanceRate: number | null;
+  totalResolves: number;
+  totalRejectCommands: number;
+  commandUsageCount: number;
+  findingActionRateApprox: number | null;
+  reReviewRate: number | null;
+  reviewedPrCount: number;
+  activeInstallation: boolean;
+}
+
 interface Insight {
   installationId: string;
   window: "7d" | "30d" | "90d";
@@ -89,6 +105,8 @@ interface Insight {
   topClusters: ClusterRow[];
   /** TTM (#194) — present only on rollups generated after Stage 2 shipped. */
   cycleTime?: CycleTime;
+  /** #195 — present only on rollups generated after the engagement stage shipped. */
+  engagement?: Engagement;
 }
 
 interface InsightsClientProps {
@@ -123,6 +141,12 @@ function fmtHours(h: number | null | undefined): string {
   if (h < 1) return `${Math.round(h * 60)}m`;
   if (h < 48) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
+}
+
+/** Format a 0..1 rate as a whole-number percentage; null/undefined → em-dash. */
+function fmtPct(r: number | null | undefined): string {
+  if (r == null) return "—";
+  return `${Math.round(r * 100)}%`;
 }
 
 function pickWindow(insights: Insight[], window: "7d" | "30d" | "90d"): Insight | undefined {
@@ -277,8 +301,17 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
   const cyc = active?.cycleTime;
   const hasCycleData = !!cyc && (cyc.mergedCount > 0 || cyc.closedUnmergedCount > 0 || cyc.openCount > 0);
   const hasFpData = (active?.totalFindingsSurfaced ?? 0) > 0;
+  // #195 — engagement can carry signal (command usage, re-review) even with no
+  // findings surfaced, so it's gated independently like cycle-time.
+  const eng = active?.engagement;
+  const hasEngagementData = !!eng && (
+    eng.commandUsageCount > 0 ||
+    eng.reviewedPrCount > 0 ||
+    eng.acceptanceRate !== null ||
+    eng.findingActionRateApprox !== null
+  );
 
-  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData)) {
+  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData && !hasEngagementData)) {
     return (
       <div className="rounded-lg border border-border-default bg-surface-card p-6">
         <h2 className="text-base font-semibold text-text-primary">No insights yet</h2>
@@ -326,6 +359,11 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
 
       {/* ─── TTM (#194): Cycle time (time-to-merge) ──────────────────── */}
       {hasCycleData && cyc && <CycleTimeSection cycleTime={cyc} window={activeWindow} />}
+
+      {/* ─── #195: Developer engagement ──────────────────────────────── */}
+      {hasEngagementData && eng && (
+        <EngagementSection engagement={eng} insights={insights} window={activeWindow} />
+      )}
 
       {/* ─── FB-F..FB-J: FP-feedback sections (only when findings exist) ── */}
       {hasFpData && (
@@ -804,6 +842,144 @@ function CycleTimeSection({ cycleTime, window }: { cycleTime: CycleTime; window:
             </div>
           )}
         </>
+      )}
+    </section>
+  );
+}
+
+// ─── #195 — developer-engagement section ───────────────────────────────────
+
+// Engagement trend palette.
+const ENGAGEMENT_COLOURS = {
+  acceptance: "#10b981", // emerald — accepted vs disputed/dropped
+  action: "#6366f1",     // indigo — acted-on (approx)
+};
+
+interface EngagementPoint {
+  window: "7d" | "30d" | "90d";
+  acceptance: number | null; // 0..1, null = no signal in window
+  action: number | null;     // 0..1
+}
+
+/** Acceptance + approx action rate across the three windows (for the trend line). */
+function buildEngagementPoints(insights: Insight[]): EngagementPoint[] {
+  const order: EngagementPoint["window"][] = ["7d", "30d", "90d"];
+  return order
+    .map((w) => insights.find((i) => i.window === w))
+    .filter((i): i is Insight => Boolean(i))
+    .map((i) => ({
+      window: i.window,
+      acceptance: i.engagement?.acceptanceRate ?? null,
+      action: i.engagement?.findingActionRateApprox ?? null,
+    }));
+}
+
+/**
+ * Developer-engagement section. Headline Tier-1 KPIs (acceptance rate, approx
+ * finding-action rate, `/mergewatch` command usage, re-review rate) for the
+ * active window, plus a cross-window trend line for the two finding-level
+ * rates — "are developers acting on and accepting reviews, and is it holding
+ * over time?". null rates render as an em-dash, never a misleading 0%.
+ */
+function EngagementSection({
+  engagement,
+  insights,
+  window,
+}: {
+  engagement: Engagement;
+  insights: Insight[];
+  window: string;
+}) {
+  const e = engagement;
+  const points = buildEngagementPoints(insights);
+  // Only plot the trend when at least one window carries a finding-level rate;
+  // an all-null line is noise, not signal.
+  const hasTrend = points.some((p) => p.acceptance !== null || p.action !== null);
+
+  return (
+    <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
+      <header className="mb-4">
+        <h2 className="text-sm font-semibold text-text-primary">Developer engagement — {window}</h2>
+        <p className="mt-1 text-xs text-text-secondary">
+          Whether developers find reviews useful — behavioral signals, not surveys.
+          Acceptance weighs 👍 against 👎 / quiet drops; action rate is an{" "}
+          <em>approximation</em> ((agreements + resolves) / findings, capped at 100%) —
+          the exact &ldquo;cited code changed&rdquo; signal is a planned follow-up.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Acceptance rate"
+          value={fmtPct(e.acceptanceRate)}
+          subtext="👍 vs 👎 / quiet drops"
+        />
+        <StatCard
+          label="Action rate (approx)"
+          value={fmtPct(e.findingActionRateApprox)}
+          subtext="findings acted on"
+        />
+        <StatCard
+          label="Command usage"
+          value={e.commandUsageCount.toLocaleString()}
+          subtext={`${e.totalResolves.toLocaleString()} resolve · ${e.totalRejectCommands.toLocaleString()} reject`}
+        />
+        <StatCard
+          label="Re-review rate"
+          value={fmtPct(e.reReviewRate)}
+          subtext={`${e.reviewedPrCount.toLocaleString()} PRs reviewed`}
+        />
+      </div>
+
+      {hasTrend && (
+        <div className="mt-5">
+          <h3 className="mb-1 text-xs font-semibold text-text-primary">
+            Acceptance &amp; action rate — across 7d / 30d / 90d
+          </h3>
+          <p className="mb-3 text-[11px] text-text-secondary">
+            Rates holding or rising across widening windows suggest reviews stay
+            useful as more history accrues. A gap means no signal in that window.
+          </p>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={points} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                <XAxis dataKey="window" fontSize={11} />
+                <YAxis
+                  domain={[0, 1]}
+                  tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                  fontSize={11}
+                  width={40}
+                />
+                <Tooltip
+                  formatter={(value: number, name: string) => [
+                    fmtPct(value),
+                    name === "acceptance" ? "Acceptance" : "Action (approx)",
+                  ]}
+                />
+                <Legend
+                  formatter={(value) => (value === "acceptance" ? "Acceptance" : "Action (approx)")}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="acceptance"
+                  stroke={ENGAGEMENT_COLOURS.acceptance}
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="action"
+                  stroke={ENGAGEMENT_COLOURS.action}
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                  connectNulls={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       )}
     </section>
   );

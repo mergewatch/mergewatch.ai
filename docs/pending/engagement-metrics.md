@@ -122,7 +122,26 @@ engagement?: {
 
 **E2E:** [E2E-59](../../e2e/RUNBOOK.md#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2).
 
-## Stage 3 — Engagement dashboard section — _planned_
+## Stage 3 — Engagement dashboard section
+
+Surfaces the Tier-1 KPIs on `/dashboard/insights`.
+
+**What changed** (`packages/dashboard/components/InsightsClient.tsx`)
+
+- New `EngagementSection` (mirrors `CycleTimeSection`), rendered below Cycle time and above the FP funnel. Four StatCards — **Acceptance rate**, **Action rate (approx)**, **Command usage** (`N resolve · N reject`), **Re-review rate** (`N PRs reviewed`) — plus a cross-window acceptance/action **trend line** across 7d / 30d / 90d (mirrors the FB-I severity detector).
+- `Engagement` type + `engagement?` on the `Insight` shape; `fmtPct` helper (0..1 → whole-percent, `null`/`undefined` → `—`).
+- Zero-state gate relaxed: the page renders when **any** of FP-feedback, cycle-time, or engagement has data (`hasEngagementData`), each section gated independently.
+- No API change — `/api/insights` already returns the `engagement` block from the fp-insight store.
+
+**Edge cases**
+
+- `null` rates render `—`, never `0%` (empty denominator ≠ a real 0).
+- The trend line uses `connectNulls={false}` so a window with no signal shows a gap, not an interpolated line.
+- A pre-#195 rollup row (no `engagement`) renders the page unchanged.
+
+**Verification:** dashboard `tsc --noEmit` + Next production build (runs ESLint) — consistent with how the TTM cycle-time section (#199) shipped; the dashboard has no unit-test harness, so behavior is covered by the RUNBOOK E2E.
+
+**E2E:** [E2E-60](../../e2e/RUNBOOK.md#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3).
 
 ## Stage 4 — Tier 2 footer 👍/👎 helpful prompt — _planned_
 
