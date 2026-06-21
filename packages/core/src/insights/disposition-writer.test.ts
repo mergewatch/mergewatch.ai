@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   recordFindingSurfacings,
   recordDisputes,
+  recordResolves,
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
@@ -20,6 +21,7 @@ function makeMockStore(): IFindingDispositionStore & {
     incrementUnverified: string[][];
     incrementSilentDrop: string[][];
     incrementAgreement: string[][];
+    incrementResolve: string[][];
     appendRejectReason: Array<[string, string, string, unknown]>;
   };
 } {
@@ -30,6 +32,7 @@ function makeMockStore(): IFindingDispositionStore & {
     incrementUnverified: [] as string[][],
     incrementSilentDrop: [] as string[][],
     incrementAgreement: [] as string[][],
+    incrementResolve: [] as string[][],
     appendRejectReason: [] as Array<[string, string, string, unknown]>,
   };
   return {
@@ -42,6 +45,7 @@ function makeMockStore(): IFindingDispositionStore & {
     async incrementUnverified(i, r, k)  { calls.incrementUnverified.push([i, r, k]); },
     async incrementSilentDrop(i, r, k)  { calls.incrementSilentDrop.push([i, r, k]); },
     async incrementAgreement(i, r, k)   { calls.incrementAgreement.push([i, r, k]); },
+    async incrementResolve(i, r, k)     { calls.incrementResolve.push([i, r, k]); },
     async appendRejectReason(i, r, k, reason) {
       calls.appendRejectReason.push([i, r, k, reason]);
     },
@@ -189,6 +193,48 @@ describe('recordDisputes (FB-A)', () => {
     const store = makeMockStore();
     await recordDisputes(store, 42, 'org/repo', []);
     expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+});
+
+// ─── recordResolves (#195) ──────────────────────────────────────────────────
+
+describe('recordResolves (#195)', () => {
+  it('calls incrementResolve once per key', async () => {
+    const store = makeMockStore();
+    await recordResolves(store, 42, 'org/repo', [
+      'src/a.ts::T::Foo',
+      'src/a.ts::F::abc123',
+    ]);
+    expect(store.calls.incrementResolve).toEqual([
+      ['42', 'org/repo', 'src/a.ts::T::Foo'],
+      ['42', 'org/repo', 'src/a.ts::F::abc123'],
+    ]);
+  });
+
+  it('records resolve independently of dispute (no incrementDispute side-effect)', async () => {
+    const store = makeMockStore();
+    await recordResolves(store, 42, 'org/repo', ['src/a.ts::T::Foo']);
+    expect(store.calls.incrementResolve).toHaveLength(1);
+    expect(store.calls.incrementDispute).toHaveLength(0);
+  });
+
+  it('is a no-op when the key list is empty', async () => {
+    const store = makeMockStore();
+    await recordResolves(store, 42, 'org/repo', []);
+    expect(store.calls.incrementResolve).toHaveLength(0);
+  });
+
+  it('is a no-op when no store is provided (back-compat)', async () => {
+    await expect(recordResolves(undefined, 42, 'org/repo', ['k'])).resolves.toBeUndefined();
+  });
+
+  it('logs but does not throw when the store rejects', async () => {
+    const store = makeMockStore();
+    store.incrementResolve = vi.fn(async () => { throw new Error('disk full'); }) as never;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(recordResolves(store, 42, 'org/repo', ['k'])).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

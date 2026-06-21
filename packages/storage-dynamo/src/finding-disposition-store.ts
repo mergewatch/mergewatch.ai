@@ -74,6 +74,7 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
       'unverifiedCount = if_not_exists(unverifiedCount, :zero)',
       'silentDropCount = if_not_exists(silentDropCount, :zero)',
       'agreementCount = if_not_exists(agreementCount, :zero)',
+      'resolveCount = if_not_exists(resolveCount, :zero)',
     ];
     const exprValues: Record<string, unknown> = {
       ':now': nowIso,
@@ -114,7 +115,7 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
     installationId: string,
     repoFullName: string,
     findingMatchKey: string,
-    attrName: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount',
+    attrName: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount' | 'resolveCount',
   ): Promise<void> {
     try {
       await this.client.send(new UpdateCommand({
@@ -134,6 +135,7 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
   incrementUnverified(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount'); }
   incrementSilentDrop(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'silentDropCount'); }
   incrementAgreement(i: string, r: string, k: string)   { return this.incrementCounter(i, r, k, 'agreementCount'); }
+  incrementResolve(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'resolveCount'); }
 
   async appendRejectReason(
     installationId: string,
@@ -201,6 +203,7 @@ function itemToRecord(it: Record<string, unknown>): FindingDispositionRecord {
     unverifiedCount: Number(it.unverifiedCount ?? 0),
     silentDropCount: Number(it.silentDropCount ?? 0),
     agreementCount: Number(it.agreementCount ?? 0),
+    resolveCount: Number(it.resolveCount ?? 0),
   };
   if (it.category) r.category = it.category as FindingDispositionRecord['category'];
   if (it.topAgent) r.topAgent = String(it.topAgent);

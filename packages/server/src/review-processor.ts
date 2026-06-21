@@ -14,7 +14,7 @@ import {
   handleInlineReply,
   persistInlineResolveMemory,
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
-  recordFindingSurfacings, recordDisputes, detectQuietDrops, recordQuietDrops,
+  recordFindingSurfacings, recordDisputes, recordResolves, detectQuietDrops, recordQuietDrops,
   pollAndRecordInlineReactions,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
@@ -164,6 +164,9 @@ async function handleInlineReplyJob(
       });
       if (result.resolvedFindingKeys && result.resolvedFindingKeys.length > 0) {
         await recordDisputes(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+        // #195 — also record the positive engagement signal (separate from the
+        // FP-F dispute increment above) so command-usage / action KPIs see it.
+        await recordResolves(deps.dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
       }
     }
 

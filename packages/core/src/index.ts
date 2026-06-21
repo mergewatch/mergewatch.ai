@@ -155,6 +155,7 @@ export type { ClusterableFinding, ClusterOptions, TaggedClusterableFindings } fr
 export {
   recordFindingSurfacings,
   recordDisputes,
+  recordResolves,
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
