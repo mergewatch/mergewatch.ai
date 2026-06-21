@@ -494,6 +494,14 @@ export interface FindingDispositionRecord {
   silentDropCount: number;
   /** FB-C — 👍 / ❤️ / 🚀 reactions on the bot's inline comment for a finding with this key. */
   agreementCount: number;
+  /**
+   * #195 — `/resolve` (or `/mergewatch resolve`) command invocations on the
+   * bot's inline thread for a finding with this key. A first-class engagement
+   * signal: an explicit "I acted on this" distinct from a 👎 dispute. Drives
+   * the command-usage and approximate finding-action KPIs in the FB-E rollup.
+   * Defaults to 0 on records written before this counter existed.
+   */
+  resolveCount: number;
 
   /** Last-seen finding category for this key (the few seen are stable; we keep the most recent). */
   category?: 'security' | 'bug' | 'style' | 'errorHandling' | 'testCoverage' | 'commentAccuracy' | 'custom';

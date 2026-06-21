@@ -139,6 +139,9 @@ export interface IFindingDispositionStore {
   /** FB-C — increment agreementCount by 1. */
   incrementAgreement(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
 
+  /** #195 — increment resolveCount by 1 (a `/resolve` command on the bot's inline thread). */
+  incrementResolve(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+
   /** FB-D — append a rejectReason entry. Idempotent at the record level; appends always extend. */
   appendRejectReason(
     installationId: string,

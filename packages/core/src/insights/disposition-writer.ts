@@ -106,6 +106,30 @@ export async function recordDisputes(
   }
 }
 
+/**
+ * #195 — record one resolveCount increment per key. A `/resolve` is an
+ * explicit "I acted on this" engagement signal. It is recorded ALONGSIDE the
+ * existing FP-F dispute increment (resolve still counts toward the FP funnel),
+ * not in place of it — `resolveCount` is the separate positive-engagement
+ * counter the engagement rollup reads. Best-effort, same as `recordDisputes`.
+ */
+export async function recordResolves(
+  store: IFindingDispositionStore | undefined,
+  installationId: string | number | undefined,
+  repoFullName: string,
+  matchKeys: readonly string[],
+): Promise<void> {
+  if (!store || installationId == null || matchKeys.length === 0) return;
+  const inst = String(installationId);
+  for (const key of matchKeys) {
+    try {
+      await store.incrementResolve(inst, repoFullName, key);
+    } catch (err) {
+      console.warn('[fb-a] recordResolves: write failed for %s', key, err);
+    }
+  }
+}
+
 // ─── FB-B — quiet-drop derived counter ─────────────────────────────────────
 
 /**

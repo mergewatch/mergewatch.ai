@@ -133,6 +133,9 @@ export const findingDispositions = pgTable('finding_dispositions', {
   unverifiedCount: integer('unverified_count').notNull().default(0),
   silentDropCount: integer('silent_drop_count').notNull().default(0),
   agreementCount: integer('agreement_count').notNull().default(0),
+  // #195 — `/resolve` command invocations (engagement signal). Default 0 so
+  // rows written before this counter existed need no backfill.
+  resolveCount: integer('resolve_count').notNull().default(0),
   category: text('category'),
   topAgent: text('top_agent'),
   // FB-I — severity for the severity-shopping detector rollup. Optional

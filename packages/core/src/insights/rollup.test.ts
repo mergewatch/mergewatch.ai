@@ -24,6 +24,7 @@ function record(over: Partial<FindingDispositionRecord> = {}): FindingDispositio
     unverifiedCount: 0,
     silentDropCount: 0,
     agreementCount: 0,
+    resolveCount: 0,
     category: 'bug',
     topAgent: 'bug',
     sigTokens: ['missing', 'await', 'fetch'],

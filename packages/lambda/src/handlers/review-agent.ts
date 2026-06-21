@@ -50,6 +50,7 @@ import {
   partitionDisputed,
   recordFindingSurfacings,
   recordDisputes,
+  recordResolves,
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
@@ -258,6 +259,9 @@ async function handleInlineReplyMode(
       });
       if (result.resolvedFindingKeys && result.resolvedFindingKeys.length > 0) {
         await recordDisputes(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
+        // #195 — also record the positive engagement signal (separate from the
+        // FP-F dispute increment above) so command-usage / action KPIs see it.
+        await recordResolves(dispositionStore, installationId, repoFullName, result.resolvedFindingKeys);
       }
     }
 

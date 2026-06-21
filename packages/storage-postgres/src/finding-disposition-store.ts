@@ -84,7 +84,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
     installationId: string,
     repoFullName: string,
     findingMatchKey: string,
-    column: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount',
+    column: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount' | 'resolveCount',
   ): Promise<void> {
     try {
       const colMap = {
@@ -93,6 +93,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
         unverifiedCount: findingDispositions.unverifiedCount,
         silentDropCount: findingDispositions.silentDropCount,
         agreementCount:  findingDispositions.agreementCount,
+        resolveCount:    findingDispositions.resolveCount,
       } as const;
       const dbCol = colMap[column];
       await this.db
@@ -113,6 +114,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
   incrementUnverified(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount'); }
   incrementSilentDrop(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'silentDropCount'); }
   incrementAgreement(i: string, r: string, k: string)   { return this.incrementCounter(i, r, k, 'agreementCount'); }
+  incrementResolve(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'resolveCount'); }
 
   async appendRejectReason(
     installationId: string,
@@ -163,6 +165,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
       unverifiedCount: r.unverifiedCount,
       silentDropCount: r.silentDropCount,
       agreementCount: r.agreementCount,
+      resolveCount: r.resolveCount,
       ...(r.category ? { category: r.category as FindingDispositionRecord['category'] } : {}),
       ...(r.topAgent ? { topAgent: r.topAgent } : {}),
       ...(r.severity ? { severity: r.severity as FindingDispositionRecord['severity'] } : {}),
