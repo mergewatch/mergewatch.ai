@@ -186,6 +186,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
 | [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
 | [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Nightly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
+| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
 
 ---
 
@@ -2172,6 +2173,35 @@ Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + P
 - ❌ Rejects windowed by `lastSeen` instead of `rejectReasons[].at` (drops in-window rejects on long-lived records).
 - ❌ `findingActionRateApprox` exceeds 1 (uncapped proxy).
 - ❌ The `engagement` jsonb migration is non-idempotent (no `ADD COLUMN IF NOT EXISTS`).
+
+---
+
+### E2E-60: Engagement — dashboard section (engagement metrics, stage 3)
+
+**Status:** ✅ SHIPPED (#209). See [`docs/pending/engagement-metrics.md` → Stage 3](./../docs/pending/engagement-metrics.md#stage-3--engagement-dashboard-section).
+
+**Behavior:** `/dashboard/insights` renders a **Developer engagement** section (below Cycle time, above the FP funnel): four StatCards — Acceptance rate, Action rate (approx), Command usage (`N resolve · N reject`), Re-review rate (`N PRs reviewed`) — plus a cross-window acceptance/action trend line (7d / 30d / 90d). A `null` rate renders `—`, never `0%`. The action-rate card is labeled "approx". The zero-state gate is relaxed so the page shows when **any** of FP-feedback, cycle-time, or engagement has data, each section gated independently. No new API route — `/api/insights` already returns the `engagement` block.
+
+**Setup**
+
+Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `engagement` block on its rollup rows). Open `/dashboard/insights?org=<installationId>` and switch the 7d / 30d / 90d window selector.
+
+**Expected outcomes**
+
+- [ ] The Developer engagement section renders below Cycle time with correct StatCard values for the active window.
+- [ ] `null` rates render `—` (e.g. acceptance with nothing acted on), never `0%`.
+- [ ] The Action rate card reads "approx" in its label/subtext.
+- [ ] Command usage shows `N resolve · N reject` matching the rollup counts.
+- [ ] The trend line plots acceptance + action across the windows; a window with no signal shows a gap (no connected line through null).
+- [ ] Switching the window selector updates the StatCard numbers.
+- [ ] An installation with engagement signal but **zero findings surfaced** still shows this section (relaxed gate); a fresh install with none of FP/cycle/engagement shows "No insights yet".
+- [ ] An older rollup row without an `engagement` block renders the page unchanged (no engagement section).
+
+**Failure modes**
+- ❌ A `null` rate renders as `0%` (an empty install looks like a 0%-acceptance install).
+- ❌ The trend line connects across a null window (`connectNulls` regression), implying data that isn't there.
+- ❌ The section throws on a pre-#195 rollup with no `engagement` (must be optional).
+- ❌ The action-rate card drops the "approx" label (misrepresents the proxy as exact).
 
 ---
 
