@@ -42,6 +42,7 @@ export class PostgresFPInsightStore implements IFPInsightStore {
         perRepo: insight.perRepo as unknown,
         topClusters: insight.topClusters as unknown,
         cycleTime: (insight.cycleTime ?? null) as unknown,
+        engagement: (insight.engagement ?? null) as unknown,
       })
       .onConflictDoUpdate({
         target: [installationFpInsights.installationId, installationFpInsights.window],
@@ -59,6 +60,7 @@ export class PostgresFPInsightStore implements IFPInsightStore {
           perRepo: insight.perRepo as unknown,
           topClusters: insight.topClusters as unknown,
           cycleTime: (insight.cycleTime ?? null) as unknown,
+          engagement: (insight.engagement ?? null) as unknown,
         },
       });
   }
@@ -104,5 +106,7 @@ function rowToInsight(row: Record<string, unknown>): InstallationFPInsight {
     topClusters: (row.topClusters as InstallationFPInsight['topClusters']) ?? [],
     // TTM (#194) — NULL on pre-Stage-2 rows; omit so the field stays undefined.
     ...(row.cycleTime ? { cycleTime: row.cycleTime as InstallationFPInsight['cycleTime'] } : {}),
+    // #195 — NULL on pre-engagement rows; omit so the field stays undefined.
+    ...(row.engagement ? { engagement: row.engagement as InstallationFPInsight['engagement'] } : {}),
   };
 }

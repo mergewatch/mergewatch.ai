@@ -80,7 +80,47 @@ Adds a first-class `resolveCount` counter to the per-finding disposition record 
 
 ---
 
-## Stage 2 — Engagement rollup (Tier 1 KPIs) — _planned_
+## Stage 2 — Engagement rollup (Tier 1 KPIs)
+
+Computes and persists the Tier-1 `engagement` block per window in the nightly insights rollup.
+
+**`engagement` block (Tier 1)**
+
+```ts
+engagement?: {
+  acceptanceRate: number | null;          // agreements / (agreements + disputes + silentDrops)
+  totalResolves: number;                  // /resolve usage (resolveCount, summed)
+  totalRejectCommands: number;            // /mergewatch reject usage (rejectReasons[].at in-window)
+  commandUsageCount: number;              // totalResolves + totalRejectCommands
+  findingActionRateApprox: number | null; // (agreements + resolves) / surfaced, capped at 1 — PROXY
+  reReviewRate: number | null;            // reviewed PRs re-pushed after first review / reviewed PRs
+  reviewedPrCount: number;
+  activeInstallation: boolean;            // reviewedPrCount > 0
+};
+```
+
+**What changed**
+
+- `InstallationFPInsight.engagement?` block (`packages/core/src/types/db.ts`) — optional, nullable rates, exactly like `cycleTime`.
+- New pure module `packages/core/src/insights/engagement.ts` — `buildEngagementInsight(window, windowEndIso, dispositionRecords, prLifecycleRecords)`, exported from `@mergewatch/core` along with the `EngagementInsight` type. Mirrors `cycle-time.ts`.
+- `runInsightRollup` (`run-rollup.ts`) computes `insight.engagement` **unconditionally** — it only needs the mandatory disposition records; PR-lifecycle records refine the re-review KPIs when that store is wired and are empty otherwise.
+- Persistence in both fp-insight stores (`engagement` jsonb / attribute, null↔undefined coercion); Postgres column via idempotent migration `0011_soft_liz_osborn.sql` (`ADD COLUMN IF NOT EXISTS`).
+
+**Windowing**
+
+- Disposition counters (agreement / dispute / silentDrop / resolve / surface) are summed over records whose `lastSeen` is in-window — the same convention the FP-funnel rollup uses.
+- `/mergewatch reject` commands carry their own `at` timestamp, so they're windowed precisely by that (independent of `lastSeen`).
+- PR-lifecycle engagement (reviewed / re-review) windows by `firstReviewAt`.
+
+**Edge cases**
+
+- Rates are `null` when their denominator is 0 — the dashboard tells "no signal" from a real `0`.
+- `findingActionRateApprox` is capped at 1 (a finding can carry both a 👍 and a `/resolve`).
+- Pre-#195 rollup rows have no `engagement` block; consumers handle `undefined`.
+
+**Tests:** `engagement.test.ts` — acceptance/action/command/re-review math, the empty/low-volume case, windowing (7d vs 30d, out-of-window exclusion), and the cap.
+
+**E2E:** [E2E-59](../../e2e/RUNBOOK.md#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2).
 
 ## Stage 3 — Engagement dashboard section — _planned_
 

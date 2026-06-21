@@ -170,6 +170,10 @@ export type { RollupStores, RollupRunResult } from './insights/run-rollup.js';
 export { buildCycleTimeInsight, percentile, percentilesOf } from './insights/cycle-time.js';
 export type { CycleTimeInsight } from './insights/cycle-time.js';
 
+// ─── Engagement rollup (#195) ──────────────────────────────────────────────
+export { buildEngagementInsight } from './insights/engagement.js';
+export type { EngagementInsight } from './insights/engagement.js';
+
 // ─── Dispute-rate loader (FP-J L1) ─────────────────────────────────────────
 export { loadCategoryDisputeRates } from './insights/dispute-rates.js';
 

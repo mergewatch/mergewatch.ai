@@ -55,6 +55,8 @@ export class DynamoFPInsightStore implements IFPInsightStore {
         // TTM (#194) — null (not undefined) when absent: DynamoDB rejects
         // undefined attribute values, and null round-trips back to undefined.
         cycleTime: insight.cycleTime ?? null,
+        // #195 — engagement block; same null-not-undefined discipline.
+        engagement: insight.engagement ?? null,
       },
     }));
   }
@@ -97,5 +99,7 @@ function itemToInsight(it: Record<string, unknown>): InstallationFPInsight {
     topClusters: (it.topClusters as InstallationFPInsight['topClusters']) ?? [],
     // TTM (#194) — absent on pre-Stage-2 rows; null coerces back to undefined.
     ...(it.cycleTime ? { cycleTime: it.cycleTime as InstallationFPInsight['cycleTime'] } : {}),
+    // #195 — absent on pre-engagement rows; null coerces back to undefined.
+    ...(it.engagement ? { engagement: it.engagement as InstallationFPInsight['engagement'] } : {}),
   };
 }

@@ -185,6 +185,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Nightly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
 | [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
 | [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
+| [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Nightly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #TBD |
 
 ---
 
@@ -2143,6 +2144,34 @@ Branch: `fixture/58-engagement-resolve`. On a repo with an active review that su
 - ❌ `/resolve` only increments `disputeCount` (the resolve engagement signal is lost — the #195 regression).
 - ❌ A pre-#195 row throws or reads `undefined`/`NaN` for `resolveCount` (must coerce to 0).
 - ❌ The Postgres migration is non-idempotent (no `ADD COLUMN IF NOT EXISTS`) and fails `migrations:check` or a re-run.
+
+---
+
+### E2E-59: Engagement — Tier 1 rollup (engagement metrics, stage 2)
+
+**Status:** ✅ SHIPPED (#TBD). See [`docs/pending/engagement-metrics.md` → Stage 2](./../docs/pending/engagement-metrics.md#stage-2--engagement-rollup-tier-1-kpis).
+
+**Behavior:** The nightly insights rollup attaches an `engagement` block to each `InstallationFPInsight` (7d / 30d / 90d) with Tier-1 behavioral KPIs: **acceptance rate** (`agreements / (agreements + disputes + silentDrops)`), **command usage** (`/resolve` + `/mergewatch reject` counts), an **approximate finding-action rate** (`(agreements + resolves) / surfaced`, capped at 1), **re-review rate** (reviewed PRs re-pushed after first review), `reviewedPrCount`, and `activeInstallation`. Rates are `null` (not `0`) when their denominator is empty. The block computes from the disposition records alone (re-review KPIs refine when the PR-lifecycle store is wired). Persisted on both backends as a nullable `engagement` jsonb/attribute.
+
+**Setup**
+
+Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + PR-lifecycle history (👍/👎 reactions, `/resolve`, `/mergewatch reject`, reviewed PRs with later pushes). Trigger the nightly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and inspect the stored insight rows.
+
+**Expected outcomes**
+
+- [ ] Each window row carries an `engagement` block with the seven Tier-1 fields.
+- [ ] `acceptanceRate` matches `agreements / (agreements + disputes + silentDrops)` for in-window records; `null` when nothing was acted on.
+- [ ] `commandUsageCount` = `totalResolves + totalRejectCommands`; rejects are windowed by their own `rejectReasons[].at`.
+- [ ] `findingActionRateApprox` is capped at 1 even when a finding has both a 👍 and a `/resolve`.
+- [ ] `reReviewRate` = reviewed-PRs-re-pushed / reviewed-PRs in-window; `null` and `activeInstallation: false` when no reviewed PRs.
+- [ ] A pre-#195 rollup row (no `engagement`) still reads back fine — the field stays `undefined`.
+- [ ] Identical numbers on DynamoDB and Postgres for the same inputs.
+
+**Failure modes**
+- ❌ A rate reads `0` where it should be `null` (no data), making an empty install look like a 0% install.
+- ❌ Rejects windowed by `lastSeen` instead of `rejectReasons[].at` (drops in-window rejects on long-lived records).
+- ❌ `findingActionRateApprox` exceeds 1 (uncapped proxy).
+- ❌ The `engagement` jsonb migration is non-idempotent (no `ADD COLUMN IF NOT EXISTS`).
 
 ---
 

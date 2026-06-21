@@ -697,6 +697,48 @@ export interface InstallationFPInsight {
     /** pushesAfterFirstReview distribution, reviewed merged PRs only. */
     roundTripsBeforeMerge: CycleTimePercentiles | null;
   };
+
+  /**
+   * #195 — developer-engagement block, computed from the same disposition +
+   * PR-lifecycle records in this window. Optional: present only on rollups
+   * generated after this feature shipped. Consumers must handle the undefined
+   * case. Tier-2 satisfaction fields (helpful / NPS) are added by later stages.
+   *
+   * Rates are `number | null` — null distinguishes "no signal in this window"
+   * (empty denominator) from a real `0`, exactly like the cycle-time block.
+   */
+  engagement?: {
+    /**
+     * agreements / (agreements + disputes + silentDrops) — the share of
+     * acted-on findings that were accepted vs disputed/quietly dropped. null
+     * when nothing was acted on in the window.
+     */
+    acceptanceRate: number | null;
+    /** `/resolve` (or `/mergewatch resolve`) command invocations in-window. */
+    totalResolves: number;
+    /** `/mergewatch reject` invocations in-window (rejectReasons[].at). */
+    totalRejectCommands: number;
+    /** totalResolves + totalRejectCommands — overall `/mergewatch` command usage. */
+    commandUsageCount: number;
+    /**
+     * APPROXIMATE finding-action rate: (agreements + resolves) / findings
+     * surfaced, capped at 1. A proxy for "the developer acted on this finding".
+     * The exact signal (cited code actually changed in a later commit) needs
+     * per-commit diff capture and is deferred to a follow-up. null when no
+     * findings surfaced in the window.
+     */
+    findingActionRateApprox: number | null;
+    /**
+     * Of PRs MergeWatch reviewed in-window, the share that got another push
+     * after the first review (devs iterating against feedback). null when no
+     * reviewed PRs in the window.
+     */
+    reReviewRate: number | null;
+    /** PRs MergeWatch reviewed in-window (firstReviewAt in window). */
+    reviewedPrCount: number;
+    /** reviewedPrCount > 0 — this installation's per-window activity signal. */
+    activeInstallation: boolean;
+  };
 }
 
 /** Median / p75 / p90 of a cycle-time sample. */
