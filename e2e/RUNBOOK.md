@@ -186,7 +186,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
 | [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
 | [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Nightly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
-| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #TBD |
+| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
 
 ---
 
@@ -2178,7 +2178,7 @@ Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + P
 
 ### E2E-60: Engagement — dashboard section (engagement metrics, stage 3)
 
-**Status:** ✅ SHIPPED (#TBD). See [`docs/pending/engagement-metrics.md` → Stage 3](./../docs/pending/engagement-metrics.md#stage-3--engagement-dashboard-section).
+**Status:** ✅ SHIPPED (#209). See [`docs/pending/engagement-metrics.md` → Stage 3](./../docs/pending/engagement-metrics.md#stage-3--engagement-dashboard-section).
 
 **Behavior:** `/dashboard/insights` renders a **Developer engagement** section (below Cycle time, above the FP funnel): four StatCards — Acceptance rate, Action rate (approx), Command usage (`N resolve · N reject`), Re-review rate (`N PRs reviewed`) — plus a cross-window acceptance/action trend line (7d / 30d / 90d). A `null` rate renders `—`, never `0%`. The action-rate card is labeled "approx". The zero-state gate is relaxed so the page shows when **any** of FP-feedback, cycle-time, or engagement has data, each section gated independently. No new API route — `/api/insights` already returns the `engagement` block.
 
