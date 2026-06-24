@@ -55,7 +55,7 @@ Three architectural choices shape the rest of the plan:
 └──────────────────┬──────────────────────────────────────────────┘
                    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Aggregate (nightly rollup)                                      │
+│ Aggregate (hourly rollup)                                      │
 │  mergewatch-installation-fp-insights                            │
 └──────────────────┬──────────────────────────────────────────────┘
                    ▼
@@ -198,16 +198,16 @@ The bot posts a confirming reply (`Got it — recording as <category>. This patt
 
 ---
 
-### FB-E — Nightly `InstallationFPInsight` rollup  ✅ SHIPPED
+### FB-E — Hourly `InstallationFPInsight` rollup  ✅ SHIPPED
 
 **Where the gap lives:** Reading per-finding records on every dashboard pageload is O(N) on installation size. We want the dashboard to be O(1).
 
-**The fix:** Scheduled task (EventBridge → Lambda for SaaS; node-cron job in the Express server for self-hosted) runs nightly per installation. Aggregates `FindingDispositionRecord` rows into `InstallationFPInsight` rows for the 7d / 30d / 90d windows. Cluster step reuses W10's `extractSignificantTokens` + a simple union-find on shared tokens; representative title = highest-surfaceCount member.
+**The fix:** Scheduled task (EventBridge → Lambda for SaaS; node-cron job in the Express server for self-hosted) runs hourly per installation. Aggregates `FindingDispositionRecord` rows into `InstallationFPInsight` rows for the 7d / 30d / 90d windows. Cluster step reuses W10's `extractSignificantTokens` + a simple union-find on shared tokens; representative title = highest-surfaceCount member.
 
 Compute cost is bounded by the largest installation's record count; rollups stay small (~tens of KB per installation per window).
 
 **Code targets:** `packages/core/src/insights/rollup.ts` (new — algorithm), `packages/lambda/src/handlers/insights-rollup.ts` (new — scheduled handler), `packages/server/src/insights-cron.ts` (new — self-hosted), `infra/template.yaml` (EventBridge rule).
-**E2E target:** [E2E-41](./../e2e/RUNBOOK.md#e2e-41-fb-e--nightly-installationfpinsight-rollup-target).
+**E2E target:** [E2E-41](./../e2e/RUNBOOK.md#e2e-41-fb-e--hourly-installationfpinsight-rollup-target).
 
 ---
 
@@ -251,7 +251,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 **The fix (data path + chart path):**
 
 - **Data path** — `FindingDispositionRecord` gains an optional `severity?: 'critical' | 'warning' | 'info'` field. The disposition writer in `recordFindingSurfacings` threads `f.severity` through the attribution payload alongside `category`. Postgres migration `0006_vengeful_nightmare.sql` adds the column with `IF NOT EXISTS` so it's safe to apply on a running server; existing rows flow into the rollup's `uncategorized` bucket until they're written again. The Dynamo writer (UpdateExpression) and the Postgres writer (Drizzle `onConflictDoUpdate`) both gain the symmetric `severity = :severity` clause.
-- **Rollup path** — `InstallationFPInsight` gains a `perSeverity?: Record<string, { surfaced; disputed; rate }>` bucket parallel to `perCategory`. `buildInsightFromDispositions` aggregates by severity into this bucket using the same pattern. Postgres migration `0007_gigantic_shockwave.sql` adds the `per_severity` jsonb column with a `'{}'` default so pre-FB-I rollups remain valid; the next nightly run backfills.
+- **Rollup path** — `InstallationFPInsight` gains a `perSeverity?: Record<string, { surfaced; disputed; rate }>` bucket parallel to `perCategory`. `buildInsightFromDispositions` aggregates by severity into this bucket using the same pattern. Postgres migration `0007_gigantic_shockwave.sql` adds the `per_severity` jsonb column with a `'{}'` default so pre-FB-I rollups remain valid; the next hourly run backfills.
 - **Chart path** — `InsightsClient.FBISeverityShoppingDetector` renders a two-line chart (warnings vs criticals dispute-rate) across the three rolling windows (7d → 30d → 90d) as x-axis points. An advisory banner fires when **both** of two adjacent windows (7d + 30d OR 30d + 90d) show `warning.rate ≥ critical.rate × 1.5` AND each side has at least 5 surfacings (small-N noise guard). One-window spikes are tolerated; only persistent skew triggers the banner.
 
 **Design notes (decisions worth flagging):**
@@ -313,7 +313,7 @@ Compute cost is bounded by the largest installation's record count; rollups stay
 | **FB-B** | Quiet-drop derived counter | Persist | S | FB-A | ✅ SHIPPED |
 | **FB-C** | Inline-comment 👎 → disputes | Capture | M | FB-A | ✅ SHIPPED |
 | **FB-D** | `/mergewatch reject` slash command | Capture | M | FB-A | ✅ SHIPPED |
-| **FB-E** | Nightly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ✅ SHIPPED |
+| **FB-E** | Hourly InstallationFPInsight rollup | Aggregate | M | FB-A, FB-B | ✅ SHIPPED |
 | **FB-F** | FP funnel chart | Surface | M | FB-E | ✅ SHIPPED |
 | **FB-G** | Dispute-rate-by-agent chart | Surface | M | FB-E | ✅ SHIPPED (bar v1; line pending per-day) |
 | **FB-H** | Top recurring themes table | Surface | M | FB-E | ✅ SHIPPED |

@@ -7,7 +7,7 @@
 
 ## What we measure
 
-For every pull request MergeWatch sees, we capture its lifecycle and, in the nightly rollup, compute per rolling window (7d / 30d / 90d):
+For every pull request MergeWatch sees, we capture its lifecycle and, in the hourly rollup, compute per rolling window (7d / 30d / 90d):
 
 - **Time to merge** — `created_at` → `merged_at`.
 - **Time from first MergeWatch review → merge** — does our feedback land early enough to matter?
@@ -26,7 +26,7 @@ For every pull request MergeWatch sees, we capture its lifecycle and, in the nig
 Three stages, each shipped independently, mirroring the existing FB-A (disposition store) → FB-E (rollup) → FB-F..J (dashboard) pipeline.
 
 ```
-GitHub webhook                  Nightly rollup                 Dashboard
+GitHub webhook                  Hourly rollup                 Dashboard
 ──────────────                  ──────────────                 ─────────
 pull_request opened    ┐        listByInstallation       ┐     /api/insights
             synchronize │  ───►  buildCycleTimeInsight()  │ ──► InsightsClient
@@ -65,11 +65,11 @@ A pure module, `packages/core/src/insights/cycle-time.ts`:
 - `percentilesOf(values)` — `{ p50, p75, p90 }` or `null` for an empty sample.
 - `buildCycleTimeInsight(window, windowEnd, records)` — windows PRs by their terminal (or, for open PRs, creation) timestamp and computes the block below.
 
-The nightly orchestrator (`runInsightRollup`) gained an optional `prLifecycleStore`; when wired it pages each installation's lifecycle rows (same cursor pagination as dispositions) and attaches a `cycleTime` block to every window's `InstallationFPInsight`. **Back-compat:** when the store isn't wired (e.g. mid-deploy), `cycleTime` stays `undefined` and the rollup behaves exactly as before.
+The hourly orchestrator (`runInsightRollup`) gained an optional `prLifecycleStore`; when wired it pages each installation's lifecycle rows (same cursor pagination as dispositions) and attaches a `cycleTime` block to every window's `InstallationFPInsight`. **Back-compat:** when the store isn't wired (e.g. mid-deploy), `cycleTime` stays `undefined` and the rollup behaves exactly as before.
 
 ### Stage 3 — Dashboard (#199)
 
-`CycleTimeSection` in `packages/dashboard/components/InsightsClient.tsx`, rendered above the FP-feedback charts on `/dashboard/insights`:
+`CycleTimeSection` in `packages/dashboard/components/InsightsClient.tsx`, rendered above the FP-feedback charts on `/dashboard/analytics`:
 
 - **StatCards** — median time-to-merge, time-from-first-review, round-trips, merged count, each with a `p75 · p90` spread.
 - **Reviewed-vs-unreviewed comparison** — a grouped bar chart of time-to-merge (median/p75/p90) split by whether MergeWatch reviewed the PR.
@@ -136,7 +136,7 @@ Each percentile object is `null` (not `0`) when its sample is empty, so the dash
 
 ## Cost & privacy notes
 
-- **No extra LLM cost.** Lifecycle capture is webhook + storage only; the percentile math is a pure function over a bounded record set in the existing nightly rollup.
+- **No extra LLM cost.** Lifecycle capture is webhook + storage only; the percentile math is a pure function over a bounded record set in the existing hourly rollup.
 - **Storage is bounded.** One row per PR; DynamoDB rows TTL-reap ~90 days past the terminal event (long enough for the 90d window). Postgres rows persist (no TTL) but are small.
 - **No PR content stored** — only timestamps, counts, and booleans. The lifecycle row carries no titles, diffs, or author PII beyond what `ReviewItem` already holds.
 
@@ -147,7 +147,7 @@ Each percentile object is `null` (not `0`) when its sample is empty, so the dash
 Nothing to configure. Cycle-time tracking activates automatically once the PR-lifecycle store is provisioned:
 
 - **SaaS:** the `mergewatch-pr-lifecycle-${Stage}` table (in `infra/template.yaml`) + the `PR_LIFECYCLE_TABLE` env var wired into the webhook, review-agent, and insights-rollup Lambdas.
-- **Self-hosted:** the `pr_lifecycle` table (auto-migrated on startup, migration `0008`) + `cycle_time` column (migration `0009`). The Express server wires the store into the webhook handler and nightly cron.
+- **Self-hosted:** the `pr_lifecycle` table (auto-migrated on startup, migration `0008`) + `cycle_time` column (migration `0009`). The Express server wires the store into the webhook handler and hourly cron.
 
 ---
 
