@@ -4,7 +4,7 @@
 # All fields are optional; omitted fields use sensible defaults.
 
 # Primary model for review agents (Bedrock model ID).
-model: anthropic.claude-sonnet-4-20250514
+model: us.anthropic.claude-opus-4-6-v1
 
 # Built-in review agents — toggle each on/off.
 agents:

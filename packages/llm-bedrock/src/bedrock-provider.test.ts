@@ -89,7 +89,7 @@ describe('BedrockLLMProvider', () => {
     }));
 
     const provider = new BedrockLLMProvider();
-    const result = await provider.invoke('us.anthropic.claude-3-5-sonnet-20241022-v2:0', 'prompt');
+    const result = await provider.invoke('us.anthropic.claude-opus-4-6-v1', 'prompt');
 
     expect(result.text).toBe('Review result');
     expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
@@ -134,9 +134,9 @@ describe('BedrockLLMProvider', () => {
   });
 
   it('has correct SUPPORTED_MODELS mapping', () => {
+    expect(SUPPORTED_MODELS['claude-opus-4.6']).toBe('us.anthropic.claude-opus-4-6-v1');
     expect(SUPPORTED_MODELS['claude-sonnet-4']).toBe('us.anthropic.claude-sonnet-4-20250514-v1:0');
     expect(SUPPORTED_MODELS['claude-haiku-4.5']).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
-    expect(SUPPORTED_MODELS['claude-3.5-sonnet']).toBe('us.anthropic.claude-3-5-sonnet-20241022-v2:0');
     expect(SUPPORTED_MODELS['amazon-titan-text']).toBe('amazon.titan-text-express-v1');
   });
 

@@ -95,7 +95,7 @@ const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_T
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const SATISFACTION_TABLE = process.env.SATISFACTION_TABLE ?? DEFAULT_SATISFACTION_TABLE;
 const REVIEW_COSTS_TABLE = process.env.REVIEW_COSTS_TABLE ?? DEFAULT_REVIEW_COSTS_TABLE;
-const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
+const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-opus-4-6-v1';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
