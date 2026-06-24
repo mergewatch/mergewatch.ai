@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildEngagementInsight } from './engagement.js';
-import type { FindingDispositionRecord, PRLifecycleRecord } from '../types/db.js';
+import type { FindingDispositionRecord, PRLifecycleRecord, HelpfulVoteRecord, NpsResponseRecord } from '../types/db.js';
 
 // 7d window ends here; "in window" means lastSeen/at/firstReviewAt ≥ 2026-05-15.
 const WINDOW_END = '2026-05-22T00:00:00.000Z';
@@ -22,6 +22,30 @@ function disp(over: Partial<FindingDispositionRecord> = {}): FindingDispositionR
     silentDropCount: 0,
     agreementCount: 0,
     resolveCount: 0,
+    ...over,
+  };
+}
+
+/** A helpful-vote row; override as needed. */
+function hv(over: Partial<HelpfulVoteRecord> = {}): HelpfulVoteRecord {
+  return {
+    installationId: '42',
+    repoFullName: 'org/repo',
+    prNumber: 1,
+    up: 0,
+    down: 0,
+    lastVoteAt: IN_WINDOW,
+    ...over,
+  };
+}
+
+/** An NPS response row; override as needed. */
+function nps(over: Partial<NpsResponseRecord> = {}): NpsResponseRecord {
+  return {
+    installationId: '42',
+    githubUserId: 'u1',
+    score: 0,
+    respondedAt: IN_WINDOW,
     ...over,
   };
 }
@@ -57,6 +81,12 @@ describe('buildEngagementInsight (#195)', () => {
         reReviewRate: null,
         reviewedPrCount: 0,
         activeInstallation: false,
+        // Tier 2 — zero / null when no satisfaction records are passed.
+        helpfulUp: 0,
+        helpfulDown: 0,
+        helpfulRate: null,
+        npsResponses: 0,
+        npsScore: null,
       });
     });
 
@@ -174,6 +204,83 @@ describe('buildEngagementInsight (#195)', () => {
       const recs = [disp({ lastSeen: OUT_OF_WINDOW, surfaceCount: 4, resolveCount: 2 })];
       expect(buildEngagementInsight('7d', WINDOW_END, recs, []).totalResolves).toBe(0);
       expect(buildEngagementInsight('30d', WINDOW_END, recs, []).totalResolves).toBe(2);
+    });
+  });
+
+  // ── Tier 2 — explicit satisfaction (Phase 4 + 5) ──────────────────────────
+
+  describe('helpful votes (Phase 4)', () => {
+    it('sums up/down across in-window rows and computes the rate', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [hv({ up: 6, down: 2 }), hv({ prNumber: 2, up: 0, down: 2 })],
+        npsResponses: [],
+      });
+      expect(e.helpfulUp).toBe(6);
+      expect(e.helpfulDown).toBe(4);
+      expect(e.helpfulRate).toBe(0.6); // 6 / 10
+    });
+
+    it('windows helpful votes by lastVoteAt', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [
+          hv({ up: 100, down: 9, lastVoteAt: OUT_OF_WINDOW }), // excluded
+          hv({ prNumber: 2, up: 1, down: 0, lastVoteAt: IN_WINDOW }),
+        ],
+        npsResponses: [],
+      });
+      expect(e.helpfulUp).toBe(1);
+      expect(e.helpfulDown).toBe(0);
+      expect(e.helpfulRate).toBe(1);
+    });
+
+    it('helpfulRate is null when no votes land in the window', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [hv({ up: 3, down: 1, lastVoteAt: OUT_OF_WINDOW })],
+        npsResponses: [],
+      });
+      expect(e.helpfulRate).toBeNull();
+      expect(e.helpfulUp).toBe(0);
+    });
+  });
+
+  describe('NPS (Phase 5)', () => {
+    it('is %promoters − %detractors over in-window responses', () => {
+      // 6 promoters (9–10), 2 passives (7–8), 2 detractors (0–6) → 60% − 20% = 40.
+      const responses: NpsResponseRecord[] = [
+        ...Array.from({ length: 6 }, (_, i) => nps({ githubUserId: `p${i}`, score: 10 })),
+        ...Array.from({ length: 2 }, (_, i) => nps({ githubUserId: `n${i}`, score: 8 })),
+        ...Array.from({ length: 2 }, (_, i) => nps({ githubUserId: `d${i}`, score: 3 })),
+      ];
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], { helpfulVotes: [], npsResponses: responses });
+      expect(e.npsResponses).toBe(10);
+      expect(e.npsScore).toBe(40);
+    });
+
+    it('treats 9–10 as promoters, 7–8 as passive, 0–6 as detractors', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [],
+        npsResponses: [nps({ githubUserId: 'a', score: 9 }), nps({ githubUserId: 'b', score: 6 })],
+      });
+      // 1 promoter, 1 detractor over 2 → 50% − 50% = 0.
+      expect(e.npsScore).toBe(0);
+    });
+
+    it('rounds to an integer in −100..100', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [],
+        npsResponses: [nps({ githubUserId: 'a', score: 10 }), nps({ githubUserId: 'b', score: 0 }), nps({ githubUserId: 'c', score: 0 })],
+      });
+      // 1 promoter, 2 detractors over 3 → (1 − 2)/3 × 100 = -33.33 → -33.
+      expect(e.npsScore).toBe(-33);
+    });
+
+    it('windows NPS by respondedAt and is null when none land in-window', () => {
+      const e = buildEngagementInsight('7d', WINDOW_END, [], [], {
+        helpfulVotes: [],
+        npsResponses: [nps({ score: 10, respondedAt: OUT_OF_WINDOW })],
+      });
+      expect(e.npsResponses).toBe(0);
+      expect(e.npsScore).toBeNull();
     });
   });
 });

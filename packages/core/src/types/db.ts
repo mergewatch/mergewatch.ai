@@ -345,6 +345,19 @@ export interface ReviewItem {
   inlineReactionsSnapshot?: Record<string, Record<string, number>>;
 
   /**
+   * #195 Phase 4 — last-polled raw reaction counts on the summary comment's
+   * "Was this review helpful? 👍 / 👎" prompt, keyed by GitHub reaction type
+   * (`+1` / `heart` / `rocket` / `-1` / `confused`). Drives the snapshot-delta
+   * that turns new reactions into `ISatisfactionStore.recordHelpfulVotes`
+   * increments without double-counting on re-review polls. Monotonic — only
+   * positive deltas vs this snapshot are recorded.
+   *
+   * Persisted on the LATEST complete review for the PR; absent on reviews run
+   * before this prompt shipped (no helpful votes recorded for them).
+   */
+  summaryReactionsSnapshot?: Record<string, number>;
+
+  /**
    * FP-F — Stable `findingMatchKeys` for findings the author resolved by
    * replying `/resolve` (or equivalent) on an inline review-comment thread.
    *
@@ -738,6 +751,28 @@ export interface InstallationFPInsight {
     reviewedPrCount: number;
     /** reviewedPrCount > 0 — this installation's per-window activity signal. */
     activeInstallation: boolean;
+
+    // ── Tier 2 — explicit satisfaction (#195 Phase 4 + 5) ────────────────────
+    // Always present once the engagement block is computed; they read `0` /
+    // `null` when no `ISatisfactionStore` is wired into the rollup (back-compat
+    // with Phase-1..3 deployments that provisioned no satisfaction table).
+
+    /**
+     * Phase 4 — 👍 reactions on the summary-comment "Was this review helpful?"
+     * prompt, summed over rows whose most-recent vote falls in the window.
+     */
+    helpfulUp: number;
+    /** Phase 4 — 👎 reactions on the same prompt, windowed the same way. */
+    helpfulDown: number;
+    /** Phase 4 — helpfulUp / (helpfulUp + helpfulDown). null when no votes in-window. */
+    helpfulRate: number | null;
+    /** Phase 5 — NPS survey responses recorded in-window. */
+    npsResponses: number;
+    /**
+     * Phase 5 — Net Promoter Score: %promoters (9–10) − %detractors (0–6),
+     * an integer in −100..100. null when no responses landed in the window.
+     */
+    npsScore: number | null;
   };
 }
 
@@ -746,6 +781,42 @@ export interface CycleTimePercentiles {
   p50: number;
   p75: number;
   p90: number;
+}
+
+// ─── #195 Tier 2 — explicit-satisfaction records ────────────────────────────
+
+/**
+ * Phase 4 — one aggregate row per summary comment (installation + repo + PR)
+ * tracking 👍/👎 reactions on the "Was this review helpful?" prompt. Updated
+ * by snapshot-delta from the review path; the nightly engagement rollup windows
+ * these rows by `lastVoteAt` (same convention disposition counters use for
+ * `lastSeen`).
+ */
+export interface HelpfulVoteRecord {
+  installationId: string;
+  repoFullName: string;
+  prNumber: number;
+  /** Cumulative 👍 (`+1` / `heart` / `rocket`) reactions on the prompt. */
+  up: number;
+  /** Cumulative 👎 (`-1` / `confused`) reactions on the prompt. */
+  down: number;
+  /** ISO 8601 — most-recent vote activity; the rollup's windowing anchor. */
+  lastVoteAt: string;
+}
+
+/**
+ * Phase 5 — one row per (installation, GitHub user) carrying that admin's most
+ * recent NPS survey response. Latest-wins on re-submit; `respondedAt` drives
+ * both the 90-day prompt throttle and the rollup's per-window NPS computation.
+ */
+export interface NpsResponseRecord {
+  installationId: string;
+  /** GitHub user ID of the responding dashboard admin (NextAuth `githubUserId`). */
+  githubUserId: string;
+  /** 0–10 likelihood-to-recommend score. */
+  score: number;
+  /** ISO 8601 — when the response was recorded. */
+  respondedAt: string;
 }
 
 /**

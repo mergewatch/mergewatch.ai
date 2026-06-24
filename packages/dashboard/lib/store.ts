@@ -27,6 +27,9 @@ export async function getDashboardStore(): Promise<IDashboardStore> {
       // chart routes render a zero-state. Defaults to the FB-E SAM table
       // name when the stage suffix is supplied via env (SaaS path).
       fpInsightsTable: process.env.DYNAMODB_TABLE_FP_INSIGHTS,
+      // #195 Phase 5 — optional. Unset → the NPS route reports ineligible and
+      // never prompts. Set to the satisfaction table name (with stage suffix).
+      satisfactionTable: process.env.DYNAMODB_TABLE_SATISFACTION,
       region: process.env.APP_REGION ?? process.env.AWS_REGION,
     });
   }

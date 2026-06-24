@@ -10,6 +10,7 @@ import {
   PostgresFindingDispositionStore,
   PostgresFPInsightStore,
   PostgresPRLifecycleStore,
+  PostgresSatisfactionStore,
   runMigrations,
 } from '@mergewatch/storage-postgres';
 import { EnvGitHubAuthProvider } from './github-auth-env.js';
@@ -69,6 +70,7 @@ async function main() {
   const dispositionStore = new PostgresFindingDispositionStore(db);
   const fpInsightStore = new PostgresFPInsightStore(db);
   const prLifecycleStore = new PostgresPRLifecycleStore(db);
+  const satisfactionStore = new PostgresSatisfactionStore(db);
   const authProvider = new EnvGitHubAuthProvider(githubAppId, githubPrivateKey);
   const llm = createLLMProvider();
 
@@ -76,7 +78,7 @@ async function main() {
   // (60s after init to let migrations complete) and every 24h after.
   // Errors are caught + logged inside; the cron handle is kept for
   // future graceful-shutdown support.
-  startInsightsCron({ installationStore, dispositionStore, fpInsightStore, prLifecycleStore });
+  startInsightsCron({ installationStore, dispositionStore, fpInsightStore, prLifecycleStore, satisfactionStore });
 
   // Express app
   const app = express();
@@ -125,6 +127,7 @@ async function main() {
     dispositionStore,
     fpInsightStore,
     prLifecycleStore,
+    satisfactionStore,
     authProvider,
     llm,
     dashboardBaseUrl,

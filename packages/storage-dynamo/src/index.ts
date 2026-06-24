@@ -20,3 +20,7 @@ export {
   DynamoPRLifecycleStore,
   DEFAULT_PR_LIFECYCLE_TABLE,
 } from './pr-lifecycle-store.js';
+export {
+  DynamoSatisfactionStore,
+  DEFAULT_SATISFACTION_TABLE,
+} from './satisfaction-store.js';

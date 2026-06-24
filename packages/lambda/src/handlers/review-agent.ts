@@ -54,6 +54,7 @@ import {
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
+  recordSummaryHelpfulVotes,
 } from '@mergewatch/core';
 import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
@@ -74,6 +75,8 @@ import {
   DEFAULT_FP_INSIGHTS_TABLE,
   DynamoPRLifecycleStore,
   DEFAULT_PR_LIFECYCLE_TABLE,
+  DynamoSatisfactionStore,
+  DEFAULT_SATISFACTION_TABLE,
 } from '@mergewatch/storage-dynamo';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
@@ -88,6 +91,7 @@ const REVIEWS_TABLE = process.env.REVIEWS_TABLE ?? 'mergewatch-reviews';
 const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE;
 const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
+const SATISFACTION_TABLE = process.env.SATISFACTION_TABLE ?? DEFAULT_SATISFACTION_TABLE;
 const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
@@ -104,6 +108,9 @@ const fpInsightStore = new DynamoFPInsightStore(dynamodb, FP_INSIGHTS_TABLE);
 // TTM (#194) — marks reviewed/skipped on the PR-lifecycle row the webhook
 // opened. Best-effort; swallows if the table isn't provisioned yet.
 const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
+// #195 Phase 4 — captures summary 👍/👎 helpful votes into the engagement
+// rollup. Best-effort; swallows if the table isn't provisioned yet.
+const satisfactionStore = new DynamoSatisfactionStore(dynamodb, SATISFACTION_TABLE);
 const llm = new BedrockLLMProvider();
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -855,11 +862,23 @@ export async function handler(
     await addPRReaction(octokit, owner, repo, prNumber, '+1');
 
     let reactions: Record<string, number> | undefined;
+    // #195 Phase 4 — next-poll baseline for the summary-comment helpful prompt.
+    let updatedSummaryReactionsSnapshot: Record<string, number> = prevComplete?.summaryReactionsSnapshot ?? {};
     if (commentId) {
       const reactionCounts = await getCommentReactions(octokit, owner, repo, commentId);
       if (Object.keys(reactionCounts).length > 0) {
         reactions = reactionCounts;
       }
+      // Fold the summary 👍/👎 delta into the engagement rollup (best-effort).
+      updatedSummaryReactionsSnapshot = await recordSummaryHelpfulVotes(
+        satisfactionStore,
+        installationId,
+        repoFullName,
+        prNumber,
+        reactionCounts,
+        prevComplete?.summaryReactionsSnapshot,
+        new Date().toISOString(),
+      );
     }
 
     const severityRank = { critical: 0, warning: 1, info: 2 } as const;
@@ -899,6 +918,11 @@ export async function handler(
       // for the rationale.
       ...(Object.keys(updatedReactionsSnapshot).length > 0
         ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
+        : {}),
+      // #195 Phase 4 — persist the summary-comment reaction baseline for the
+      // next review's helpful-vote delta.
+      ...(Object.keys(updatedSummaryReactionsSnapshot).length > 0
+        ? { summaryReactionsSnapshot: updatedSummaryReactionsSnapshot }
         : {}),
     });
 

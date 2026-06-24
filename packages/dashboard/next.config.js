@@ -113,6 +113,8 @@ const nextConfig = {
     DYNAMODB_TABLE_REVIEWS: process.env.DYNAMODB_TABLE_REVIEWS,
     // FB-F..FB-J — optional; routes degrade to a zero-state when unset.
     DYNAMODB_TABLE_FP_INSIGHTS: process.env.DYNAMODB_TABLE_FP_INSIGHTS,
+    // #195 Phase 5 — optional; NPS route reports ineligible when unset.
+    DYNAMODB_TABLE_SATISFACTION: process.env.DYNAMODB_TABLE_SATISFACTION,
     API_KEYS_TABLE: process.env.API_KEYS_TABLE,
     GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
     DEPLOYMENT_MODE: process.env.DEPLOYMENT_MODE,

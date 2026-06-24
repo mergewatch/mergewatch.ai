@@ -38,6 +38,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
 } from "recharts";
 import { ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import NpsPrompt from "./NpsPrompt";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -75,8 +76,9 @@ interface CycleTime {
   roundTripsBeforeMerge: Percentiles | null;
 }
 
-/** #195 — developer-engagement block (Tier 1). Optional for pre-engagement rollups. */
+/** #195 — developer-engagement block. Optional for pre-engagement rollups. */
 interface Engagement {
+  // Tier 1 — behavioral
   acceptanceRate: number | null;
   totalResolves: number;
   totalRejectCommands: number;
@@ -85,6 +87,13 @@ interface Engagement {
   reReviewRate: number | null;
   reviewedPrCount: number;
   activeInstallation: boolean;
+  // Tier 2 — explicit satisfaction (Phase 4 + 5). `0` / `null` on rollups run
+  // before a satisfaction store was wired.
+  helpfulUp?: number;
+  helpfulDown?: number;
+  helpfulRate?: number | null;
+  npsResponses?: number;
+  npsScore?: number | null;
 }
 
 interface Insight {
@@ -308,7 +317,11 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
     eng.commandUsageCount > 0 ||
     eng.reviewedPrCount > 0 ||
     eng.acceptanceRate !== null ||
-    eng.findingActionRateApprox !== null
+    eng.findingActionRateApprox !== null ||
+    // Tier 2 — satisfaction can carry signal independently of Tier 1.
+    (eng.helpfulUp ?? 0) > 0 ||
+    (eng.helpfulDown ?? 0) > 0 ||
+    (eng.npsResponses ?? 0) > 0
   );
 
   if (insights.length === 0 || !active || (!hasFpData && !hasCycleData && !hasEngagementData)) {
@@ -364,6 +377,9 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
       {hasEngagementData && eng && (
         <EngagementSection engagement={eng} insights={insights} window={activeWindow} />
       )}
+
+      {/* ─── #195 Phase 5: throttled NPS survey prompt ───────────────── */}
+      <NpsPrompt installationId={installationId} />
 
       {/* ─── FB-F..FB-J: FP-feedback sections (only when findings exist) ── */}
       {hasFpData && (
@@ -861,6 +877,11 @@ interface EngagementPoint {
   action: number | null;     // 0..1
 }
 
+/** #195 Tier 2 — true when the engagement block carries any explicit-satisfaction signal. */
+function hasSatisfactionData(e: Engagement): boolean {
+  return (e.helpfulUp ?? 0) > 0 || (e.helpfulDown ?? 0) > 0 || (e.npsResponses ?? 0) > 0;
+}
+
 /** Acceptance + approx action rate across the three windows (for the trend line). */
 function buildEngagementPoints(insights: Insight[]): EngagementPoint[] {
   const order: EngagementPoint["window"][] = ["7d", "30d", "90d"];
@@ -930,6 +951,28 @@ function EngagementSection({
           subtext={`${e.reviewedPrCount.toLocaleString()} PRs reviewed`}
         />
       </div>
+
+      {/* #195 Tier 2 — explicit satisfaction: 👍/👎 helpful rate + NPS. Only
+          rendered once a satisfaction store is wired and has signal. */}
+      {hasSatisfactionData(e) && (
+        <div className="mt-4 border-t border-border-default pt-4">
+          <h3 className="mb-3 text-xs font-semibold text-text-primary">
+            Explicit satisfaction
+          </h3>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard
+              label="Helpful rate"
+              value={fmtPct(e.helpfulRate ?? null)}
+              subtext={`${(e.helpfulUp ?? 0).toLocaleString()} 👍 · ${(e.helpfulDown ?? 0).toLocaleString()} 👎`}
+            />
+            <StatCard
+              label="NPS"
+              value={e.npsScore == null ? "—" : (e.npsScore > 0 ? `+${e.npsScore}` : String(e.npsScore))}
+              subtext={`${(e.npsResponses ?? 0).toLocaleString()} response${(e.npsResponses ?? 0) === 1 ? "" : "s"}`}
+            />
+          </div>
+        </div>
+      )}
 
       {hasTrend && (
         <div className="mt-5">

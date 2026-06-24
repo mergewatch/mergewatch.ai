@@ -174,3 +174,30 @@ export const prLifecycle = pgTable('pr_lifecycle', {
   pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.prNumber] }),
   installationIdx: index('pr_lifecycle_installation_idx').on(t.installationId),
 }));
+
+// #195 Phase 4 — one row per summary comment tracking 👍/👎 helpful votes on
+// the "Was this review helpful?" prompt. See HelpfulVoteRecord in
+// @mergewatch/core. installation_id is indexed for the rollup's per-install scan.
+export const helpfulVotes = pgTable('helpful_votes', {
+  installationId: text('installation_id').notNull(),
+  repoFullName: text('repo_full_name').notNull(),
+  prNumber: integer('pr_number').notNull(),
+  up: integer('up').notNull().default(0),
+  down: integer('down').notNull().default(0),
+  lastVoteAt: text('last_vote_at').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.prNumber] }),
+  installationIdx: index('helpful_votes_installation_idx').on(t.installationId),
+}));
+
+// #195 Phase 5 — one row per (installation, GitHub user) carrying that admin's
+// most recent NPS survey response. See NpsResponseRecord in @mergewatch/core.
+export const npsResponses = pgTable('nps_responses', {
+  installationId: text('installation_id').notNull(),
+  githubUserId: text('github_user_id').notNull(),
+  score: integer('score').notNull(),
+  respondedAt: text('responded_at').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.githubUserId] }),
+  installationIdx: index('nps_responses_installation_idx').on(t.installationId),
+}));

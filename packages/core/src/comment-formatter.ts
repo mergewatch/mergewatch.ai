@@ -105,6 +105,12 @@ interface FormatOptions {
   conventionsSource?: string;
   /** True when the loaded conventions file was truncated to fit the size cap. */
   conventionsTruncated?: boolean;
+  /**
+   * #195 Phase 4 — render the "Was this review helpful? 👍 / 👎" prompt in the
+   * footer. The review path polls the summary comment's 👍/👎 reactions into
+   * the engagement rollup. Defaults to on; set false to suppress.
+   */
+  showHelpfulPrompt?: boolean;
 }
 
 // ─── Severity display config ───────────────────────────────────────────────
@@ -230,6 +236,7 @@ export function formatReviewComment(options: FormatOptions): string {
     diagram,
     diagramCaption,
     showDiagram = true,
+    showHelpfulPrompt = true,
     reviewDetailUrl,
     mergeScore,
     mergeScoreReason,
@@ -513,6 +520,13 @@ export function formatReviewComment(options: FormatOptions): string {
   }
 
   // 10. Dashboard link + custom footer — compact, no horizontal rule
+  // #195 Phase 4 — one-click satisfaction prompt. The review path polls these
+  // 👍/👎 reactions on the summary comment into the engagement rollup
+  // (helpful-rate KPI). Rendered above the footer link as a call-to-action.
+  if (showHelpfulPrompt) {
+    lines.push('<sub>Was this review helpful? React with 👍 or 👎 on this comment.</sub>');
+  }
+
   const footerParts: string[] = [];
   if (reviewDetailUrl) {
     footerParts.push(`[View full details](${reviewDetailUrl})`);
