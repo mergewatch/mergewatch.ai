@@ -3,7 +3,8 @@
 # =============================================================================
 #
 # Pipeline:
-#   push to main → build & test → deploy to dev → (optional) deploy to prod
+#   push to main → build & test → deploy to dev → deploy to prod (manual approval gate)
+#   (prod also deployable on-demand via workflow_dispatch with deploy_prod=true)
 #
 # Required GitHub Secrets:
 #   AWS_ROLE_ARN           — IAM role ARN for OIDC (e.g. arn:aws:iam::123456789012:role/mergewatch-github-deploy)
@@ -166,14 +167,16 @@ jobs:
   # =========================================================================
   # Stage 3: Deploy to Production (requires manual approval)
   # =========================================================================
-  # This job uses the "production" GitHub environment which should have
-  # "Required reviewers" enabled in Settings > Environments > production.
-  # The pipeline pauses here until an authorized reviewer approves.
+  # Runs after a successful dev deploy on every push to main, AND on a manual
+  # workflow_dispatch with deploy_prod=true. Either way it pauses at the
+  # "production" GitHub environment, which has "Required reviewers" enabled
+  # (Settings > Environments > production) — nothing reaches prod until an
+  # authorized reviewer approves.
   deploy-prod:
     name: Deploy to Production
     runs-on: ubuntu-latest
     needs: deploy-dev
-    if: github.event.inputs.deploy_prod == 'true'
+    if: github.event_name == 'push' || github.event.inputs.deploy_prod == 'true'
     environment: production
 
     steps:
