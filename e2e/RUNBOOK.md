@@ -189,6 +189,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
 | [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; nightly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 |
 | [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/insights` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 |
+| [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; nightly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 |
 
 ---
 
@@ -2248,6 +2249,28 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 - ❌ The prompt re-appears for an admin who already responded within 90 days.
 - ❌ NPS counts passives (7–8) as promoters or detractors.
 - ❌ The route records a response without verifying installation access.
+
+---
+
+### E2E-63: Cost — LLM spend rollup + dashboard (#193)
+
+**Status:** ✅ SHIPPED (#212). See [`docs/pending/cost-analytics.md`](./../docs/pending/cost-analytics.md).
+
+**Behavior:** On every completed review the handler writes a `ReviewCostRecord` (tokens, estimated USD, finding count, model) into the cost store, keyed per (installation, repo, PR, commit). The nightly rollup aggregates a `cost` block onto each `InstallationFPInsight` (7d / 30d / 90d): **total spend** (priced reviews), **avg cost / review**, **cost / finding**, token totals, a **per-repo** spend bucket, and a **priced / unpriced** review split. Reviews on a model not in the pricing table are recorded with `costUsd: null`, counted as **unpriced**, and excluded from the money totals (but their tokens still count). `/api/insights` returns the block unchanged; `/dashboard/insights` renders an **LLM cost** section (StatCards + spend-by-repo + spend-over-time bar). Works on both backends (`mergewatch-review-costs` DynamoDB table / `review_costs` Postgres table).
+
+**How to run.** Branch: `fixture/63-cost`. Trigger a few reviews (ideally across two repos, and one re-review on a new commit). Inspect the cost store (`<repo>#<pr>#<commit>` items / `review_costs` rows). Trigger the nightly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and open `/dashboard/insights`.
+
+**Pass:**
+- [ ] Each completed review produces one `ReviewCostRecord`; a re-review on a new commit adds a distinct row.
+- [ ] The rollup's `cost` block shows total spend, avg cost/review, cost/finding, and a per-repo breakdown matching the recorded reviews.
+- [ ] The dashboard LLM cost section renders the StatCards, spend-by-repo list, and spend-over-time bar; `null` averages show `—`.
+- [ ] A review on an unknown/unpriced model is counted in `reviewCount` and surfaced as "N unpriced", but excluded from `totalCostUsd` and the averages.
+- [ ] A pre-#193 rollup row (no `cost`) renders the page unchanged; an installation with no cost store provisioned reviews normally.
+
+**Fail signals:**
+- ❌ An unpriced review drags `totalCostUsd` / averages toward 0 (must be excluded, not coerced to 0).
+- ❌ A re-review on the same commit double-counts (must overwrite idempotently).
+- ❌ A cost-store write error blocks the review.
 
 ---
 

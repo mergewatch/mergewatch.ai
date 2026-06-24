@@ -15,6 +15,7 @@ import type {
   IInstallationStore,
   IPRLifecycleStore,
   ISatisfactionStore,
+  IReviewCostStore,
 } from '../storage/types.js';
 import type {
   FindingDispositionRecord,
@@ -22,10 +23,12 @@ import type {
   PRLifecycleRecord,
   HelpfulVoteRecord,
   NpsResponseRecord,
+  ReviewCostRecord,
 } from '../types/db.js';
 import { buildInsightFromDispositions } from './rollup.js';
 import { buildCycleTimeInsight } from './cycle-time.js';
 import { buildEngagementInsight } from './engagement.js';
+import { buildCostInsight } from './cost.js';
 
 const WINDOWS: InstallationFPInsight['window'][] = ['7d', '30d', '90d'];
 
@@ -48,6 +51,12 @@ export interface RollupStores {
    * 1–3.
    */
   satisfactionStore?: Pick<ISatisfactionStore, 'listHelpfulVotes' | 'listNpsResponses'>;
+  /**
+   * #193 — optional. When wired, each insight row gains a `cost` block built
+   * from this installation's per-review cost records. When absent the rollup
+   * behaves exactly as before and `cost` stays undefined.
+   */
+  costStore?: Pick<IReviewCostStore, 'listByInstallation'>;
 }
 
 export interface RollupRunResult {
@@ -143,6 +152,18 @@ export async function runInsightRollup(
         } while (npsCursor);
       }
 
+      // #193 — page per-review cost rows when the cost store is wired. Same
+      // cursor discipline; left empty otherwise so `cost` stays undefined.
+      const costRecords: ReviewCostRecord[] = [];
+      if (stores.costStore) {
+        let costCursor: string | undefined;
+        do {
+          const page = await stores.costStore.listByInstallation(installationId, { limit: 1000, cursor: costCursor });
+          costRecords.push(...page.items);
+          costCursor = page.nextCursor;
+        } while (costCursor);
+      }
+
       for (const window of WINDOWS) {
         const insight = buildInsightFromDispositions(installationId, window, windowEndIso, records);
         if (stores.prLifecycleStore) {
@@ -156,6 +177,10 @@ export async function runInsightRollup(
           helpfulVotes,
           npsResponses,
         });
+        // #193 — cost block computes only when the cost store is wired.
+        if (stores.costStore) {
+          insight.cost = buildCostInsight(window, windowEndIso, costRecords);
+        }
         await stores.fpInsightStore.upsert(insight);
         rowsWritten++;
       }

@@ -77,6 +77,8 @@ import {
   DEFAULT_PR_LIFECYCLE_TABLE,
   DynamoSatisfactionStore,
   DEFAULT_SATISFACTION_TABLE,
+  DynamoReviewCostStore,
+  DEFAULT_REVIEW_COSTS_TABLE,
 } from '@mergewatch/storage-dynamo';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
@@ -92,6 +94,7 @@ const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEF
 const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const SATISFACTION_TABLE = process.env.SATISFACTION_TABLE ?? DEFAULT_SATISFACTION_TABLE;
+const REVIEW_COSTS_TABLE = process.env.REVIEW_COSTS_TABLE ?? DEFAULT_REVIEW_COSTS_TABLE;
 const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
@@ -111,6 +114,9 @@ const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE
 // #195 Phase 4 — captures summary 👍/👎 helpful votes into the engagement
 // rollup. Best-effort; swallows if the table isn't provisioned yet.
 const satisfactionStore = new DynamoSatisfactionStore(dynamodb, SATISFACTION_TABLE);
+// #193 — denormalizes per-review cost for the nightly cost rollup. Best-effort;
+// swallows if the table isn't provisioned yet.
+const costStore = new DynamoReviewCostStore(dynamodb, REVIEW_COSTS_TABLE);
 const llm = new BedrockLLMProvider();
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -929,6 +935,21 @@ export async function handler(
     // TTM (#194) — anchor the first-review timestamp (set-once) for the
     // time-from-first-review-to-merge metric.
     await prLifecycleStore.markReviewed(String(installationId), repoFullName, prNumber, completedAt);
+
+    // #193 — denormalize this review's cost for the nightly cost rollup.
+    // Best-effort; unknown-model cost (null) is recorded as unpriced, not 0.
+    await costStore.recordCost({
+      installationId: String(installationId),
+      repoFullName,
+      prNumber,
+      commitSha: headSha,
+      completedAt,
+      inputTokens: result.inputTokens ?? 0,
+      outputTokens: result.outputTokens ?? 0,
+      costUsd: result.estimatedCostUsd ?? null,
+      findingCount: result.findings.length,
+      model: modelName,
+    });
 
     // ── Record billing (SaaS only) ────
     // Retry once on failure. If both attempts fail, log as ERROR (not warn)

@@ -774,6 +774,41 @@ export interface InstallationFPInsight {
      */
     npsScore: number | null;
   };
+
+  /**
+   * #193 — LLM cost block, aggregated from per-review `ReviewCostRecord` rows
+   * in the same window. Optional: present only on rollups generated after this
+   * feature shipped AND when a review-cost store is wired into the rollup.
+   * Consumers must handle the undefined case.
+   *
+   * A review is windowed by its `completedAt`. Cost is summed over PRICED
+   * reviews only (a known model→pricing match); unpriced reviews (unknown
+   * model) are counted separately and excluded from the money totals so a
+   * mis-priced model can't silently drag the average to 0. Averages are
+   * `number | null` — null when their denominator is empty, exactly like the
+   * cycle-time and engagement blocks.
+   */
+  cost?: {
+    /** Sum of estimated USD across priced reviews in-window. */
+    totalCostUsd: number;
+    /** Sum of input / output tokens across ALL reviews in-window (tokens are known even when the model is unpriced). */
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    /** Every review completed in-window (priced + unpriced). */
+    reviewCount: number;
+    /** Reviews with a known cost (model matched the pricing table). */
+    pricedReviewCount: number;
+    /** Reviews whose model wasn't in the pricing table — surfaced as "N unpriced", excluded from money totals. */
+    unpricedReviewCount: number;
+    /** totalCostUsd / pricedReviewCount. null when no priced reviews in-window. */
+    avgCostPerReview: number | null;
+    /** Findings surfaced across priced reviews in-window — the cost-per-finding denominator. */
+    findingCount: number;
+    /** totalCostUsd / findingCount. null when no findings on priced reviews in-window. */
+    avgCostPerFinding: number | null;
+    /** Per-repo spend bucket — which repos drive cost. Keyed by repoFullName. */
+    perRepo: Record<string, { costUsd: number; reviewCount: number }>;
+  };
 }
 
 /** Median / p75 / p90 of a cycle-time sample. */
@@ -817,6 +852,39 @@ export interface NpsResponseRecord {
   score: number;
   /** ISO 8601 — when the response was recorded. */
   respondedAt: string;
+}
+
+// ─── #193 — per-review LLM cost record ──────────────────────────────────────
+
+/**
+ * One row per completed review, denormalizing the cost/token figures off the
+ * `ReviewItem` so the nightly rollup can aggregate spend per installation
+ * without scanning the (repo-partitioned) reviews table. Written best-effort
+ * at review completion; the cost rollup windows these rows by `completedAt`.
+ *
+ * Identity is per-review (installation + repo + PR + commit), so a re-review of
+ * the same PR on a new commit is a distinct row — re-reviews accrue cost.
+ */
+export interface ReviewCostRecord {
+  installationId: string;
+  repoFullName: string;
+  prNumber: number;
+  /** Head commit SHA the review ran against — distinguishes re-reviews of the same PR. */
+  commitSha: string;
+  /** ISO 8601 — review completion time; the rollup's windowing anchor. */
+  completedAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  /**
+   * Estimated USD for this review, or null when the model wasn't in the pricing
+   * table (unknown-model review). null is excluded from cost aggregates and
+   * surfaced separately as an "unpriced" count — never coerced to 0.
+   */
+  costUsd: number | null;
+  /** Findings surfaced by this review — the cost-per-finding denominator. */
+  findingCount: number;
+  /** Model id the review ran on (for debugging / future per-model breakdowns). */
+  model?: string;
 }
 
 /**

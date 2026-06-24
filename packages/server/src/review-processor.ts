@@ -234,7 +234,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'satisfactionStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'satisfactionStore' | 'costStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -797,6 +797,25 @@ export async function processReviewJob(
     // TTM (#194) — anchor the first-review timestamp (set-once) for the
     // time-from-first-review-to-merge metric. Later re-reviews don't move it.
     await deps.prLifecycleStore?.markReviewed(instId, repoFullName, prNumber, new Date().toISOString());
+
+    // #193 — denormalize this review's cost so the nightly rollup can aggregate
+    // spend per installation without scanning the reviews table. Best-effort;
+    // `estimatedCostUsd` undefined/null (unknown model) is recorded as a null
+    // (unpriced) cost, never coerced to 0. The store swallows on failure.
+    if (deps.costStore && installationId != null) {
+      await deps.costStore.recordCost({
+        installationId: String(installationId),
+        repoFullName,
+        prNumber,
+        commitSha: headSha,
+        completedAt: new Date().toISOString(),
+        inputTokens: result.inputTokens ?? 0,
+        outputTokens: result.outputTokens ?? 0,
+        costUsd: result.estimatedCostUsd ?? null,
+        findingCount: result.findings.length,
+        model: config.model,
+      });
+    }
 
     // Create structured check run (matches Lambda pattern)
     const hasCritical = criticalCount > 0;

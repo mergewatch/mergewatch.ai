@@ -16,6 +16,7 @@ import type {
   IInstallationStore,
   IPRLifecycleStore,
   ISatisfactionStore,
+  IReviewCostStore,
 } from '@mergewatch/core';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +32,8 @@ export interface InsightsCronStores {
   prLifecycleStore?: IPRLifecycleStore;
   /** #195 Tier 2 — feeds the helpful-rate + NPS fields of each engagement block. */
   satisfactionStore?: ISatisfactionStore;
+  /** #193 — feeds the cost block of each insight row. */
+  costStore?: IReviewCostStore;
 }
 
 export interface InsightsCronHandle {

@@ -24,3 +24,7 @@ export {
   DynamoSatisfactionStore,
   DEFAULT_SATISFACTION_TABLE,
 } from './satisfaction-store.js';
+export {
+  DynamoReviewCostStore,
+  DEFAULT_REVIEW_COSTS_TABLE,
+} from './review-cost-store.js';

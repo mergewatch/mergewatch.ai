@@ -117,6 +117,10 @@ export const installationFpInsights = pgTable('installation_fp_insights', {
   // #195 — developer-engagement block (acceptance / command-usage / re-review
   // KPIs). Nullable: pre-engagement rollups leave it NULL → `undefined`.
   engagement: jsonb('engagement'),
+  // #193 — LLM-cost block (spend / cost-per-review / cost-per-finding).
+  // Nullable: pre-cost rollups (or rollups run without a cost store) leave it
+  // NULL → `undefined`.
+  cost: jsonb('cost'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.window] }),
 }));
@@ -200,4 +204,25 @@ export const npsResponses = pgTable('nps_responses', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.githubUserId] }),
   installationIdx: index('nps_responses_installation_idx').on(t.installationId),
+}));
+
+// #193 — one row per completed review denormalizing its cost/token figures so
+// the nightly rollup can aggregate spend per installation. See ReviewCostRecord
+// in @mergewatch/core. `cost_usd` is nullable — null marks an unpriced
+// (unknown-model) review, excluded from money totals.
+export const reviewCosts = pgTable('review_costs', {
+  installationId: text('installation_id').notNull(),
+  repoFullName: text('repo_full_name').notNull(),
+  prNumber: integer('pr_number').notNull(),
+  commitSha: text('commit_sha').notNull(),
+  completedAt: text('completed_at').notNull(),
+  inputTokens: integer('input_tokens').notNull().default(0),
+  outputTokens: integer('output_tokens').notNull().default(0),
+  // Stored as text to avoid float precision drift (mirrors dispute_rate); null = unpriced.
+  costUsd: text('cost_usd'),
+  findingCount: integer('finding_count').notNull().default(0),
+  model: text('model'),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.prNumber, t.commitSha] }),
+  installationIdx: index('review_costs_installation_idx').on(t.installationId),
 }));
