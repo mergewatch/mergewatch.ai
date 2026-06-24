@@ -166,7 +166,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
-| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) | 3m | 90s | FB-D |
+| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + confirms by editing the finding comment (footer), creating NO extra bot Review event (FB-D, #190) | 3m | 90s | FB-D |
 | [E2E-41](#e2e-41-fb-e--hourly-installationfpinsight-rollup) | Hourly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
@@ -1600,21 +1600,22 @@ Branch: `fixture/39-inline-reactions`. A PR with at least one inline-comment-eli
 
 **Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-D](./../docs/false-positive-feedback-plan.md#fb-d--mergewatch-reject-slash-command--shipped).
 
-**Behavior (intended, once FB-D ships):** new inline-thread intent parser alongside `detectResolveIntent`. Recognises `/mergewatch reject <category> [optional reason]` where category is one of: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Increments `disputeCount` AND appends `{ category, text?, at }` to `rejectReasons[]` on the `FindingDispositionRecord`. Bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`). Thread is NOT auto-resolved (different from `/resolve` — rejection is for *finding-level FP signal*, resolution is for *thread-level closure*).
+**Behavior (intended, once FB-D ships):** new inline-thread intent parser alongside `detectResolveIntent`. Recognises `/mergewatch reject <category> [optional reason]` where category is one of: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Increments `disputeCount` AND appends `{ category, text?, at }` to `rejectReasons[]` on the `FindingDispositionRecord`. Bot confirms by **editing the finding comment in place** — appending a `> ✅ Marked rejected (<category>)` footer with a hidden `<!-- mergewatch-rejected -->` sentinel — **rather than posting a thread reply**. (A reply is auto-wrapped by GitHub into a standalone empty COMMENTED Review, which pollutes the PR's review timeline / W6 — #190; editing avoids it.) The sentinel makes the reject **idempotent**: a re-delivered webhook, or a repeat reject on an already-rejected finding, is a no-op. Thread is NOT auto-resolved (different from `/resolve` — rejection is for *finding-level FP signal*, resolution is for *thread-level closure*).
 
 **Setup**
 
 Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
 1. Reply `/mergewatch reject style-disagreement we use snake_case for python here` on the thread.
 2. Confirm the `FindingDispositionRecord` has `disputeCount = 1` and `rejectReasons[0] = { category: 'style-disagreement', text: 'we use snake_case for python here', at: <iso> }`.
-3. Confirm the bot posts a structured confirmation reply.
+3. Confirm the bot appends a `✅ Marked rejected` footer to the finding comment — and that **no new bot Review event** appears on the PR (only the user's own reply may be auto-wrapped by GitHub into a COMMENTED review).
 4. Confirm the thread is NOT auto-resolved on GitHub.
 
 **Expected outcomes**
 
 - [ ] Recognised categories: `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`
-- [ ] Unrecognised category (`/mergewatch reject typo-here foo`) → silently coerced to `{ category: 'other', text: 'typo-here foo' }`; bot's confirming reply says "recording as `other`". No request for re-entry (preserve the signal).
-- [ ] Multiple `/mergewatch reject` replies on the same thread append to `rejectReasons[]` (don't overwrite)
+- [ ] Unrecognised category (`/mergewatch reject typo-here foo`) → silently coerced to `{ category: 'other', text: 'typo-here foo' }`; the appended footer says "Marked **rejected** (`other`)" and lists the recognised categories. No request for re-entry (preserve the signal).
+- [ ] The reject is **idempotent** — a re-delivered webhook, or a repeat `/mergewatch reject` on an already-rejected finding, is a no-op (the first rejection stands), guarded by the `<!-- mergewatch-rejected -->` sentinel. (Changed in #190: previously multiple replies appended to `rejectReasons[]`; the first rejection is now sticky.)
+- [ ] **No extra bot COMMENTED Review event** is created by the reject — preserves the W6 single-authoritative-Review invariant ([E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body)).
 - [ ] Top-level `## mergewatch triage` continues to function (FB-D is an inline-thread addition, not a replacement)
 - [ ] The GitHub thread is NOT auto-resolved by `/reject` — `/resolve` and `/reject` are orthogonal verbs
 
@@ -1622,6 +1623,8 @@ Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
 - ❌ `/mergewatch reject` is matched in prose ("here's how I'd reject this differently") — pattern must be standalone-line or slash-command form
 - ❌ The thread is auto-resolved (signal collected; closure is human-driven)
 - ❌ Unrecognised category writes nothing (must coerce to `other` and preserve the original token in `text`)
+- ❌ The reject ack posts a thread reply that GitHub wraps into a standalone COMMENTED Review (the #190 regression — must edit the finding comment in place, not reply)
+- ❌ A re-delivered webhook double-records the rejection (sentinel must short-circuit the second run)
 
 ---
 

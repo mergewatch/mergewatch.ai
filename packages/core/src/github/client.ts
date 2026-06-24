@@ -689,6 +689,32 @@ export async function replyToReviewComment(
 }
 
 /**
+ * Edit an existing inline (review) comment in place — used to append a status
+ * footer to a finding comment.
+ *
+ * Unlike {@link replyToReviewComment}, this does NOT create a new pull request
+ * Review: a thread reply is auto-wrapped by GitHub into a standalone COMMENTED
+ * Review event, which pollutes the PR's review timeline (the W6 single-review
+ * concern in #190). Editing the comment keeps the timeline clean. The caller
+ * passes the FULL new body (the inline comment already carries its own marker,
+ * so we do not prepend one here).
+ */
+export async function editInlineReviewComment(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string,
+): Promise<void> {
+  await octokit.pulls.updateReviewComment({
+    owner,
+    repo,
+    comment_id: commentId,
+    body,
+  });
+}
+
+/**
  * Add an "eyes" reaction to an inline review comment to signal MergeWatch is
  * processing the reply. Returns the reaction ID so callers can remove it
  * after the reply is posted.
