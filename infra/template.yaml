@@ -107,6 +107,10 @@ Globals:
         # (opened/synchronize/closed); ReviewAgent marks reviewed/skipped; the
         # nightly InsightsRollup reads for cycle-time percentiles.
         PR_LIFECYCLE_TABLE: !Ref PRLifecycleTable
+        # #195 Tier 2: helpful votes (ReviewAgent writes 👍/👎 deltas) + NPS
+        # responses (dashboard writes). InsightsRollup reads both for the
+        # engagement block's helpful-rate + NPS fields.
+        SATISFACTION_TABLE: !Ref SatisfactionTable
 
         # SSM parameter paths for GitHub App credentials.
         # The Lambda functions read these at runtime via the AWS SDK.
@@ -812,6 +816,40 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
 
+  # #195 Tier 2 — explicit-satisfaction signals. Partitioned by installation;
+  # SK distinguishes helpful-vote rows (HV#repo#pr) from NPS rows (NPS#userId).
+  # ReviewAgent writes helpful-vote deltas; the dashboard writes NPS responses;
+  # the nightly InsightsRollup reads both for the engagement block.
+  SatisfactionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-satisfaction-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
   # ===========================================================================
   # IAM Role: Lambda Execution Role
   # ===========================================================================
@@ -889,6 +927,7 @@ Resources:
                   - !GetAtt FindingDispositionsTable.Arn
                   - !GetAtt FpInsightsTable.Arn
                   - !GetAtt PRLifecycleTable.Arn
+                  - !GetAtt SatisfactionTable.Arn
                   # Index ARNs (for future GSIs)
                   - !Sub '${InstallationsTable.Arn}/index/*'
                   - !Sub '${ReviewsTable.Arn}/index/*'
@@ -897,6 +936,7 @@ Resources:
                   - !Sub '${FindingDispositionsTable.Arn}/index/*'
                   - !Sub '${FpInsightsTable.Arn}/index/*'
                   - !Sub '${PRLifecycleTable.Arn}/index/*'
+                  - !Sub '${SatisfactionTable.Arn}/index/*'
 
         # --- SSM Parameter Store ---
         # Read-only access to GitHub credentials stored in SSM.

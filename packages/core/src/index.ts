@@ -11,6 +11,7 @@ export type {
   IFindingDispositionStore,
   IFPInsightStore,
   IPRLifecycleStore,
+  ISatisfactionStore,
   PRLifecycleOpenInput,
   PRLifecycleCloseInput,
   FindingDispositionAttribution,
@@ -23,6 +24,7 @@ export type {
   IDashboardInstallationStore,
   IDashboardReviewStore,
   IDashboardFPInsightStore,
+  IDashboardSatisfactionStore,
   PaginatedResult,
   ReviewStats,
   RepoStats,
@@ -172,7 +174,15 @@ export type { CycleTimeInsight } from './insights/cycle-time.js';
 
 // ─── Engagement rollup (#195) ──────────────────────────────────────────────
 export { buildEngagementInsight } from './insights/engagement.js';
-export type { EngagementInsight } from './insights/engagement.js';
+export type { EngagementInsight, SatisfactionRecords } from './insights/engagement.js';
+
+// ─── Satisfaction writer (#195 Tier 2 / Phase 4) ───────────────────────────
+export {
+  recordSummaryHelpfulVotes,
+  summaryReactionsToVotes,
+  HELPFUL_UP_TYPES,
+  HELPFUL_DOWN_TYPES,
+} from './insights/satisfaction-writer.js';
 
 // ─── Dispute-rate loader (FP-J L1) ─────────────────────────────────────────
 export { loadCategoryDisputeRates } from './insights/dispute-rates.js';
@@ -262,6 +272,8 @@ export type {
   InstallationFPInsight,
   CycleTimePercentiles,
   PRLifecycleRecord,
+  HelpfulVoteRecord,
+  NpsResponseRecord,
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';

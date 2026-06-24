@@ -276,10 +276,16 @@ export function createPostgresDashboardStore(databaseUrl: string): IDashboardSto
   // imports schema + drizzle which are already loaded above.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { PostgresFPInsightStore } = require('./fp-insight-store.js');
+  // #195 Phase 5 — same store instance fulfils both ISatisfactionStore and the
+  // IDashboardSatisfactionStore subset the NPS route uses. Always available on
+  // self-hosted (the migration provisions the tables on startup).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PostgresSatisfactionStore } = require('./satisfaction-store.js');
 
   return {
     installations: new PostgresDashboardInstallationStore(db),
     reviews: new PostgresDashboardReviewStore(db),
     fpInsights: new PostgresFPInsightStore(db),
+    satisfaction: new PostgresSatisfactionStore(db),
   };
 }

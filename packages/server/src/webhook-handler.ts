@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
@@ -24,6 +24,11 @@ export interface WebhookDeps {
    * tracking is a no-op and the review pipeline runs unchanged.
    */
   prLifecycleStore?: IPRLifecycleStore;
+  /**
+   * #195 Phase 4 — optional satisfaction store. Best-effort: when unset, the
+   * summary 👍/👎 helpful-vote capture is a no-op and the review runs unchanged.
+   */
+  satisfactionStore?: ISatisfactionStore;
   authProvider: IGitHubAuthProvider;
   llm: ILLMProvider;
   dashboardBaseUrl: string;

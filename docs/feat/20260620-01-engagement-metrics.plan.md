@@ -1,6 +1,6 @@
 # Developer engagement / NPS metrics
 
-**Status:** In progress
+**Status:** Shipped (all 5 phases)
 **Issue:** [#195 — Add developer engagement / NPS metrics to validate usage and value](https://github.com/mergewatch/mergewatch.ai/issues/195)
 **Author:** `/ship-feature`
 
@@ -88,13 +88,13 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 - **RUNBOOK:** E2E-60 — `/dashboard/insights` Engagement section: StatCards render; `null` rates show `—`; the action-rate card is labeled "approx."
 - **Tests:** component render with populated / null / absent `engagement`; gate logic.
 
-### Phase 4 — Tier 2: footer 👍/👎 helpful prompt — [ ]
+### Phase 4 — Tier 2: footer 👍/👎 helpful prompt — [x] PR #210
 - **Goal:** one-click satisfaction signal on the summary comment, captured + aggregated into `engagement.helpful*`. Depends on Phase 2 (block exists) + Phase 3 (section to surface it).
 - **Files:** new `ISatisfactionStore` (helpful votes) in `packages/core/src/storage/types.ts` + both backends + `schema.ts`/migration + Dynamo table in `infra/template.yaml`; `comment-formatter.ts` footer renders "Was this review helpful? 👍 / 👎"; summary-comment reaction polling (new fn near `disposition-writer.ts`) → `recordHelpfulVote`; `run-rollup.ts` wires optional `satisfactionStore` and `engagement.ts` fills `helpfulUp/Down/Rate`; `EngagementSection` shows helpful rate.
 - **RUNBOOK:** E2E-61 — 👍/👎 prompt renders on the summary footer; reactions captured; rollup fills helpful rate; dashboard shows it.
 - **Tests:** vote store (both backends), reaction→vote mapping + snapshot delta, helpful-rate math, migration idempotency.
 
-### Phase 5 — Tier 2: dashboard NPS survey (capstone) — [ ]
+### Phase 5 — Tier 2: dashboard NPS survey (capstone) — [x] PR #210
 - **Goal:** throttled NPS prompt (0–10, once / 90d per admin), NPS computed + displayed. Depends on Phase 4 (`ISatisfactionStore`). **Carries the docs graduation.**
 - **Files:** extend `ISatisfactionStore` with NPS responses (both backends + migration); `packages/dashboard/app/api/nps/route.ts` (GET eligibility + POST response, 90d throttle per `githubUserId`); throttled prompt component in the dashboard; `engagement.ts` computes `npsScore`/`npsResponses`; `EngagementSection` renders NPS; graduate `docs/pending/engagement-metrics.md` → `docs/engagement-metrics.md`, flip RUNBOOK E2E-58..62 to ✅ SHIPPED.
 - **RUNBOOK:** E2E-62 — NPS prompt shown to admin, throttled to once / 90d; response recorded; NPS = %promoters − %detractors rendered.

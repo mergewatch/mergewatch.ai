@@ -14,8 +14,15 @@ import type {
   IFPInsightStore,
   IInstallationStore,
   IPRLifecycleStore,
+  ISatisfactionStore,
 } from '../storage/types.js';
-import type { FindingDispositionRecord, InstallationFPInsight, PRLifecycleRecord } from '../types/db.js';
+import type {
+  FindingDispositionRecord,
+  InstallationFPInsight,
+  PRLifecycleRecord,
+  HelpfulVoteRecord,
+  NpsResponseRecord,
+} from '../types/db.js';
 import { buildInsightFromDispositions } from './rollup.js';
 import { buildCycleTimeInsight } from './cycle-time.js';
 import { buildEngagementInsight } from './engagement.js';
@@ -33,6 +40,14 @@ export interface RollupStores {
    * exactly as before and `cycleTime` stays undefined.
    */
   prLifecycleStore?: Pick<IPRLifecycleStore, 'listByInstallation'>;
+  /**
+   * #195 Tier 2 — optional. When wired, each insight row's `engagement` block
+   * gains the explicit-satisfaction signals (helpful 👍/👎 rate + NPS) built
+   * from this installation's helpful-vote and NPS-response rows. When absent
+   * those fields read `0` / `null` and the rollup behaves exactly as in Phase
+   * 1–3.
+   */
+  satisfactionStore?: Pick<ISatisfactionStore, 'listHelpfulVotes' | 'listNpsResponses'>;
 }
 
 export interface RollupRunResult {
@@ -108,6 +123,26 @@ export async function runInsightRollup(
         } while (prCursor);
       }
 
+      // #195 Tier 2 — page helpful-vote + NPS rows when the satisfaction store
+      // is wired. Same cursor discipline; left empty otherwise so the Tier-2
+      // engagement fields read 0 / null.
+      const helpfulVotes: HelpfulVoteRecord[] = [];
+      const npsResponses: NpsResponseRecord[] = [];
+      if (stores.satisfactionStore) {
+        let hvCursor: string | undefined;
+        do {
+          const page = await stores.satisfactionStore.listHelpfulVotes(installationId, { limit: 1000, cursor: hvCursor });
+          helpfulVotes.push(...page.items);
+          hvCursor = page.nextCursor;
+        } while (hvCursor);
+        let npsCursor: string | undefined;
+        do {
+          const page = await stores.satisfactionStore.listNpsResponses(installationId, { limit: 1000, cursor: npsCursor });
+          npsResponses.push(...page.items);
+          npsCursor = page.nextCursor;
+        } while (npsCursor);
+      }
+
       for (const window of WINDOWS) {
         const insight = buildInsightFromDispositions(installationId, window, windowEndIso, records);
         if (stores.prLifecycleStore) {
@@ -115,8 +150,12 @@ export async function runInsightRollup(
         }
         // #195 — engagement always computes: it only needs the (mandatory)
         // disposition records; PR-lifecycle records refine the re-review KPIs
-        // when the store is wired and are simply empty otherwise.
-        insight.engagement = buildEngagementInsight(window, windowEndIso, records, prRecords);
+        // and satisfaction records add the Tier-2 helpful/NPS signals when
+        // their stores are wired (empty otherwise).
+        insight.engagement = buildEngagementInsight(window, windowEndIso, records, prRecords, {
+          helpfulVotes,
+          npsResponses,
+        });
         await stores.fpInsightStore.upsert(insight);
         rowsWritten++;
       }

@@ -187,6 +187,8 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
 | [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Nightly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
 | [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
+| [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; nightly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 |
+| [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/insights` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 |
 
 ---
 
@@ -2202,6 +2204,50 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 - ❌ The trend line connects across a null window (`connectNulls` regression), implying data that isn't there.
 - ❌ The section throws on a pre-#195 rollup with no `engagement` (must be optional).
 - ❌ The action-rate card drops the "approx" label (misrepresents the proxy as exact).
+
+---
+
+### E2E-61: Engagement — helpful footer prompt (engagement metrics, stage 4)
+
+**Status:** ✅ SHIPPED (#210). See [`docs/engagement-metrics.md` → Stage 4](./../docs/engagement-metrics.md#stage-4--tier-2-footer-helpful-prompt).
+
+**Behavior:** Every summary comment renders a one-click prompt — "Was this review helpful? React with 👍 or 👎 on this comment." On each review run the handler polls the summary comment's reaction counts and folds the **positive delta** vs the prior review's `summaryReactionsSnapshot` into the satisfaction store (👍/❤️/🚀 → up, 👎/🤔 → down), monotonically (a removed reaction never decrements). The nightly rollup sums in-window votes into `engagement.helpfulUp/helpfulDown/helpfulRate`, and `/dashboard/insights` shows a **Helpful rate** StatCard under "Explicit satisfaction". Works on both backends (`mergewatch-satisfaction` DynamoDB table / `helpful_votes` Postgres table).
+
+**How to run.** Branch: `fixture/61-helpful-prompt`. On a repo with an active review, confirm the summary comment shows the 👍/👎 prompt, then react 👍 on it. Re-trigger a review (push a commit) so the poll runs, and inspect the satisfaction store (`HV#<repo>#<pr>` item / `helpful_votes` row). Trigger the nightly rollup and open `/dashboard/insights`.
+
+**Pass:**
+- [ ] The summary comment renders "Was this review helpful?" with 👍 / 👎.
+- [ ] A 👍 on the summary comment is recorded as `up: 1` on the helpful-vote row after the next review poll.
+- [ ] Removing the reaction then re-reviewing does NOT decrement the counter (monotonic).
+- [ ] The rollup's `engagement` block carries `helpfulUp/helpfulDown/helpfulRate`; the dashboard shows the Helpful rate StatCard.
+- [ ] An installation with no satisfaction table provisioned reviews normally (best-effort no-op).
+
+**Fail signals:**
+- ❌ The prompt is missing from the summary footer.
+- ❌ A re-review double-counts the same reaction (snapshot delta broken).
+- ❌ A satisfaction-store write error blocks the review.
+
+---
+
+### E2E-62: Engagement — dashboard NPS survey (engagement metrics, stage 5)
+
+**Status:** ✅ SHIPPED (#210). See [`docs/engagement-metrics.md` → Stage 5](./../docs/engagement-metrics.md#stage-5--tier-2-dashboard-nps-survey).
+
+**Behavior:** `/dashboard/insights` shows a throttled NPS prompt ("How likely are you to recommend MergeWatch?", 0–10). `GET /api/nps?installation_id=…` returns `{ eligible }` — true only when a satisfaction store is wired AND this `githubUserId` has no response in the last 90 days. `POST /api/nps` records (latest-wins) `{ installation_id, score }` after verifying installation access. The nightly rollup computes `engagement.npsScore` = %promoters (9–10) − %detractors (0–6) over in-window responses (integer −100..100; `null` when none), and the dashboard renders an **NPS** StatCard. A per-browser dismissal (sessionStorage) hides a dismissed prompt for the session.
+
+**How to run.** Branch: `fixture/62-nps-survey`. As an admin who hasn't responded in 90d, open `/dashboard/insights?org=<installationId>` → the NPS prompt appears. Click a score; confirm the thank-you and that `GET /api/nps` now returns `{ eligible: false }`. Inspect the satisfaction store (`NPS#<githubUserId>` item / `nps_responses` row). Trigger the nightly rollup and confirm the NPS StatCard.
+
+**Pass:**
+- [ ] The NPS prompt shows for an eligible admin; the 0–10 scale records on click.
+- [ ] After responding, `GET /api/nps` reports `eligible: false` (90-day throttle per `githubUserId`).
+- [ ] `POST /api/nps` rejects an out-of-range score (must be integer 0–10) and an unauthorized installation.
+- [ ] The rollup computes `npsScore` = %promoters − %detractors; the dashboard renders the NPS StatCard (`—` when no responses).
+- [ ] No satisfaction table provisioned → `GET /api/nps` returns `eligible: false` (never prompts).
+
+**Fail signals:**
+- ❌ The prompt re-appears for an admin who already responded within 90 days.
+- ❌ NPS counts passives (7–8) as promoters or detractors.
+- ❌ The route records a response without verifying installation access.
 
 ---
 

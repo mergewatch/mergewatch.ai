@@ -1,6 +1,6 @@
 # Developer engagement / NPS metrics
 
-**Status:** 🚧 In progress — see [`docs/feat/20260620-01-engagement-metrics.plan.md`](../feat/20260620-01-engagement-metrics.plan.md)
+**Status:** ✅ Shipped — see [`docs/feat/20260620-01-engagement-metrics.plan.md`](./feat/20260620-01-engagement-metrics.plan.md)
 **Issue:** [#195](https://github.com/mergewatch/mergewatch.ai/issues/195)
 
 High-signal metrics that show MergeWatch is *used and valued*, not just that reviews ran. Two tiers, shipped in stacked PRs:
@@ -76,7 +76,7 @@ Adds a first-class `resolveCount` counter to the per-finding disposition record 
 
 **Tests:** `recordResolves` increments once per key, records independently of dispute, no-ops on empty/no-store, and logs-but-doesn't-throw on store rejection (`disposition-writer.test.ts`).
 
-**E2E:** [E2E-58](../../e2e/RUNBOOK.md#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1).
+**E2E:** [E2E-58](../e2e/RUNBOOK.md#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1).
 
 ---
 
@@ -120,7 +120,7 @@ engagement?: {
 
 **Tests:** `engagement.test.ts` — acceptance/action/command/re-review math, the empty/low-volume case, windowing (7d vs 30d, out-of-window exclusion), and the cap.
 
-**E2E:** [E2E-59](../../e2e/RUNBOOK.md#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2).
+**E2E:** [E2E-59](../e2e/RUNBOOK.md#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2).
 
 ## Stage 3 — Engagement dashboard section
 
@@ -141,11 +141,57 @@ Surfaces the Tier-1 KPIs on `/dashboard/insights`.
 
 **Verification:** dashboard `tsc --noEmit` + Next production build (runs ESLint) — consistent with how the TTM cycle-time section (#199) shipped; the dashboard has no unit-test harness, so behavior is covered by the RUNBOOK E2E.
 
-**E2E:** [E2E-60](../../e2e/RUNBOOK.md#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3).
+**E2E:** [E2E-60](../e2e/RUNBOOK.md#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3).
 
-## Stage 4 — Tier 2 footer 👍/👎 helpful prompt — _planned_
+## Stage 4 — Tier 2 footer helpful prompt
 
-## Stage 5 — Tier 2 dashboard NPS survey — _planned_
+A one-click satisfaction signal on the summary comment, captured + aggregated into `engagement.helpful*`.
+
+**What changed**
+
+- New `ISatisfactionStore` (`packages/core/src/storage/types.ts`) with `recordHelpfulVotes` / `listHelpfulVotes` (+ the Stage-5 NPS methods), implemented on both backends:
+  - DynamoDB `DynamoSatisfactionStore` (`mergewatch-satisfaction` table) — partitioned by installation, SK `HV#<repo>#<pr>`; atomic `up`/`down` increments.
+  - Postgres `PostgresSatisfactionStore` (`helpful_votes` table) — `up + N` / `down + N` on conflict; new tables via idempotent migration `0012_lean_star_brand.sql` (`CREATE TABLE IF NOT EXISTS`).
+- `HelpfulVoteRecord` type (`packages/core/src/types/db.ts`) + `summaryReactionsSnapshot?` on `ReviewItem` (the delta baseline).
+- Footer prompt: `formatReviewComment` renders "Was this review helpful? React with 👍 or 👎 on this comment." (`showHelpfulPrompt`, default on).
+- Capture: new `recordSummaryHelpfulVotes` (`packages/core/src/insights/satisfaction-writer.ts`) folds the **positive delta** of the summary comment's reaction counts (👍/❤️/🚀 → up, 👎/🤔 → down) vs the prior review's snapshot into `recordHelpfulVotes` — monotonic, best-effort. Wired into both runtimes alongside the existing summary-reaction fetch.
+- Rollup: `run-rollup.ts` pages helpful-vote rows from the optional `satisfactionStore` and `engagement.ts` fills `helpfulUp/helpfulDown/helpfulRate` (windowed by `lastVoteAt`).
+- Dashboard: an "Explicit satisfaction" block in `EngagementSection` with a **Helpful rate** StatCard (`N 👍 · N 👎`).
+
+**Edge cases**
+
+- Monotonic: a removed reaction never decrements (only positive deltas record).
+- Best-effort: a satisfaction write error never blocks the review.
+- No satisfaction store wired → helpful fields read `0` / `null`; the dashboard block hides.
+
+**Tests:** `satisfaction-writer.test.ts` (delta mapping, monotonicity, first-sight, no-store no-op, error swallow); store tests both backends; `engagement.test.ts` helpful-vote math + windowing; `comment-formatter.test.ts` prompt render/suppress.
+
+**E2E:** [E2E-61](../e2e/RUNBOOK.md#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4).
+
+## Stage 5 — Tier 2 dashboard NPS survey
+
+A throttled NPS prompt (0–10, once / 90d per admin); NPS computed + displayed.
+
+**What changed**
+
+- `ISatisfactionStore` extended with `getNpsResponse` / `recordNpsResponse` / `listNpsResponses`; `IDashboardSatisfactionStore` (the `getNpsResponse` + `recordNpsResponse` subset) added to `IDashboardStore` and wired into both dashboard-store factories (Dynamo gated on `satisfactionTable`, Postgres always).
+- `NpsResponseRecord` type; one row per (installation, `githubUserId`), latest-wins.
+- `GET /api/nps?installation_id=…` → `{ eligible }` (true when the store is wired and the caller has no response in the last 90 days); `POST /api/nps` records `{ installation_id, score }` (validates integer 0–10, verifies installation access). Both behind the same NextAuth + `fetchUserInstallations` gate as `/api/insights`.
+- `NpsPrompt` client component (`packages/dashboard/components/NpsPrompt.tsx`) — fetches eligibility on mount, renders the 0–10 scale, POSTs, thanks; per-session `sessionStorage` dismissal.
+- Rollup + dashboard: `engagement.ts` computes `npsResponses` + `npsScore` (= %promoters (9–10) − %detractors (0–6), integer −100..100, `null` when none, windowed by `respondedAt`); `EngagementSection` renders the **NPS** StatCard.
+- Infra: `SatisfactionTable` in `infra/template.yaml` (+ `SATISFACTION_TABLE` env + IAM grant); `DYNAMODB_TABLE_SATISFACTION` exposed via `next.config.js`.
+
+**Edge cases**
+
+- Throttle is per (installationId, githubUserId): one response / 90 days.
+- Eligibility fails closed (no prompt) on a read error or unprovisioned table — a missed survey beats a survey loop.
+- NPS passives (7–8) count toward the denominator only.
+
+**Tests:** `engagement.test.ts` NPS buckets / rounding / windowing; satisfaction store tests (get/record/list, both backends). The dashboard route + prompt are covered by the production build (tsc + ESLint) and RUNBOOK E2E, consistent with the rest of the dashboard.
+
+**E2E:** [E2E-62](../e2e/RUNBOOK.md#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5).
+
+> **Deploy note (SaaS):** the Amplify SSR role needs the `mergewatch-satisfaction-*` table in its DynamoDB inline policy (covered by the existing `mergewatch-*` wildcard), and `DYNAMODB_TABLE_SATISFACTION` must be set in the Amplify environment for the NPS route to read/write.
 
 ---
 

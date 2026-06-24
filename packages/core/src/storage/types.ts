@@ -12,6 +12,8 @@ import type {
   FindingDispositionRecord,
   InstallationFPInsight,
   PRLifecycleRecord,
+  HelpfulVoteRecord,
+  NpsResponseRecord,
 } from '../types/db.js';
 
 export interface IInstallationStore {
@@ -248,4 +250,60 @@ export interface IPRLifecycleStore {
     installationId: string,
     opts?: { limit?: number; cursor?: string },
   ): Promise<{ items: PRLifecycleRecord[]; nextCursor?: string }>;
+}
+
+// ─── #195 Tier 2 — explicit-satisfaction store ─────────────────────────────
+
+/**
+ * Persists the two explicit-satisfaction signals the engagement rollup reads:
+ *   - Phase 4: 👍/👎 helpful votes on the summary-comment prompt (per PR).
+ *   - Phase 5: dashboard NPS survey responses (per admin).
+ *
+ * Like the other analytics stores, every write is best-effort (swallow-and-log
+ * in the implementations) so a satisfaction write can never block a review or
+ * a dashboard render. Optional throughout the codebase — a deployment that
+ * hasn't provisioned the table simply records no satisfaction signal.
+ */
+export interface ISatisfactionStore {
+  /**
+   * Phase 4 — apply a snapshot-delta of helpful reactions to the summary
+   * comment's vote row, creating it (counters 0) on first sight. `delta.up` /
+   * `delta.down` are the NEW reactions observed since the last poll (callers
+   * pass only positive deltas — counters are monotonic). Refreshes `lastVoteAt`
+   * to `atIso` whenever any delta is applied.
+   */
+  recordHelpfulVotes(
+    installationId: string,
+    repoFullName: string,
+    prNumber: number,
+    delta: { up?: number; down?: number },
+    atIso: string,
+  ): Promise<void>;
+
+  /**
+   * Phase 4 — page helpful-vote rows for an installation. Used by the nightly
+   * engagement rollup. Optional limit + cursor pagination (cap ~1000/page).
+   */
+  listHelpfulVotes(
+    installationId: string,
+    opts?: { limit?: number; cursor?: string },
+  ): Promise<{ items: HelpfulVoteRecord[]; nextCursor?: string }>;
+
+  /**
+   * Phase 5 — the caller's most recent NPS response, or null if they've never
+   * responded. Powers the 90-day prompt-throttle eligibility check.
+   */
+  getNpsResponse(installationId: string, githubUserId: string): Promise<NpsResponseRecord | null>;
+
+  /** Phase 5 — record (or replace, latest-wins) one admin's NPS response. */
+  recordNpsResponse(rec: NpsResponseRecord): Promise<void>;
+
+  /**
+   * Phase 5 — page NPS responses for an installation. Used by the nightly
+   * engagement rollup. Optional limit + cursor pagination (cap ~1000/page).
+   */
+  listNpsResponses(
+    installationId: string,
+    opts?: { limit?: number; cursor?: string },
+  ): Promise<{ items: NpsResponseRecord[]; nextCursor?: string }>;
 }

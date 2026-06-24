@@ -307,6 +307,12 @@ export interface DynamoDashboardStoreOptions {
    * dashboard chart routes render zero-state (no table provisioned).
    */
   fpInsightsTable?: string;
+  /**
+   * #195 Phase 5 — optional. When set, the dashboard store exposes a
+   * `satisfaction` member backed by the named table (NPS read/write). When
+   * unset the NPS route reports "ineligible" and never prompts.
+   */
+  satisfactionTable?: string;
 }
 
 export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions): IDashboardStore {
@@ -315,6 +321,7 @@ export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions)
   const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
   const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
   const { DynamoFPInsightStore } = require('./fp-insight-store.js');
+  const { DynamoSatisfactionStore } = require('./satisfaction-store.js');
 
   const raw = new DynamoDBClient({ region: options.region ?? process.env.AWS_REGION ?? 'us-east-1' });
   const client = DynamoDBDocumentClient.from(raw, {
@@ -330,9 +337,17 @@ export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions)
     ? new DynamoFPInsightStore(client, options.fpInsightsTable)
     : undefined;
 
+  // #195 Phase 5 — the satisfaction store implements the full pipeline
+  // `ISatisfactionStore`; the dashboard only calls getNpsResponse /
+  // recordNpsResponse (the `IDashboardSatisfactionStore` subset).
+  const satisfaction = options.satisfactionTable
+    ? new DynamoSatisfactionStore(client, options.satisfactionTable)
+    : undefined;
+
   return {
     installations: new DynamoDashboardInstallationStore(client, options.installationsTable),
     reviews: new DynamoDashboardReviewStore(client, options.reviewsTable),
     ...(fpInsights ? { fpInsights } : {}),
+    ...(satisfaction ? { satisfaction } : {}),
   };
 }

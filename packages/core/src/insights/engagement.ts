@@ -15,16 +15,35 @@
  *   - `/mergewatch reject` commands carry their own `at` timestamp, so they're
  *     windowed precisely by that, independent of `lastSeen`;
  *   - PR-lifecycle engagement (reviewed / re-review) windows by `firstReviewAt`
- *     — the moment MergeWatch reviewed the PR.
+ *     — the moment MergeWatch reviewed the PR;
+ *   - Tier-2 satisfaction (#195 Phase 4/5): helpful votes window by their row's
+ *     `lastVoteAt` (same convention as disposition `lastSeen`); NPS responses
+ *     window by `respondedAt`.
  *
  * Rates are `number | null`; null means "empty denominator in this window" so
  * the dashboard can tell "no signal" from a real 0.
  */
 
-import type { FindingDispositionRecord, PRLifecycleRecord, InstallationFPInsight } from '../types/db.js';
+import type {
+  FindingDispositionRecord,
+  PRLifecycleRecord,
+  InstallationFPInsight,
+  HelpfulVoteRecord,
+  NpsResponseRecord,
+} from '../types/db.js';
 import { WINDOW_LENGTH_MS } from './rollup.js';
 
 export type EngagementInsight = NonNullable<InstallationFPInsight['engagement']>;
+
+/**
+ * Tier-2 satisfaction records the rollup feeds in. Optional — absent when no
+ * `ISatisfactionStore` is wired, in which case the helpful/NPS fields read
+ * `0` / `null`.
+ */
+export interface SatisfactionRecords {
+  helpfulVotes: readonly HelpfulVoteRecord[];
+  npsResponses: readonly NpsResponseRecord[];
+}
 
 /** A count / denominator → rate, or null when the denominator is 0. */
 function rateOrNull(numerator: number, denominator: number): number | null {
@@ -37,12 +56,15 @@ function rateOrNull(numerator: number, denominator: number): number | null {
  * @param dispositionRecords  every disposition row for the installation
  * @param prLifecycleRecords  every PR-lifecycle row for the installation
  *                            (empty when no PR-lifecycle store is wired)
+ * @param satisfaction        Tier-2 helpful-vote + NPS rows (omit when no
+ *                            satisfaction store is wired)
  */
 export function buildEngagementInsight(
   window: InstallationFPInsight['window'],
   windowEndIso: string,
   dispositionRecords: readonly FindingDispositionRecord[],
   prLifecycleRecords: readonly PRLifecycleRecord[],
+  satisfaction?: SatisfactionRecords,
 ): EngagementInsight {
   const windowEndMs = new Date(windowEndIso).getTime();
   const windowStartMs = windowEndMs - WINDOW_LENGTH_MS[window];
@@ -98,6 +120,33 @@ export function buildEngagementInsight(
   const totalResolves = resolves;
   const totalRejectCommands = rejectCommands;
 
+  // ── Tier 2 — explicit-satisfaction signals (#195 Phase 4/5) ───────────────
+  // Helpful votes: sum 👍/👎 across rows whose most-recent vote falls in-window.
+  let helpfulUp = 0;
+  let helpfulDown = 0;
+  for (const v of satisfaction?.helpfulVotes ?? []) {
+    if (!inWindow(v.lastVoteAt)) continue;
+    helpfulUp += v.up;
+    helpfulDown += v.down;
+  }
+
+  // NPS: classify each in-window response, then %promoters − %detractors.
+  // Promoters score 9–10, detractors 0–6, passives (7–8) count toward the
+  // denominator only — the standard Net Promoter Score buckets.
+  let promoters = 0;
+  let detractors = 0;
+  let npsResponses = 0;
+  for (const n of satisfaction?.npsResponses ?? []) {
+    if (!inWindow(n.respondedAt)) continue;
+    npsResponses++;
+    if (n.score >= 9) promoters++;
+    else if (n.score <= 6) detractors++;
+  }
+  const npsScore =
+    npsResponses > 0
+      ? Math.round(((promoters - detractors) / npsResponses) * 100)
+      : null;
+
   return {
     acceptanceRate: rateOrNull(agreements, actedOn),
     totalResolves,
@@ -107,5 +156,10 @@ export function buildEngagementInsight(
     reReviewRate: rateOrNull(reReviewedPrCount, reviewedPrCount),
     reviewedPrCount,
     activeInstallation: reviewedPrCount > 0,
+    helpfulUp,
+    helpfulDown,
+    helpfulRate: rateOrNull(helpfulUp, helpfulUp + helpfulDown),
+    npsResponses,
+    npsScore,
   };
 }

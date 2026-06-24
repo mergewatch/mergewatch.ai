@@ -401,6 +401,21 @@ describe('formatReviewComment', () => {
       expect(result).not.toContain('📊');
     });
   });
+
+  // #195 Phase 4 — helpful prompt
+  describe('helpful prompt (#195)', () => {
+    it('renders the 👍/👎 prompt by default', () => {
+      const result = formatReviewComment(baseOptions());
+      expect(result).toContain('Was this review helpful?');
+      expect(result).toContain('👍');
+      expect(result).toContain('👎');
+    });
+
+    it('suppresses the prompt when showHelpfulPrompt is false', () => {
+      const result = formatReviewComment(baseOptions({ showHelpfulPrompt: false }));
+      expect(result).not.toContain('Was this review helpful?');
+    });
+  });
 });
 
 describe('buildWorkDoneSection', () => {

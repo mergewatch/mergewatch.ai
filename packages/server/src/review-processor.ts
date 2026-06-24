@@ -15,7 +15,7 @@ import {
   persistInlineResolveMemory,
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
   recordFindingSurfacings, recordDisputes, recordResolves, detectQuietDrops, recordQuietDrops,
-  pollAndRecordInlineReactions,
+  pollAndRecordInlineReactions, recordSummaryHelpfulVotes,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -234,7 +234,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'satisfactionStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -726,11 +726,26 @@ export async function processReviewJob(
 
     // Collect reactions from the review comment
     let reactions: Record<string, number> | undefined;
+    // #195 Phase 4 — the next-poll baseline for the summary-comment helpful
+    // prompt. Recomputed from the current reaction counts even when no new
+    // votes land, so deltas stay accurate; persisted on the review below.
+    let updatedSummaryReactionsSnapshot: Record<string, number> = prevComplete?.summaryReactionsSnapshot ?? {};
     if (commentId) {
       const reactionCounts = await getCommentReactions(octokit, owner, repo, commentId).catch(() => ({}));
       if (Object.keys(reactionCounts).length > 0) {
         reactions = reactionCounts;
       }
+      // Fold the summary 👍/👎 delta into the engagement rollup. Best-effort;
+      // returns the new snapshot to persist for the next review's delta.
+      updatedSummaryReactionsSnapshot = await recordSummaryHelpfulVotes(
+        deps.satisfactionStore,
+        installationId,
+        repoFullName,
+        prNumber,
+        reactionCounts,
+        prevComplete?.summaryReactionsSnapshot,
+        new Date().toISOString(),
+      );
     }
 
     // Compute topSeverity by ranking all findings (not just first)
@@ -771,6 +786,11 @@ export async function processReviewJob(
       // ReviewItem shape).
       ...(Object.keys(updatedReactionsSnapshot).length > 0
         ? { inlineReactionsSnapshot: updatedReactionsSnapshot }
+        : {}),
+      // #195 Phase 4 — persist the summary-comment reaction baseline so the
+      // next review computes helpful-vote deltas without re-counting.
+      ...(Object.keys(updatedSummaryReactionsSnapshot).length > 0
+        ? { summaryReactionsSnapshot: updatedSummaryReactionsSnapshot }
         : {}),
     });
 

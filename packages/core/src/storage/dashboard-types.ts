@@ -11,7 +11,7 @@
  *   - PostgresDashboardStore (packages/storage-postgres) — self-hosted / Docker
  */
 
-import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight } from '../types/db.js';
+import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight, NpsResponseRecord } from '../types/db.js';
 
 // ─── Paginated result wrapper ───────────────────────────────────────────────
 
@@ -93,6 +93,21 @@ export interface IDashboardFPInsightStore {
   listByInstallation(installationId: string): Promise<InstallationFPInsight[]>;
 }
 
+// ─── Satisfaction store (dashboard NPS operations, #195 Phase 5) ────────────
+
+/**
+ * Dashboard read/write surface for the NPS survey prompt. The dashboard needs
+ * exactly two operations — check the caller's eligibility (last response) and
+ * record a new response. The full `ISatisfactionStore` (helpful votes + rollup
+ * paging) lives on the pipeline path; the dashboard never exercises those.
+ */
+export interface IDashboardSatisfactionStore {
+  /** The caller's most recent NPS response, or null if they've never responded. */
+  getNpsResponse(installationId: string, githubUserId: string): Promise<NpsResponseRecord | null>;
+  /** Record (or replace, latest-wins) the caller's NPS response. */
+  recordNpsResponse(rec: NpsResponseRecord): Promise<void>;
+}
+
 // ─── Combined dashboard store ───────────────────────────────────────────────
 
 export interface IDashboardStore {
@@ -104,4 +119,9 @@ export interface IDashboardStore {
    * render a zero-state when this field is absent.
    */
   fpInsights?: IDashboardFPInsightStore;
+  /**
+   * #195 Phase 5 — optional. Present when a satisfaction table is provisioned;
+   * the NPS route returns "ineligible" (never prompts) when absent.
+   */
+  satisfaction?: IDashboardSatisfactionStore;
 }
