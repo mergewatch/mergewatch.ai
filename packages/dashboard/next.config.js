@@ -64,6 +64,19 @@ const publicCacheControl = {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Permanent redirect for the renamed dashboard route: /dashboard/insights
+  // ("FP Insights") -> /dashboard/accuracy. Query params (e.g. ?org=) are
+  // forwarded automatically, so existing bookmarks keep working.
+  async redirects() {
+    return [
+      {
+        source: '/dashboard/insights',
+        destination: '/dashboard/accuracy',
+        permanent: true,
+      },
+    ];
+  },
+
   // 'standalone' output bundles the server into a self-contained directory.
   // Required for AWS Amplify SSR hosting — Amplify deploys the .next/standalone
   // output as Lambda@Edge functions.

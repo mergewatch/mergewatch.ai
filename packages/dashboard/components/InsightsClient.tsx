@@ -1,26 +1,22 @@
 "use client";
 
 /**
- * FB-F + FB-G + FB-H + FB-I + FB-J + FB-K — FP-insights dashboard surface.
+ * FB-F + FB-G + FB-H + FB-I + FB-J + FB-K — review-accuracy dashboard surface
+ * (the /dashboard/accuracy route, formerly "FP Insights").
+ *
+ * The value / ROI blocks (cost, cycle-time, engagement) moved to the Analytics
+ * page; this surface is false-positive feedback only.
  *
  * Reads `/api/insights?installation_id=…` for the three rolling-window
- * `InstallationFPInsight` rows (7d / 30d / 90d) produced by the nightly
+ * `InstallationFPInsight` rows (7d / 30d / 90d) produced by the hourly
  * FB-E rollup, then renders:
- *   - **TTM (#194)** — cycle-time section: time-to-merge percentiles
- *     (median / p75 / p90), time-from-first-review-to-merge, round-trips,
- *     and a reviewed-vs-unreviewed comparison ("did MergeWatch make us
- *     faster?"). Computed from the `cycleTime` block on each insight row.
- *   - **#195** — developer-engagement section: Tier-1 behavioral KPIs
- *     (acceptance rate, approx finding-action rate, `/mergewatch` command
- *     usage, re-review rate) plus a cross-window acceptance/action trend.
- *     Computed from the `engagement` block on each insight row.
- *   - **FB-F** — FP funnel (stacked bar): unsignaled / agreed / silent-
+ *   - **FB-F** — false-positive funnel (stacked bar): unsignaled / agreed / silent-
  *     dropped / disputed counts per window. Single chart that answers
  *     "is the review noise increasing or decreasing for us?".
  *   - **FB-G** — dispute-rate by agent (horizontal bar): one bar per
  *     `perCategory` entry, height = `rate`. Tells the org which agent
  *     is the noisiest.
- *   - **FB-H** — top recurring FP themes table (with FB-K CTA).
+ *   - **FB-H** — top recurring false-positive themes table (with FB-K CTA).
  *   - **FB-I** — severity-shopping detector (two-line chart across the
  *     three windows): warnings dispute-rate vs criticals dispute-rate. An
  *     annotation banner fires when warningsRate > criticalsRate × 1.5
@@ -101,7 +97,7 @@ function fbKYamlFor(cluster: ClusterRow): string {
   const rate = (cluster.rate * 100).toFixed(0);
   const title = cluster.representativeTitle.replace(/\s+/g, " ").trim();
   return [
-    `# FP-feedback dashboard suggested rule — review before adding`,
+    `# False-positive dashboard suggested rule — review before adding`,
     `#   Cluster:           ${title}`,
     `#   Significant tokens: ${tokens}`,
     `#   Dispute rate:      ${rate}% over ${cluster.surfaceCount} surfacings`,
@@ -210,7 +206,7 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
   if (insights.length === 0 || !active || !hasFpData) {
     return (
       <div className="rounded-lg border border-border-default bg-surface-card p-6">
-        <h2 className="text-base font-semibold text-text-primary">No insights yet</h2>
+        <h2 className="text-base font-semibold text-text-primary">No accuracy data yet</h2>
         <p className="mt-2 text-sm text-text-secondary">
           MergeWatch starts collecting per-finding feedback (👍 / 👎 reactions,
           inline-thread resolves, <code>/mergewatch reject</code> commands) from
@@ -258,7 +254,7 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
       {/* ─── FB-F: FP funnel (stacked bar) ───────────────────────────── */}
       <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
         <header className="mb-4">
-          <h2 className="text-sm font-semibold text-text-primary">FP funnel — {activeWindow}</h2>
+          <h2 className="text-sm font-semibold text-text-primary">False-positive funnel — {activeWindow}</h2>
           <p className="mt-1 text-xs text-text-secondary">
             Of {active.totalFindingsSurfaced.toLocaleString()} findings surfaced in this window:
             {" "}{active.totalDisputes.toLocaleString()} disputed
@@ -337,7 +333,7 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
       {/* ─── FB-H: Top recurring FP themes (sortable table + FB-K CTA) ── */}
       <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
         <header className="mb-4">
-          <h2 className="text-sm font-semibold text-text-primary">Top recurring FP themes — {activeWindow}</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Top recurring false-positive themes — {activeWindow}</h2>
           <p className="mt-1 text-xs text-text-secondary">
             Top-10 finding clusters ranked by leverage (disputeRate × surfaceCount).
             High-dispute clusters with ≥ {FB_K_SURFACE_COUNT_THRESHOLD} surfacings
