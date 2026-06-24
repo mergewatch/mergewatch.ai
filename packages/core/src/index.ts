@@ -12,6 +12,7 @@ export type {
   IFPInsightStore,
   IPRLifecycleStore,
   ISatisfactionStore,
+  IReviewCostStore,
   PRLifecycleOpenInput,
   PRLifecycleCloseInput,
   FindingDispositionAttribution,
@@ -176,6 +177,10 @@ export type { CycleTimeInsight } from './insights/cycle-time.js';
 export { buildEngagementInsight } from './insights/engagement.js';
 export type { EngagementInsight, SatisfactionRecords } from './insights/engagement.js';
 
+// ─── Cost rollup (#193) ────────────────────────────────────────────────────
+export { buildCostInsight } from './insights/cost.js';
+export type { CostInsight } from './insights/cost.js';
+
 // ─── Satisfaction writer (#195 Tier 2 / Phase 4) ───────────────────────────
 export {
   recordSummaryHelpfulVotes,
@@ -274,6 +279,7 @@ export type {
   PRLifecycleRecord,
   HelpfulVoteRecord,
   NpsResponseRecord,
+  ReviewCostRecord,
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';

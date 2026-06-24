@@ -14,6 +14,7 @@ import type {
   PRLifecycleRecord,
   HelpfulVoteRecord,
   NpsResponseRecord,
+  ReviewCostRecord,
 } from '../types/db.js';
 
 export interface IInstallationStore {
@@ -306,4 +307,32 @@ export interface ISatisfactionStore {
     installationId: string,
     opts?: { limit?: number; cursor?: string },
   ): Promise<{ items: NpsResponseRecord[]; nextCursor?: string }>;
+}
+
+// ─── #193 — per-review LLM cost store ──────────────────────────────────────
+
+/**
+ * Persists one `ReviewCostRecord` per completed review so the nightly rollup
+ * can aggregate spend per installation without scanning the repo-partitioned
+ * reviews table. Writes are best-effort (swallow-and-log in the
+ * implementations) — a cost write must never block a review. Optional
+ * throughout: a deployment that hasn't provisioned the table simply records no
+ * cost rows and the `cost` insight block stays undefined.
+ */
+export interface IReviewCostStore {
+  /**
+   * Record one completed review's cost. Idempotent per (installation, repo, PR,
+   * commit): re-running the same review overwrites the row with identical
+   * figures rather than double-counting.
+   */
+  recordCost(record: ReviewCostRecord): Promise<void>;
+
+  /**
+   * Page through all cost rows for an installation. Used by the nightly cost
+   * rollup. Optional limit + cursor pagination (cap ~1000/page).
+   */
+  listByInstallation(
+    installationId: string,
+    opts?: { limit?: number; cursor?: string },
+  ): Promise<{ items: ReviewCostRecord[]; nextCursor?: string }>;
 }

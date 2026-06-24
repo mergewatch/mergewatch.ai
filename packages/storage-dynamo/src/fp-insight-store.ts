@@ -57,6 +57,8 @@ export class DynamoFPInsightStore implements IFPInsightStore {
         cycleTime: insight.cycleTime ?? null,
         // #195 — engagement block; same null-not-undefined discipline.
         engagement: insight.engagement ?? null,
+        // #193 — cost block; same null-not-undefined discipline.
+        cost: insight.cost ?? null,
       },
     }));
   }
@@ -101,5 +103,7 @@ function itemToInsight(it: Record<string, unknown>): InstallationFPInsight {
     ...(it.cycleTime ? { cycleTime: it.cycleTime as InstallationFPInsight['cycleTime'] } : {}),
     // #195 — absent on pre-engagement rows; null coerces back to undefined.
     ...(it.engagement ? { engagement: it.engagement as InstallationFPInsight['engagement'] } : {}),
+    // #193 — absent on pre-cost rows; null coerces back to undefined.
+    ...(it.cost ? { cost: it.cost as InstallationFPInsight['cost'] } : {}),
   };
 }

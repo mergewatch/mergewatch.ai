@@ -96,6 +96,20 @@ interface Engagement {
   npsScore?: number | null;
 }
 
+/** #193 — LLM-cost block. Optional for pre-cost rollups. */
+interface Cost {
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  reviewCount: number;
+  pricedReviewCount: number;
+  unpricedReviewCount: number;
+  avgCostPerReview: number | null;
+  findingCount: number;
+  avgCostPerFinding: number | null;
+  perRepo: Record<string, { costUsd: number; reviewCount: number }>;
+}
+
 interface Insight {
   installationId: string;
   window: "7d" | "30d" | "90d";
@@ -116,6 +130,8 @@ interface Insight {
   cycleTime?: CycleTime;
   /** #195 — present only on rollups generated after the engagement stage shipped. */
   engagement?: Engagement;
+  /** #193 — present only on rollups generated after the cost stage shipped. */
+  cost?: Cost;
 }
 
 interface InsightsClientProps {
@@ -156,6 +172,17 @@ function fmtHours(h: number | null | undefined): string {
 function fmtPct(r: number | null | undefined): string {
   if (r == null) return "—";
   return `${Math.round(r * 100)}%`;
+}
+
+/**
+ * #193 — format a USD amount. Sub-dollar values (a per-finding cost is often a
+ * few cents) keep more precision; dollar+ values round to cents. `null` → `—`.
+ */
+function fmtUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n === 0) return "$0";
+  if (Math.abs(n) < 1) return `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function pickWindow(insights: Insight[], window: "7d" | "30d" | "90d"): Insight | undefined {
@@ -323,8 +350,12 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
     (eng.helpfulDown ?? 0) > 0 ||
     (eng.npsResponses ?? 0) > 0
   );
+  // #193 — cost is gated independently: a window can have spend even with no
+  // findings (all-clear reviews still cost tokens).
+  const cost = active?.cost;
+  const hasCostData = !!cost && cost.reviewCount > 0;
 
-  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData && !hasEngagementData)) {
+  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData && !hasEngagementData && !hasCostData)) {
     return (
       <div className="rounded-lg border border-border-default bg-surface-card p-6">
         <h2 className="text-base font-semibold text-text-primary">No insights yet</h2>
@@ -377,6 +408,9 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
       {hasEngagementData && eng && (
         <EngagementSection engagement={eng} insights={insights} window={activeWindow} />
       )}
+
+      {/* ─── #193: LLM cost ──────────────────────────────────────────── */}
+      {hasCostData && cost && <CostSection cost={cost} insights={insights} window={activeWindow} />}
 
       {/* ─── #195 Phase 5: throttled NPS survey prompt ───────────────── */}
       <NpsPrompt installationId={installationId} />
@@ -1020,6 +1054,128 @@ function EngagementSection({
                   connectNulls={false}
                 />
               </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── #193 — LLM cost ──────────────────────────────────────────────────────
+
+const COST_COLOUR = "#f59e0b"; // amber — spend
+
+interface CostPoint {
+  window: "7d" | "30d" | "90d";
+  spend: number;
+}
+
+/** Total spend across the three windows (for the trend bars). */
+function buildCostPoints(insights: Insight[]): CostPoint[] {
+  const order: CostPoint["window"][] = ["7d", "30d", "90d"];
+  return order
+    .map((w) => insights.find((i) => i.window === w))
+    .filter((i): i is Insight => Boolean(i?.cost))
+    .map((i) => ({ window: i.window, spend: i.cost!.totalCostUsd }));
+}
+
+/** Top repos by spend (descending), for the per-repo breakdown. */
+function topRepoSpend(cost: Cost, limit = 5): Array<{ repo: string; costUsd: number; reviewCount: number }> {
+  return Object.entries(cost.perRepo)
+    .map(([repo, v]) => ({ repo, costUsd: v.costUsd, reviewCount: v.reviewCount }))
+    .filter((r) => r.costUsd > 0)
+    .sort((a, b) => b.costUsd - a.costUsd)
+    .slice(0, limit);
+}
+
+/**
+ * LLM-cost section. Headline spend KPIs (total spend, avg cost / review, cost /
+ * finding) for the active window, a per-repo spend breakdown, and a spend-over-
+ * time bar across 7d / 30d / 90d. Unpriced (unknown-model) reviews are surfaced
+ * explicitly and excluded from the money figures.
+ */
+function CostSection({
+  cost,
+  insights,
+  window,
+}: {
+  cost: Cost;
+  insights: Insight[];
+  window: string;
+}) {
+  const c = cost;
+  const points = buildCostPoints(insights);
+  const hasTrend = points.length > 1 && points.some((p) => p.spend > 0);
+  const repos = topRepoSpend(c);
+  const totalTokens = c.totalInputTokens + c.totalOutputTokens;
+
+  return (
+    <section className="rounded-lg border border-border-default bg-surface-card p-4 sm:p-5">
+      <header className="mb-4">
+        <h2 className="text-sm font-semibold text-text-primary">LLM cost — {window}</h2>
+        <p className="mt-1 text-xs text-text-secondary">
+          Estimated spend on review LLM calls. Costs are estimates from the
+          provider pricing table; reviews on an unpriced model are counted but
+          excluded from the dollar figures.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Total spend"
+          value={fmtUsd(c.totalCostUsd)}
+          subtext={`${totalTokens.toLocaleString()} tokens`}
+        />
+        <StatCard
+          label="Avg cost / review"
+          value={fmtUsd(c.avgCostPerReview)}
+          subtext={`${c.pricedReviewCount.toLocaleString()} priced review${c.pricedReviewCount === 1 ? "" : "s"}`}
+        />
+        <StatCard
+          label="Cost / finding"
+          value={fmtUsd(c.avgCostPerFinding)}
+          subtext={`${c.findingCount.toLocaleString()} finding${c.findingCount === 1 ? "" : "s"}`}
+        />
+        <StatCard
+          label="Reviews"
+          value={c.reviewCount.toLocaleString()}
+          subtext={c.unpricedReviewCount > 0 ? `${c.unpricedReviewCount.toLocaleString()} unpriced` : "all priced"}
+        />
+      </div>
+
+      {repos.length > 0 && (
+        <div className="mt-5">
+          <h3 className="mb-2 text-xs font-semibold text-text-primary">Spend by repo</h3>
+          <ul className="space-y-1">
+            {repos.map((r) => (
+              <li key={r.repo} className="flex items-center justify-between text-xs">
+                <span className="truncate text-text-secondary">{r.repo}</span>
+                <span className="ml-3 shrink-0 tabular-nums text-text-primary">
+                  {fmtUsd(r.costUsd)} <span className="text-text-secondary">· {r.reviewCount.toLocaleString()} review{r.reviewCount === 1 ? "" : "s"}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {hasTrend && (
+        <div className="mt-5">
+          <h3 className="mb-1 text-xs font-semibold text-text-primary">Spend — across 7d / 30d / 90d</h3>
+          <p className="mb-3 text-[11px] text-text-secondary">
+            Cumulative spend over each widening window. The 90d bar includes the
+            30d and 7d spend.
+          </p>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={points} margin={{ left: 8, right: 16, top: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                <XAxis dataKey="window" fontSize={11} />
+                <YAxis tickFormatter={(v) => fmtUsd(v)} fontSize={11} width={56} />
+                <Tooltip formatter={(value: number) => [fmtUsd(value), "Spend"]} />
+                <Bar dataKey="spend" fill={COST_COLOUR} radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </div>

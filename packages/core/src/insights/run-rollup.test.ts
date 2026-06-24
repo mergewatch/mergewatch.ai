@@ -257,4 +257,42 @@ describe('runInsightRollup — cycle-time block', () => {
     // Both pages' merged PRs counted into each window.
     expect(stores.upserts[0].cycleTime?.mergedCount).toBe(2);
   });
+
+  // ── #193 — cost block wiring ──────────────────────────────────────────────
+
+  it('attaches a cost block when the costStore is wired', async () => {
+    const stores = makeStores({ installationIds: ['42'], recordsByInstallation: { '42': [] } });
+    const withCost: RollupStores & { upserts: InstallationFPInsight[] } = {
+      ...stores,
+      costStore: {
+        listByInstallation: async (_id: string, opts?: { cursor?: string }) => {
+          if (!opts?.cursor) return { items: [
+            { installationId: '42', repoFullName: 'org/repo', prNumber: 1, commitSha: 'a', completedAt: '2026-05-21T00:00:00.000Z', inputTokens: 100, outputTokens: 20, costUsd: 2, findingCount: 4 },
+          ], nextCursor: 'p2' };
+          return { items: [
+            { installationId: '42', repoFullName: 'org/repo', prNumber: 2, commitSha: 'b', completedAt: '2026-05-21T00:00:00.000Z', inputTokens: 50, outputTokens: 10, costUsd: null, findingCount: 1 },
+          ] };
+        },
+      },
+    };
+    await runInsightRollup(withCost, WINDOW_END);
+    for (const u of stores.upserts) {
+      expect(u.cost).toBeDefined();
+    }
+    // Both pages aggregated; the null-cost review is counted but unpriced.
+    const c7 = stores.upserts.find((u) => u.window === '7d')!.cost!;
+    expect(c7.reviewCount).toBe(2);
+    expect(c7.pricedReviewCount).toBe(1);
+    expect(c7.unpricedReviewCount).toBe(1);
+    expect(c7.totalCostUsd).toBe(2);
+    expect(c7.avgCostPerFinding).toBe(0.5); // 2 / 4
+  });
+
+  it('omits the cost block when no costStore is wired (back-compat)', async () => {
+    const stores = makeStores({ installationIds: ['42'], recordsByInstallation: { '42': [] } });
+    await runInsightRollup(stores, WINDOW_END);
+    for (const u of stores.upserts) {
+      expect(u.cost).toBeUndefined();
+    }
+  });
 });

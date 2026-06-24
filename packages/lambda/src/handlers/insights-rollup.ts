@@ -30,10 +30,12 @@ import {
   DynamoFPInsightStore,
   DynamoPRLifecycleStore,
   DynamoSatisfactionStore,
+  DynamoReviewCostStore,
   DEFAULT_FINDING_DISPOSITIONS_TABLE,
   DEFAULT_FP_INSIGHTS_TABLE,
   DEFAULT_PR_LIFECYCLE_TABLE,
   DEFAULT_SATISFACTION_TABLE,
+  DEFAULT_REVIEW_COSTS_TABLE,
 } from '@mergewatch/storage-dynamo';
 
 const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -43,6 +45,7 @@ const FINDING_DISPOSITIONS_TABLE = process.env.FINDING_DISPOSITIONS_TABLE ?? DEF
 const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_TABLE;
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const SATISFACTION_TABLE = process.env.SATISFACTION_TABLE ?? DEFAULT_SATISFACTION_TABLE;
+const REVIEW_COSTS_TABLE = process.env.REVIEW_COSTS_TABLE ?? DEFAULT_REVIEW_COSTS_TABLE;
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
 const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DISPOSITIONS_TABLE);
@@ -51,6 +54,8 @@ const fpInsightStore = new DynamoFPInsightStore(dynamodb, FP_INSIGHTS_TABLE);
 const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
 // #195 Tier 2 — feeds the helpful-rate + NPS fields of each engagement block.
 const satisfactionStore = new DynamoSatisfactionStore(dynamodb, SATISFACTION_TABLE);
+// #193 — feeds the cost block of each insight row.
+const costStore = new DynamoReviewCostStore(dynamodb, REVIEW_COSTS_TABLE);
 
 export async function handler(): Promise<{ statusCode: number; body: string }> {
   console.log('[fb-e] insights rollup starting');
@@ -60,6 +65,7 @@ export async function handler(): Promise<{ statusCode: number; body: string }> {
     fpInsightStore,
     prLifecycleStore,
     satisfactionStore,
+    costStore,
   });
   console.log(
     '[fb-e] rollup complete — processed=%d, rows=%d, failed=[%s], elapsed=%dms, windowEnd=%s',
