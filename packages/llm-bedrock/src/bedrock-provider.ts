@@ -20,9 +20,9 @@ import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, TokenUsage } fro
 
 // ─── Supported model IDs ───────────────────────────────────────────────────
 export const SUPPORTED_MODELS = {
+  'claude-opus-4.6': 'us.anthropic.claude-opus-4-6-v1',
   'claude-sonnet-4': 'us.anthropic.claude-sonnet-4-20250514-v1:0',
   'claude-haiku-4.5': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  'claude-3.5-sonnet': 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
   'amazon-titan-text': 'amazon.titan-text-express-v1',
 } as const;
 

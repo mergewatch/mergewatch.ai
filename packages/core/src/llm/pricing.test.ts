@@ -21,6 +21,18 @@ describe('estimateCost', () => {
     expect(cost).toBeCloseTo(0.105, 6);
   });
 
+  it('prices the Opus 4.6 default (Bedrock) at $5/$25 per 1M', () => {
+    // us.anthropic.claude-opus-4-6-v1: input $5/1M, output $25/1M
+    const cost = estimateCost('us.anthropic.claude-opus-4-6-v1', 1000, 500);
+    // (1000 / 1_000_000) * 5 + (500 / 1_000_000) * 25 = 0.005 + 0.0125 = 0.0175
+    expect(cost).toBeCloseTo(0.0175, 6);
+  });
+
+  it('the retired claude-3-5-sonnet is no longer priced (returns null)', () => {
+    expect(estimateCost('us.anthropic.claude-3-5-sonnet-20241022-v2:0', 100, 100)).toBeNull();
+    expect(estimateCost('claude-3-5-sonnet-20241022', 100, 100)).toBeNull();
+  });
+
   it('returns null for an unknown model', () => {
     expect(estimateCost('gpt-4o', 100, 100)).toBeNull();
   });

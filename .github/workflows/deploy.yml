@@ -142,7 +142,7 @@ jobs:
           sam deploy \
             --stack-name mergewatch-dev \
             --region "$AWS_REGION" \
-            --parameter-overrides "Stage=dev DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }} DefaultBedrockModelId=us.anthropic.claude-sonnet-4-20250514-v1:0 DashboardBaseUrl=${{ vars.DASHBOARD_BASE_URL || 'https://mergewatch.ai' }}" \
+            --parameter-overrides "Stage=dev DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }} DefaultBedrockModelId=us.anthropic.claude-opus-4-6-v1 DashboardBaseUrl=${{ vars.DASHBOARD_BASE_URL || 'https://mergewatch.ai' }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
