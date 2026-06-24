@@ -107,8 +107,8 @@ fi
 COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
 if [ -f "$COMPOSE_FILE" ]; then
   sed \
-    -e "s|ghcr.io/santthosh/mergewatch:[^ ]*|ghcr.io/santthosh/mergewatch:${VERSION}|" \
-    -e "s|ghcr.io/santthosh/mergewatch-dashboard:[^ ]*|ghcr.io/santthosh/mergewatch-dashboard:${VERSION}|" \
+    -e "s|ghcr.io/mergewatch/mergewatch:[^ ]*|ghcr.io/mergewatch/mergewatch:${VERSION}|" \
+    -e "s|ghcr.io/mergewatch/mergewatch-dashboard:[^ ]*|ghcr.io/mergewatch/mergewatch-dashboard:${VERSION}|" \
     "$COMPOSE_FILE" > "$COMPOSE_FILE.tmp" \
     && mv "$COMPOSE_FILE.tmp" "$COMPOSE_FILE"
   echo "  Updated docker-compose.yml image tags"
@@ -178,7 +178,7 @@ echo "  2. Create the GitHub Release:"
 echo "     gh release create ${TAG} --generate-notes"
 echo ""
 echo "  3. This will trigger:"
-echo "     - Docker images: ghcr.io/santthosh/mergewatch:${VERSION}"
-echo "     - Docker images: ghcr.io/santthosh/mergewatch-dashboard:${VERSION}"
+echo "     - Docker images: ghcr.io/mergewatch/mergewatch:${VERSION}"
+echo "     - Docker images: ghcr.io/mergewatch/mergewatch-dashboard:${VERSION}"
 echo "     - SAM deploy to dev (auto), prod (manual approval)"
 echo ""
