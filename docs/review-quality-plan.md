@@ -121,7 +121,7 @@ Any fix that reduces noise must preserve these.
 
 ### Example 5 — mergewatch.ai PR #145 (self-review / dogfood of the W1+W2 PR)
 
-- **Evidence:** `gh pr view 145 --repo santthosh/mergewatch.ai` · dashboard `…%3A145%23b8c91ef`
+- **Evidence:** `gh pr view 145 --repo mergewatch/mergewatch.ai` · dashboard `…%3A145%23b8c91ef`
 - **Verdict:** `3/5 — Review recommended`. 0 critical, **4 warnings**. 81,428 tok, ~$0.21, 29.3s. `Suppressed 7`, conventions loaded from `AGENTS.md`. One COMMENTED review (correct — no criticals, didn't block).
 - **Legit (kept honest):**
   - ⚠️ **Unbounded `Promise.all` in `verifyCriticalFindings`** — genuine, the strongest catch. A PR with many criticals would burst N parallel Bedrock calls and hit the per-minute TPM quota — the exact failure `runReviewPipeline` already avoids via `withConcurrency`/`AGENT_CONCURRENCY`. **Fixed.**
@@ -139,7 +139,7 @@ Any fix that reduces noise must preserve these.
 
 ### Example 6 — mergewatch.ai PR #148 (self-review of the W3 PR)
 
-- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` · dashboard `…%3A148%23aad15c1`
+- **Evidence:** `gh pr view 148 --repo mergewatch/mergewatch.ai` · dashboard `…%3A148%23aad15c1`
 - **Verdict:** `2/5 — Needs fixes`. **1 critical**, 8 warnings, 1 info. 94,663 tok, ~$0.24, 39.5s. `Suppressed 9`. CHANGES_REQUESTED.
 - **Legit (kept honest) — the bot caught a real attack class on its own quality PR:**
   - 🔴 **"Unvalidated triage comments enable prompt injection."** Genuine. `fetchTriageComments` accepted comments from anyone, so a third-party drive-by on a public OSS repo could post `## mergewatch triage` with an injection payload to manipulate suppression on someone else's PR. **Fixed in 90b81a5**: (a) `fetchTriageComments` now takes `prAuthor` and filters by `c.user?.login === prAuthor`, undefined `prAuthor` → `[]` without touching the API (fail-closed); (b) `TRIAGE_MAPPING_PROMPT` carries the same DATA-not-instructions guard the W2 verify prompt added in #145; (c) per-comment + total-prose byte caps. Regression-locked as **E2E-24** + a `triage.test.ts` case that includes an `IGNORE PREVIOUS INSTRUCTIONS` attacker comment.
@@ -153,7 +153,7 @@ Any fix that reduces noise must preserve these.
 
 ### Example 7 — mergewatch.ai PR #148 rounds 3–4 (the "no-exit critical" — P13 canonical case)
 
-- **Evidence:** `gh pr view 148 --repo santthosh/mergewatch.ai` rounds 3 (`f8a2b98`) + 4 (`1ae92e0`).
+- **Evidence:** `gh pr view 148 --repo mergewatch/mergewatch.ai` rounds 3 (`f8a2b98`) + 4 (`1ae92e0`).
 - **Stack-wide state at round 4:** #145 APPROVED ✅, #147 COMMENTED ✅, **#148 `MergeWatch Review = FAILURE`, `CHANGES_REQUESTED`** (stuck).
 - **What's happening:** the bot re-runs on every commit and posts a fresh `CHANGES_REQUESTED` review pinning a **🔴 Critical** that I've now dispositioned three times ("prompt injection via triage content" — fix is in place: author-filter is the security boundary, prompt-isolation guard is now also tested). The bot itself acknowledges the finding under "↻ Still present (1)" — it carries the same critical across runs but has no path to convert "still present + author-rebutted" into "withdrawn / non-blocking". Round 4's `🆕 9 new` are mostly P5 nitpicks **on code I just added in round 3**: "potential infinite loop" on a literal `for (cut = 0; cut < 4; cut++)`, "magic number 4", "Buffer.byteLength called twice — performance", plus the silent-fail-open and ReDoS findings rebutted 3 times each.
 - **Why it's stuck:** there's no in-product way to honor "rebutted with rationale" — that's the W3 we're shipping. And no W7 score guardrail to stop a single un-verified Critical from posting `CHANGES_REQUESTED`. Chicken-and-egg: the fix for this PR's stuckness is *this PR* (W3) plus W7.

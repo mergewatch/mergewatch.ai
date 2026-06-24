@@ -164,7 +164,7 @@ The same fail-safe semantics apply at both severities: missing file content → 
 
 ### FP-H — Anti-anchoring on prior findings  ✅ SHIPPED
 
-**Where the gap lived:** observed live across PRs #163 / #166 / #169 — when MergeWatch re-reviews after a fix commit, it carries the previous bot review in conversation history (via `buildPreviousFindingsBlock`). The model was treating the previous-findings block as **stylistic guidance** — "look for findings shaped like these" — even after the cited instances were gone. The frame outlived the referent, producing round-2 false positives whose hit-rate dropped to 0/3 on the most extreme case (#166 round-2). Filed as [#167](https://github.com/santthosh/mergewatch.ai/issues/167).
+**Where the gap lived:** observed live across PRs #163 / #166 / #169 — when MergeWatch re-reviews after a fix commit, it carries the previous bot review in conversation history (via `buildPreviousFindingsBlock`). The model was treating the previous-findings block as **stylistic guidance** — "look for findings shaped like these" — even after the cited instances were gone. The frame outlived the referent, producing round-2 false positives whose hit-rate dropped to 0/3 on the most extreme case (#166 round-2). Filed as [#167](https://github.com/mergewatch/mergewatch.ai/issues/167).
 
 **The fix (Layer 1 + Layer 2):**
 
@@ -180,7 +180,7 @@ Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted find
 
 ### FP-I — Verify "suggestion already implemented"  ✅ SHIPPED
 
-**Where the gap lived:** `FINDING_VERIFICATION_PROMPT` (FP-E) checks defect existence but not whether the *suggested fix is already the existing code*. On PR #169 round-2 (commit `69573aa`), MW produced a finding whose suggestion was byte-identical to the existing `console.warn(...)` call on the cited line. The verifier let it through because the prompt asks *"does the defect exist?"* — not *"is the fix already implemented?"*. Filed as [#168](https://github.com/santthosh/mergewatch.ai/issues/168).
+**Where the gap lived:** `FINDING_VERIFICATION_PROMPT` (FP-E) checks defect existence but not whether the *suggested fix is already the existing code*. On PR #169 round-2 (commit `69573aa`), MW produced a finding whose suggestion was byte-identical to the existing `console.warn(...)` call on the cited line. The verifier let it through because the prompt asks *"does the defect exist?"* — not *"is the fix already implemented?"*. Filed as [#168](https://github.com/mergewatch/mergewatch.ai/issues/168).
 
 **The fix (Layer 1 + Layer 2):**
 
@@ -194,7 +194,7 @@ Both layers compose: Layer 1 reduces the rate at which orchestrator-emitted find
 
 ### FP-J — Verifier honours prior recommendations  ✅ SHIPPED
 
-**Where the gap lived (Layer 2):** on PR #169 round-2, MW directly contradicted its own round-1 advice. Round-1 said *"re-throw on `listInstallationIds` failure so CloudWatch alarms"*. I made that change. Round-2 then flagged the very same throw as a 🔴 Critical *"unhandled promise rejection"*. The verifier had no notion of prior recommendations being binding constraints on subsequent reviews. Filed as [#170](https://github.com/santthosh/mergewatch.ai/issues/170).
+**Where the gap lived (Layer 2):** on PR #169 round-2, MW directly contradicted its own round-1 advice. Round-1 said *"re-throw on `listInstallationIds` failure so CloudWatch alarms"*. I made that change. Round-2 then flagged the very same throw as a 🔴 Critical *"unhandled promise rejection"*. The verifier had no notion of prior recommendations being binding constraints on subsequent reviews. Filed as [#170](https://github.com/mergewatch/mergewatch.ai/issues/170).
 
 **Where the gap lived (Layer 1 + 3):** the verdict tier (`COMMENTED` vs `CHANGES_REQUESTED`) was dominated by the *presence* of any non-info finding, not by the *fraction* of findings that were historically accurate. A PR with 1 valid warning + 2 false ones flipped to `CHANGES_REQUESTED` even though the average finding accuracy was 33%. The fix was deferred until FB-A/FB-E accumulated production data — once the FP-feedback plan shipped (FB-A → FB-L), the counters were available to drive the verdict softener.
 
@@ -220,7 +220,7 @@ Back-compat is total at every layer: absent `categoryDisputeRates` (fresh instal
 - *"URL injection via unvalidated installationId prop"* on a value already passed through `encodeURIComponent` (encodes every special character)
 - *"Potential negative value despite Math.max guard"* on `a - b - c - d` where each subtracted term was bounded by `Math.min(…, remaining)` (provably non-negative by induction)
 
-All three patterns share the same structure: the model has a strong prior that *"user-input-shaped code is risky"* but doesn't trace the data flow far enough to see the safety abstraction. This is **distinct from FP-H/I/J** (which target the post-fix re-review hallucination class) — those guards only activate when `previousFindings` is non-empty. **First-review abstraction-blind FPs slipped through.** Filed as [#173](https://github.com/santthosh/mergewatch.ai/issues/173).
+All three patterns share the same structure: the model has a strong prior that *"user-input-shaped code is risky"* but doesn't trace the data flow far enough to see the safety abstraction. This is **distinct from FP-H/I/J** (which target the post-fix re-review hallucination class) — those guards only activate when `previousFindings` is non-empty. **First-review abstraction-blind FPs slipped through.** Filed as [#173](https://github.com/mergewatch/mergewatch.ai/issues/173).
 
 **The fix:** `FINDING_VERIFICATION_PROMPT` gains a new INVALID block listing **six known-safe abstractions** with concrete prompt-side guidance for each:
 
@@ -242,7 +242,7 @@ The block ends with a **fail-safe rule**: *"If you cannot tell from the file con
 
 **Where the gap lived:** on PR #172 round-2, W2 tagged a critical as `verification: 'unverified'` and W7 correctly clamped the merge score to 3 (advisory) — but **three other rendering surfaces still shouted "🔴 CRITICAL"**: the inline review comment at the cited line, the "Requires your attention" action-items table at the top of the review comment, and the "🔴 Critical (N)" detailed section in the middle. The reviewer experience was schizophrenic: the formal verdict said *"Downgraded to advisory — the PR is not blocked on unverified concerns"* while three of the five visual surfaces (and the most-disruptive one — the inline comment that fires a GitHub notification) looked blocking.
 
-Root cause: W7's score-clamp checks `verification: 'unverified'` and adjusts the merge score. But `buildInlineComments` filtered on `severity === 'critical'` only, `formatReviewComment`'s `actionFindings` filtered on `severity === 'critical' || severity === 'warning'` only, and the Critical section dumped everything from `grouped.get('critical')`. When W2 added the verification tag, the rendering layer was never wired to the same signal. Filed as [#175](https://github.com/santthosh/mergewatch.ai/issues/175).
+Root cause: W7's score-clamp checks `verification: 'unverified'` and adjusts the merge score. But `buildInlineComments` filtered on `severity === 'critical'` only, `formatReviewComment`'s `actionFindings` filtered on `severity === 'critical' || severity === 'warning'` only, and the Critical section dumped everything from `grouped.get('critical')`. When W2 added the verification tag, the rendering layer was never wired to the same signal. Filed as [#175](https://github.com/mergewatch/mergewatch.ai/issues/175).
 
 **The fix (three layers, all pure-rendering):**
 

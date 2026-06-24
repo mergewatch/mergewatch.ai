@@ -124,10 +124,10 @@ PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
 if [ -n "$PREV_TAG" ]; then
   RANGE="${PREV_TAG}..HEAD"
-  COMPARE_URL="https://github.com/santthosh/mergewatch.ai/compare/${PREV_TAG}...${TAG}"
+  COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/compare/${PREV_TAG}...${TAG}"
 else
   RANGE="HEAD"
-  COMPARE_URL="https://github.com/santthosh/mergewatch.ai/commits/${TAG}"
+  COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/commits/${TAG}"
 fi
 
 # Collect commits grouped by type

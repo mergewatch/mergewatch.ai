@@ -78,7 +78,7 @@ export default function AboutPage() {
         The project is developed in public. Every design decision, prompt
         change, and pipeline tweak lands as a regular commit on{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai"
+          href="https://github.com/mergewatch/mergewatch.ai"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -100,7 +100,7 @@ export default function AboutPage() {
         editors like Cursor, Zed, and VS Code without leaving the PR
         context. Follow the{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai/releases"
+          href="https://github.com/mergewatch/mergewatch.ai/releases"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -113,7 +113,7 @@ export default function AboutPage() {
       <ul>
         <li>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -131,7 +131,7 @@ export default function AboutPage() {
         </li>
         <li>
           <a
-            href="https://github.com/santthosh/mergewatch.ai/issues"
+            href="https://github.com/mergewatch/mergewatch.ai/issues"
             target="_blank"
             rel="noopener noreferrer"
           >

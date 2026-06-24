@@ -36,7 +36,7 @@ const pricingJsonLd = {
       priceCurrency: "USD",
       description:
         "Open source under AGPL v3. Deploy with Docker Compose, bring your own LLM provider.",
-      url: "https://github.com/santthosh/mergewatch.ai",
+      url: "https://github.com/mergewatch/mergewatch.ai",
       availability: "https://schema.org/InStock",
     },
     {
