@@ -34,7 +34,7 @@ ARG VERSION
 LABEL org.opencontainers.image.title="MergeWatch Dashboard"
 LABEL org.opencontainers.image.description="Next.js dashboard for MergeWatch"
 LABEL org.opencontainers.image.version="${VERSION}"
-LABEL org.opencontainers.image.source="https://github.com/santthosh/mergewatch.ai"
+LABEL org.opencontainers.image.source="https://github.com/mergewatch/mergewatch.ai"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app

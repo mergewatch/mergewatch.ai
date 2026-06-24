@@ -63,8 +63,8 @@ Dashboard at **http://localhost:3001**. Sign in with GitHub and install the app 
 
 | Service | Port | Image |
 |---------|------|-------|
-| **mergewatch** (server) | 3000 | `ghcr.io/santthosh/mergewatch:0.1.0` |
-| **dashboard** (Next.js) | 3001 | `ghcr.io/santthosh/mergewatch-dashboard:0.1.0` |
+| **mergewatch** (server) | 3000 | `ghcr.io/mergewatch/mergewatch:0.1.0` |
+| **dashboard** (Next.js) | 3001 | `ghcr.io/mergewatch/mergewatch-dashboard:0.1.0` |
 | **db** (PostgreSQL 16) | 5432 | `postgres:16-alpine` |
 
 Pre-built images are published to GHCR on pushes to `main` that change relevant source files, and on every GitHub Release. Upgrade with `docker compose pull && docker compose up -d`.
@@ -265,7 +265,7 @@ gh release create v0.2.0 --generate-notes
 
 ### Docker image tags
 
-Images are published to `ghcr.io/santthosh/mergewatch` and `ghcr.io/santthosh/mergewatch-dashboard`:
+Images are published to `ghcr.io/mergewatch/mergewatch` and `ghcr.io/mergewatch/mergewatch-dashboard`:
 
 | Tag | When |
 |-----|------|

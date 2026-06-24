@@ -571,7 +571,7 @@ Self-hosted MergeWatch runs on any platform that can run a Docker container.
 
 | Platform | How |
 |----------|-----|
-| **Google Cloud Run** | `gcloud run deploy --image ghcr.io/santthosh/mergewatch` (scales to zero) |
+| **Google Cloud Run** | `gcloud run deploy --image ghcr.io/mergewatch/mergewatch` (scales to zero) |
 | **GCP GKE / Compute Engine** | Docker or Kubernetes |
 | **Azure Container Apps / AKS** | Managed containers or Kubernetes |
 | **AWS ECS / Fargate / EC2** | Docker on AWS |

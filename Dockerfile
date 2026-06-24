@@ -32,7 +32,7 @@ ARG VERSION
 LABEL org.opencontainers.image.title="MergeWatch"
 LABEL org.opencontainers.image.description="AI-powered GitHub PR review server"
 LABEL org.opencontainers.image.version="${VERSION}"
-LABEL org.opencontainers.image.source="https://github.com/santthosh/mergewatch.ai"
+LABEL org.opencontainers.image.source="https://github.com/mergewatch/mergewatch.ai"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 RUN npm install -g pnpm@10.23.0

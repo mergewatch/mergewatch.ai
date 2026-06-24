@@ -36,9 +36,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: ghcr.io/santthosh/mergewatch
+          - image: ghcr.io/mergewatch/mergewatch
             dockerfile: Dockerfile
-          - image: ghcr.io/santthosh/mergewatch-dashboard
+          - image: ghcr.io/mergewatch/mergewatch-dashboard
             dockerfile: Dockerfile.dashboard
 
     steps:
