@@ -20,3 +20,7 @@ packages/dashboard/out/
 
 # Stale npm lockfiles (we use pnpm)
 package-lock.json
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
