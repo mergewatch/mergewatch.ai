@@ -105,7 +105,7 @@ Globals:
         FP_INSIGHTS_TABLE: !Ref FpInsightsTable
         # TTM (#194): one row per PR. WebhookHandler writes lifecycle transitions
         # (opened/synchronize/closed); ReviewAgent marks reviewed/skipped; the
-        # nightly InsightsRollup reads for cycle-time percentiles.
+        # hourly InsightsRollup reads for cycle-time percentiles.
         PR_LIFECYCLE_TABLE: !Ref PRLifecycleTable
         # #195 Tier 2: helpful votes (ReviewAgent writes 👍/👎 deltas) + NPS
         # responses (dashboard writes). InsightsRollup reads both for the
@@ -387,19 +387,21 @@ Resources:
   # ===========================================================================
   # Lambda: Insights Rollup (FB-E)
   # ===========================================================================
-  # Scheduled nightly to aggregate FindingDispositionRecord rows into
+  # Scheduled hourly to aggregate FindingDispositionRecord rows into
   # InstallationFPInsight rollups (7d / 30d / 90d windows per installation).
-  # Powers the dashboard FB-F..FB-J charts.
+  # Powers the dashboard analytics + accuracy charts.
   #
-  # Cron: 03:00 UTC daily (`cron(0 3 * * ? *)`). Chosen for low traffic
-  # collision with EU/US business hours. Idempotent — re-running the same
-  # window-end overwrites with identical numbers.
+  # Cron: top of every hour (`cron(0 * * * ? *)`). Hourly keeps the
+  # dashboard's cost / cycle-time / engagement blocks within ~1h of fresh,
+  # rather than up to 24h stale. Idempotent — re-running the same
+  # window-end overwrites with identical numbers, so the higher cadence is
+  # safe. (At scale, revisit incremental/active-only rollup — see #218.)
 
   InsightsRollupFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub 'mergewatch-insights-rollup-${Stage}'
-      Description: Nightly FP insight rollup (FB-E) — aggregates disposition records into per-installation rolling-window insights
+      Description: Hourly FP insight rollup (FB-E) — aggregates disposition records into per-installation rolling-window insights
 
       CodeUri: ../packages/lambda/src/
       Handler: handlers/insights-rollup.handler
@@ -417,13 +419,13 @@ Resources:
       # No Environment block — inherits STAGE / INSTALLATIONS_TABLE /
       # FINDING_DISPOSITIONS_TABLE / FP_INSIGHTS_TABLE from Globals.
 
-      # EventBridge schedule trigger — 03:00 UTC daily.
+      # EventBridge schedule trigger — top of every hour.
       Events:
-        NightlyRollup:
+        HourlyRollup:
           Type: Schedule
           Properties:
-            Schedule: cron(0 3 * * ? *)
-            Description: Nightly insight rollup at 03:00 UTC
+            Schedule: cron(0 * * * ? *)
+            Description: Hourly insight rollup (top of every hour, UTC)
 
     Metadata:
       BuildMethod: esbuild
@@ -666,7 +668,7 @@ Resources:
   # DynamoDB: FindingDispositions (FB-A)
   # ===========================================================================
   # Per-finding cross-PR identity records — one row per distinct
-  # findingMatchKey per repo per installation. Drives the FB-E nightly
+  # findingMatchKey per repo per installation. Drives the FB-E hourly
   # rollup and (via the rollup) every dashboard insight chart.
   #
   # Schema:
@@ -681,7 +683,7 @@ Resources:
   #   - sigTokens              (List<String>) — W10 cluster bag
   #   - rejectReasons          (List<Map>)    — FB-D append-only log
   #
-  # Reads are bounded (FB-E nightly, listByInstallation with Scan + filter);
+  # Reads are bounded (FB-E hourly, listByInstallation with Scan + filter);
   # writes are hot-path (every surfacing/dispute/verification). PAY_PER_REQUEST
   # keeps it cheap.
 
@@ -719,14 +721,14 @@ Resources:
   # DynamoDB: InstallationFPInsights (FB-E)
   # ===========================================================================
   # Per-installation rolling-window FP insight rollups. Three rows per
-  # installation (7d / 30d / 90d), replaced idempotently by the nightly
+  # installation (7d / 30d / 90d), replaced idempotently by the hourly
   # InsightsRollupFunction. Reads power the dashboard FB-F..FB-J charts.
   #
   # Schema:
   #   PK: installationId (String)
   #   SK: window         (String — '7d' | '30d' | '90d')
   #
-  # Attributes (set on every nightly run):
+  # Attributes (set on every hourly run):
   #   - windowStart / windowEnd / generatedAt (String, ISO 8601)
   #   - totalFindingsSurfaced / totalDisputes / totalSilentDrops /
   #     totalAgreements (Number)
@@ -769,7 +771,7 @@ Resources:
   # DynamoDB: PRLifecycle (TTM / #194)
   # ===========================================================================
   # One row per pull request MergeWatch saw — independent of the per-commit
-  # Reviews table. Drives the nightly cycle-time rollup (time-to-merge,
+  # Reviews table. Drives the hourly cycle-time rollup (time-to-merge,
   # time-from-first-review-to-merge, round-trips).
   #
   # Schema:
@@ -822,7 +824,7 @@ Resources:
   # #195 Tier 2 — explicit-satisfaction signals. Partitioned by installation;
   # SK distinguishes helpful-vote rows (HV#repo#pr) from NPS rows (NPS#userId).
   # ReviewAgent writes helpful-vote deltas; the dashboard writes NPS responses;
-  # the nightly InsightsRollup reads both for the engagement block.
+  # the hourly InsightsRollup reads both for the engagement block.
   SatisfactionTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -855,7 +857,7 @@ Resources:
 
   # #193 — per-review LLM cost rows. Partitioned by installation (PK), SK
   # `repo#pr#commit`; ReviewAgent writes one row per completed review and the
-  # nightly InsightsRollup reads them for the engagement insight's cost block.
+  # hourly InsightsRollup reads them for the engagement insight's cost block.
   # TTL (~90d past completion) self-prunes rows past the longest window.
   ReviewCostsTable:
     Type: AWS::DynamoDB::Table
