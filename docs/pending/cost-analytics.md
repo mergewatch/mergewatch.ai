@@ -3,12 +3,12 @@
 **Status:** 🚧 In review
 **Issue:** [#193](https://github.com/mergewatch/mergewatch.ai/issues/193)
 
-Surface **LLM cost** as a first-class metric — aggregated in the nightly insights rollup, returned by `/api/insights`, and rendered on `/dashboard/insights`. The per-review capture (tokens + estimated USD on `ReviewItem`, cost in the PR comment's "Review details" drawer) already shipped; this closes the aggregation + visualization gap.
+Surface **LLM cost** as a first-class metric — aggregated in the hourly insights rollup, returned by `/api/insights`, and rendered on `/dashboard/analytics`. The per-review capture (tokens + estimated USD on `ReviewItem`, cost in the PR comment's "Review details" drawer) already shipped; this closes the aggregation + visualization gap.
 
 ## Architecture
 
 ```
-capture (per review)              aggregation (nightly)        surface
+capture (per review)              aggregation (hourly)        surface
 ──────────────────────            ─────────────────────        ───────────────
 review completes  ─► ReviewCostRecord ─► buildCostInsight() ─► InstallationFPInsight
   inputTokens          (IReviewCostStore   (insights/cost.ts)     .cost ─► /api/insights
@@ -52,7 +52,7 @@ Optional-by-block: pre-feature rollups (and rollups run without a cost store) ha
 
 **Surface**
 - `/api/insights` passes the `cost` block through (it returns the full `InstallationFPInsight` — no route change).
-- `CostSection` on `/dashboard/insights`: StatCards (**Total spend**, **Avg cost / review**, **Cost / finding**, **Reviews** with an unpriced count), a **Spend by repo** breakdown, and a **spend-over-time** bar across 7d / 30d / 90d. Gated independently (a window can have spend with zero findings).
+- `CostSection` on `/dashboard/analytics`: StatCards (**Total spend**, **Avg cost / review**, **Cost / finding**, **Reviews** with an unpriced count), a **Spend by repo** breakdown, and a **spend-over-time** bar across 7d / 30d / 90d. Gated independently (a window can have spend with zero findings).
 
 ## Edge cases
 

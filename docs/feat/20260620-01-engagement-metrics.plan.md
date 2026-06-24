@@ -8,10 +8,10 @@
 
 Add high-signal developer-engagement metrics that show MergeWatch is *used and valued*, not just that reviews ran. Two tiers:
 
-- **Tier 1 — behavioral (passive):** acceptance/agreement rate, `/mergewatch` command usage, re-review rate, per-installation activity/retention, and an *approximate* finding-action rate — all derived from data we already capture (`FindingDispositionRecord`, `PRLifecycleRecord`) in the nightly insights rollup.
+- **Tier 1 — behavioral (passive):** acceptance/agreement rate, `/mergewatch` command usage, re-review rate, per-installation activity/retention, and an *approximate* finding-action rate — all derived from data we already capture (`FindingDispositionRecord`, `PRLifecycleRecord`) in the hourly insights rollup.
 - **Tier 2 — explicit satisfaction:** a one-click "Was this review helpful? 👍 / 👎" prompt on the summary-comment footer, and a throttled dashboard NPS prompt (0–10, once / 90 days per admin) → NPS = %promoters − %detractors.
 
-All of it rides as an **optional `engagement?` block** on `InstallationFPInsight`, surfaced in a new **Engagement** section on `/dashboard/insights`. This mirrors exactly how time-to-merge (#194) shipped its `cycleTime?` block.
+All of it rides as an **optional `engagement?` block** on `InstallationFPInsight`, surfaced in a new **Engagement** section on `/dashboard/analytics`. This mirrors exactly how time-to-merge (#194) shipped its `cycleTime?` block.
 
 ## Why
 
@@ -27,7 +27,7 @@ We can see *that* reviews run but not whether developers find them useful. Behav
 | Aggregation | **New pure module `packages/core/src/insights/engagement.ts`** | Mirrors `cycle-time.ts` — pure, table-testable, wired into `runInsightRollup`. |
 | `/resolve` tracking | **Add `resolveCount` counter to `FindingDispositionRecord`** | `/resolve` is currently recorded only on `ReviewItem.inlineResolvedKeys` (per-commit, not aggregatable in the rollup). A first-class disposition counter closes the gap without dragging the review store into the rollup. |
 | Satisfaction storage | **New `ISatisfactionStore` (helpful votes + NPS responses), both backends** | 👍/👎 footer votes and NPS responses are timestamped events that don't fit the per-finding disposition or per-PR lifecycle shapes. |
-| Fleet-wide retention | **Per-installation only (`activeInstallation` + `reviewedPrCount`)** | `InstallationFPInsight` and `/dashboard/insights` are installation-scoped. Cross-installation WoW-retained-% needs an admin/fleet view that doesn't exist — deferred (see Out of scope). |
+| Fleet-wide retention | **Per-installation only (`activeInstallation` + `reviewedPrCount`)** | `InstallationFPInsight` and `/dashboard/analytics` are installation-scoped. Cross-installation WoW-retained-% needs an admin/fleet view that doesn't exist — deferred (see Out of scope). |
 
 ## Architecture
 
@@ -79,13 +79,13 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 ### Phase 2 — Engagement rollup (Tier 1 KPIs, core) — [x] PR #208 (MergeWatch 5/5, 0 findings)
 - **Goal:** compute and persist the Tier 1 `engagement` block per 7d/30d/90d window. Depends on Phase 1 (`resolveCount`).
 - **Files:** `packages/core/src/types/db.ts` (`engagement?` block), new `packages/core/src/insights/engagement.ts` (pure `buildEngagementInsight` + helpers, exported via core index), `run-rollup.ts` (assign `insight.engagement`), both `fp-insight-store.ts` impls (persist + coerce), `schema.ts` + migration (`engagement` jsonb, idempotent).
-- **RUNBOOK:** E2E-59 — nightly rollup attaches an `engagement` block (acceptance rate, command usage, re-review rate, approx action rate, reviewed-PR count) over each window; empty/low-volume installation yields `null` rates not crashes.
+- **RUNBOOK:** E2E-59 — hourly rollup attaches an `engagement` block (acceptance rate, command usage, re-review rate, approx action rate, reviewed-PR count) over each window; empty/low-volume installation yields `null` rates not crashes.
 - **Tests:** KPI math (acceptance/action/re-review rates, command counts, windowing), empty + single-record edge cases, back-compat when `satisfactionStore` absent.
 
 ### Phase 3 — Engagement dashboard section (Tier 1 surfaced) — [x] PR #209 (MergeWatch 5/5, 0 findings)
 - **Goal:** render the Tier 1 engagement metrics. Depends on Phase 2.
 - **Files:** `packages/dashboard/components/InsightsClient.tsx` — `EngagementSection` (StatCards: acceptance rate, command usage, re-review rate, approx action rate; trend across windows where useful), render after `CycleTimeSection`, relax zero-state gate (L281) to include `hasEngagementData`. No API route change.
-- **RUNBOOK:** E2E-60 — `/dashboard/insights` Engagement section: StatCards render; `null` rates show `—`; the action-rate card is labeled "approx."
+- **RUNBOOK:** E2E-60 — `/dashboard/analytics` Engagement section: StatCards render; `null` rates show `—`; the action-rate card is labeled "approx."
 - **Tests:** component render with populated / null / absent `engagement`; gate logic.
 
 ### Phase 4 — Tier 2: footer 👍/👎 helpful prompt — [x] PR #210
@@ -103,6 +103,6 @@ All fields optional-by-block: pre-feature rollups have no `engagement`; consumer
 ## Out of scope / deferred (file follow-up tickets)
 
 - **Exact finding-action rate** — true per-commit diff confirmation that cited code changed (Phase 2 ships an `(agreements + resolves)/surfaced` proxy). Needs new capture (`addressedCount` counter at review time, mirroring `silentDropCount` in `review-delta.ts`).
-- **Fleet-wide / WoW retention** — cross-installation %-active and week-over-week retained installations. `InstallationFPInsight` and `/dashboard/insights` are installation-scoped; needs an admin/fleet aggregate view.
+- **Fleet-wide / WoW retention** — cross-installation %-active and week-over-week retained installations. `InstallationFPInsight` and `/dashboard/analytics` are installation-scoped; needs an admin/fleet aggregate view.
 - **Per-developer attribution & leaderboards** — commands/votes aren't attributed to a GitHub login today; explicitly out of scope per #195.
 - **Email/Slack survey campaigns** — out of scope per #195.

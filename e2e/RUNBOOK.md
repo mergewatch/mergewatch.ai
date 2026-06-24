@@ -167,7 +167,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
 | [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + posts a confirming bot reply (FB-D) | 3m | 90s | FB-D |
-| [E2E-41](#e2e-41-fb-e--nightly-installationfpinsight-rollup) | Nightly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
+| [E2E-41](#e2e-41-fb-e--hourly-installationfpinsight-rollup) | Hourly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
 | [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
 | [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
 | [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) | 2m | 60s | FB-H |
@@ -182,14 +182,15 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-53](#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) | Red verdict (orchestrator score ≤ 2) is softened to advisory when majority of action findings come from chronically-disputed categories (FP-J L1); disclosure footer renders under the merge score (FP-J L3) | 3m | 60s | FP-J |
 | [E2E-54](#e2e-54-fp-k--abstraction-aware-verifier) | Findings alleging "SQL injection on Drizzle eq()", "URL injection on encodeURIComponent", "XSS on JSX text" are dropped by the verifier as abstraction-safe; raw string-concat SQL is still kept (FP-K) | 4m | 90s | FP-K |
 | [E2E-55](#e2e-55-ttm--pr-lifecycle-capture-time-to-merge-stage-1) | Every PR writes one `PRLifecycleRecord`; open/synchronize/merge/close transitions captured; `closed` doesn't trigger a review; terminal-state + set-once discipline holds (TTM) | 3m | 90s | #196 |
-| [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Nightly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
-| [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/insights` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
+| [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Hourly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
+| [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/analytics` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
 | [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
-| [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Nightly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
-| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/insights` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
-| [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; nightly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 |
-| [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/insights` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 |
-| [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; nightly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 |
+| [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Hourly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
+| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/analytics` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
+| [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; hourly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 |
+| [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/analytics` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 |
+| [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; hourly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 |
+| [E2E-64](#e2e-64-dashboard-restructure--analytics-value--accuracy-correctness-hourly-rollup-218) | Dashboard split by intent: Analytics = Activity + Impact (cost/cycle/engagement); FP Insights renamed Accuracy at `/dashboard/accuracy` (old `/dashboard/insights` 308-redirects, query preserved); rollup hourly both runtimes; both backends (#218) | 3m | 30s | #218 |
 
 ---
 
@@ -1509,7 +1510,7 @@ Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present /
 
 **Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-A](./../docs/false-positive-feedback-plan.md#fb-a--findingdispositionrecord-storage--writers--shipped).
 
-**Behavior (intended, once FB-A ships):** every surfacing of a finding upserts a `FindingDispositionRecord` keyed by `(installationId, repoFullName, findingMatchKey)` — incrementing `surfaceCount`, refreshing `lastSeen`, capturing category + topAgent + sigTokens. The existing W3 path increments `disputeCount`; FP-F inline-resolve increments `disputeCount` AND continues to populate `inlineResolvedKeys` on `ReviewItem` (back-compat). W2 verdicts increment `verifiedCount` / `unverifiedCount`. Records are read by FB-E's nightly rollup only — no per-review read on the dashboard path.
+**Behavior (intended, once FB-A ships):** every surfacing of a finding upserts a `FindingDispositionRecord` keyed by `(installationId, repoFullName, findingMatchKey)` — incrementing `surfaceCount`, refreshing `lastSeen`, capturing category + topAgent + sigTokens. The existing W3 path increments `disputeCount`; FP-F inline-resolve increments `disputeCount` AND continues to populate `inlineResolvedKeys` on `ReviewItem` (back-compat). W2 verdicts increment `verifiedCount` / `unverifiedCount`. Records are read by FB-E's hourly rollup only — no per-review read on the dashboard path.
 
 **Setup**
 
@@ -1624,15 +1625,15 @@ Branch: `fixture/40-mergewatch-reject`. PR with an inline finding:
 
 ---
 
-### E2E-41: FB-E — Nightly InstallationFPInsight rollup
+### E2E-41: FB-E — Hourly InstallationFPInsight rollup
 
-**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-E](./../docs/false-positive-feedback-plan.md#fb-e--nightly-installationfpinsight-rollup--shipped).
+**Status:** ✅ SHIPPED. See [`docs/false-positive-feedback-plan.md` → FB-E](./../docs/false-positive-feedback-plan.md#fb-e--hourly-installationfpinsight-rollup--shipped).
 
-**Behavior (intended, once FB-E ships):** scheduled task (EventBridge → Lambda for SaaS; node-cron for self-hosted) runs nightly per installation. For each window (7d / 30d / 90d), aggregates `FindingDispositionRecord` rows into a single `InstallationFPInsight` row carrying: `totalFindingsSurfaced`, `disputeRate`, `perCategory`, `topClusters[]` (via W10 token clustering), `perRepo`. Stored in a new `mergewatch-installation-fp-insights` table. All dashboard charts read exclusively from these rollups.
+**Behavior (intended, once FB-E ships):** scheduled task (EventBridge → Lambda for SaaS; node-cron for self-hosted) runs hourly per installation. For each window (7d / 30d / 90d), aggregates `FindingDispositionRecord` rows into a single `InstallationFPInsight` row carrying: `totalFindingsSurfaced`, `disputeRate`, `perCategory`, `topClusters[]` (via W10 token clustering), `perRepo`. Stored in a new `mergewatch-installation-fp-insights` table. All dashboard charts read exclusively from these rollups.
 
 **Setup**
 
-Branch: `fixture/41-nightly-rollup`. Pre-seed an installation with ~20 `FindingDispositionRecord` rows spanning 3 repos, 2 categories, ~30% dispute rate. Trigger the rollup manually:
+Branch: `fixture/41-hourly-rollup`. Pre-seed an installation with ~20 `FindingDispositionRecord` rows spanning 3 repos, 2 categories, ~30% dispute rate. Trigger the rollup manually:
 1. SaaS: `aws lambda invoke --function-name mergewatch-insights-rollup-prod`.
 2. Self-hosted: `POST /api/insights/rollup` (admin endpoint).
 
@@ -1751,7 +1752,7 @@ Branch: `fixture/45-severity-shopping`. Two seeding paths:
 - [x] Annotation banner appears when two adjacent windows both cross the ≥ 1.5× threshold
 - [x] Annotation does NOT appear for single-window spikes (only one window crosses; the other doesn't)
 - [x] Annotation does NOT appear when either side has fewer than 5 surfacings (small-N noise guard)
-- [x] Empty severity data on all windows → renders the "No severity data yet — needs at least one nightly rollup after FB-I shipped" panel, not an all-zero chart
+- [x] Empty severity data on all windows → renders the "No severity data yet — needs at least one hourly rollup after FB-I shipped" panel, not an all-zero chart
 - [x] Pre-FB-I records (severity = NULL) flow into the `uncategorized` bucket and don't pollute the critical/warning lines
 - [x] Tooltip shows raw `disputed / surfaced` counts alongside the rate for each window
 
@@ -2077,11 +2078,11 @@ Branch: `fixture/55-ttm-capture`. Open a PR, push once more to it, then merge it
 
 **Status:** ✅ SHIPPED (#198). See [`docs/time-to-merge.md` → Stage 2](./../docs/time-to-merge.md#stage-2--rollup-198).
 
-**Behavior:** the nightly rollup pages each installation's `PRLifecycleRecord` rows and attaches a `cycleTime` block to every window's `InstallationFPInsight`: merge counts (merged / reviewed / unreviewed / closed-unmerged / open) plus **median/p75/p90** percentiles (in hours) for time-to-merge, time-from-first-review-to-merge, and round-trips — segmented reviewed vs unreviewed. Percentiles use R-7 linear interpolation; an empty sample yields `null`, not `0`. Back-compat: when the PR-lifecycle store isn't wired, `cycleTime` is omitted and the rollup is unchanged.
+**Behavior:** the hourly rollup pages each installation's `PRLifecycleRecord` rows and attaches a `cycleTime` block to every window's `InstallationFPInsight`: merge counts (merged / reviewed / unreviewed / closed-unmerged / open) plus **median/p75/p90** percentiles (in hours) for time-to-merge, time-from-first-review-to-merge, and round-trips — segmented reviewed vs unreviewed. Percentiles use R-7 linear interpolation; an empty sample yields `null`, not `0`. Back-compat: when the PR-lifecycle store isn't wired, `cycleTime` is omitted and the rollup is unchanged.
 
 **Setup**
 
-Branch: `fixture/56-ttm-rollup`. Pre-seed an installation with ~15 lifecycle rows: a mix of reviewed-merged, unreviewed-merged, closed-without-merge, and still-open PRs, with merge spans spread across hours/days. Trigger the rollup manually (SaaS: invoke `mergewatch-insights-rollup-prod`; self-hosted: the nightly cron / admin trigger).
+Branch: `fixture/56-ttm-rollup`. Pre-seed an installation with ~15 lifecycle rows: a mix of reviewed-merged, unreviewed-merged, closed-without-merge, and still-open PRs, with merge spans spread across hours/days. Trigger the rollup manually (SaaS: invoke `mergewatch-insights-rollup-prod`; self-hosted: the hourly cron / admin trigger).
 
 **Expected outcomes**
 
@@ -2104,11 +2105,11 @@ Branch: `fixture/56-ttm-rollup`. Pre-seed an installation with ~15 lifecycle row
 
 **Status:** ✅ SHIPPED (#199). See [`docs/time-to-merge.md` → Stage 3](./../docs/time-to-merge.md#stage-3--dashboard-199).
 
-**Behavior:** `/dashboard/insights` renders a **Cycle time** section above the FP-feedback charts: StatCards (median time-to-merge, from-first-review, round-trips, merged count, each with a p75 · p90 spread) plus a reviewed-vs-unreviewed time-to-merge bar comparison. Durations format as `m`/`h`/`d`; a `null` percentile renders as `—`. The zero-state gate is relaxed so the page shows when **either** FP-feedback **or** cycle-time has data, each section gated independently. No new API route — `/api/insights` returns the `cycleTime` block.
+**Behavior:** `/dashboard/analytics` renders a **Cycle time** section above the FP-feedback charts: StatCards (median time-to-merge, from-first-review, round-trips, merged count, each with a p75 · p90 spread) plus a reviewed-vs-unreviewed time-to-merge bar comparison. Durations format as `m`/`h`/`d`; a `null` percentile renders as `—`. The zero-state gate is relaxed so the page shows when **either** FP-feedback **or** cycle-time has data, each section gated independently. No new API route — `/api/insights` returns the `cycleTime` block.
 
 **Setup**
 
-Branch: `fixture/57-ttm-dashboard`. Use the E2E-56 seeded installation. Open `/dashboard/insights?org=<installationId>` and switch the 7d/30d/90d window selector.
+Branch: `fixture/57-ttm-dashboard`. Use the E2E-56 seeded installation. Open `/dashboard/analytics?org=<installationId>` and switch the 7d/30d/90d window selector.
 
 **Expected outcomes**
 
@@ -2155,11 +2156,11 @@ Branch: `fixture/58-engagement-resolve`. On a repo with an active review that su
 
 **Status:** ✅ SHIPPED (#208). See [`docs/pending/engagement-metrics.md` → Stage 2](./../docs/pending/engagement-metrics.md#stage-2--engagement-rollup-tier-1-kpis).
 
-**Behavior:** The nightly insights rollup attaches an `engagement` block to each `InstallationFPInsight` (7d / 30d / 90d) with Tier-1 behavioral KPIs: **acceptance rate** (`agreements / (agreements + disputes + silentDrops)`), **command usage** (`/resolve` + `/mergewatch reject` counts), an **approximate finding-action rate** (`(agreements + resolves) / surfaced`, capped at 1), **re-review rate** (reviewed PRs re-pushed after first review), `reviewedPrCount`, and `activeInstallation`. Rates are `null` (not `0`) when their denominator is empty. The block computes from the disposition records alone (re-review KPIs refine when the PR-lifecycle store is wired). Persisted on both backends as a nullable `engagement` jsonb/attribute.
+**Behavior:** The hourly insights rollup attaches an `engagement` block to each `InstallationFPInsight` (7d / 30d / 90d) with Tier-1 behavioral KPIs: **acceptance rate** (`agreements / (agreements + disputes + silentDrops)`), **command usage** (`/resolve` + `/mergewatch reject` counts), an **approximate finding-action rate** (`(agreements + resolves) / surfaced`, capped at 1), **re-review rate** (reviewed PRs re-pushed after first review), `reviewedPrCount`, and `activeInstallation`. Rates are `null` (not `0`) when their denominator is empty. The block computes from the disposition records alone (re-review KPIs refine when the PR-lifecycle store is wired). Persisted on both backends as a nullable `engagement` jsonb/attribute.
 
 **Setup**
 
-Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + PR-lifecycle history (👍/👎 reactions, `/resolve`, `/mergewatch reject`, reviewed PRs with later pushes). Trigger the nightly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and inspect the stored insight rows.
+Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + PR-lifecycle history (👍/👎 reactions, `/resolve`, `/mergewatch reject`, reviewed PRs with later pushes). Trigger the hourly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and inspect the stored insight rows.
 
 **Expected outcomes**
 
@@ -2183,11 +2184,11 @@ Branch: `fixture/59-engagement-rollup`. Use an installation with disposition + P
 
 **Status:** ✅ SHIPPED (#209). See [`docs/pending/engagement-metrics.md` → Stage 3](./../docs/pending/engagement-metrics.md#stage-3--engagement-dashboard-section).
 
-**Behavior:** `/dashboard/insights` renders a **Developer engagement** section (below Cycle time, above the FP funnel): four StatCards — Acceptance rate, Action rate (approx), Command usage (`N resolve · N reject`), Re-review rate (`N PRs reviewed`) — plus a cross-window acceptance/action trend line (7d / 30d / 90d). A `null` rate renders `—`, never `0%`. The action-rate card is labeled "approx". The zero-state gate is relaxed so the page shows when **any** of FP-feedback, cycle-time, or engagement has data, each section gated independently. No new API route — `/api/insights` already returns the `engagement` block.
+**Behavior:** `/dashboard/analytics` renders a **Developer engagement** section (below Cycle time, above the FP funnel): four StatCards — Acceptance rate, Action rate (approx), Command usage (`N resolve · N reject`), Re-review rate (`N PRs reviewed`) — plus a cross-window acceptance/action trend line (7d / 30d / 90d). A `null` rate renders `—`, never `0%`. The action-rate card is labeled "approx". The zero-state gate is relaxed so the page shows when **any** of FP-feedback, cycle-time, or engagement has data, each section gated independently. No new API route — `/api/insights` already returns the `engagement` block.
 
 **Setup**
 
-Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `engagement` block on its rollup rows). Open `/dashboard/insights?org=<installationId>` and switch the 7d / 30d / 90d window selector.
+Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `engagement` block on its rollup rows). Open `/dashboard/analytics?org=<installationId>` and switch the 7d / 30d / 90d window selector.
 
 **Expected outcomes**
 
@@ -2212,9 +2213,9 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 
 **Status:** ✅ SHIPPED (#210). See [`docs/engagement-metrics.md` → Stage 4](./../docs/engagement-metrics.md#stage-4--tier-2-footer-helpful-prompt).
 
-**Behavior:** Every summary comment renders a one-click prompt — "Was this review helpful? React with 👍 or 👎 on this comment." On each review run the handler polls the summary comment's reaction counts and folds the **positive delta** vs the prior review's `summaryReactionsSnapshot` into the satisfaction store (👍/❤️/🚀 → up, 👎/🤔 → down), monotonically (a removed reaction never decrements). The nightly rollup sums in-window votes into `engagement.helpfulUp/helpfulDown/helpfulRate`, and `/dashboard/insights` shows a **Helpful rate** StatCard under "Explicit satisfaction". Works on both backends (`mergewatch-satisfaction` DynamoDB table / `helpful_votes` Postgres table).
+**Behavior:** Every summary comment renders a one-click prompt — "Was this review helpful? React with 👍 or 👎 on this comment." On each review run the handler polls the summary comment's reaction counts and folds the **positive delta** vs the prior review's `summaryReactionsSnapshot` into the satisfaction store (👍/❤️/🚀 → up, 👎/🤔 → down), monotonically (a removed reaction never decrements). The hourly rollup sums in-window votes into `engagement.helpfulUp/helpfulDown/helpfulRate`, and `/dashboard/analytics` shows a **Helpful rate** StatCard under "Explicit satisfaction". Works on both backends (`mergewatch-satisfaction` DynamoDB table / `helpful_votes` Postgres table).
 
-**How to run.** Branch: `fixture/61-helpful-prompt`. On a repo with an active review, confirm the summary comment shows the 👍/👎 prompt, then react 👍 on it. Re-trigger a review (push a commit) so the poll runs, and inspect the satisfaction store (`HV#<repo>#<pr>` item / `helpful_votes` row). Trigger the nightly rollup and open `/dashboard/insights`.
+**How to run.** Branch: `fixture/61-helpful-prompt`. On a repo with an active review, confirm the summary comment shows the 👍/👎 prompt, then react 👍 on it. Re-trigger a review (push a commit) so the poll runs, and inspect the satisfaction store (`HV#<repo>#<pr>` item / `helpful_votes` row). Trigger the hourly rollup and open `/dashboard/analytics`.
 
 **Pass:**
 - [ ] The summary comment renders "Was this review helpful?" with 👍 / 👎.
@@ -2234,9 +2235,9 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 
 **Status:** ✅ SHIPPED (#210). See [`docs/engagement-metrics.md` → Stage 5](./../docs/engagement-metrics.md#stage-5--tier-2-dashboard-nps-survey).
 
-**Behavior:** `/dashboard/insights` shows a throttled NPS prompt ("How likely are you to recommend MergeWatch?", 0–10). `GET /api/nps?installation_id=…` returns `{ eligible }` — true only when a satisfaction store is wired AND this `githubUserId` has no response in the last 90 days. `POST /api/nps` records (latest-wins) `{ installation_id, score }` after verifying installation access. The nightly rollup computes `engagement.npsScore` = %promoters (9–10) − %detractors (0–6) over in-window responses (integer −100..100; `null` when none), and the dashboard renders an **NPS** StatCard. A per-browser dismissal (sessionStorage) hides a dismissed prompt for the session.
+**Behavior:** `/dashboard/analytics` shows a throttled NPS prompt ("How likely are you to recommend MergeWatch?", 0–10). `GET /api/nps?installation_id=…` returns `{ eligible }` — true only when a satisfaction store is wired AND this `githubUserId` has no response in the last 90 days. `POST /api/nps` records (latest-wins) `{ installation_id, score }` after verifying installation access. The hourly rollup computes `engagement.npsScore` = %promoters (9–10) − %detractors (0–6) over in-window responses (integer −100..100; `null` when none), and the dashboard renders an **NPS** StatCard. A per-browser dismissal (sessionStorage) hides a dismissed prompt for the session.
 
-**How to run.** Branch: `fixture/62-nps-survey`. As an admin who hasn't responded in 90d, open `/dashboard/insights?org=<installationId>` → the NPS prompt appears. Click a score; confirm the thank-you and that `GET /api/nps` now returns `{ eligible: false }`. Inspect the satisfaction store (`NPS#<githubUserId>` item / `nps_responses` row). Trigger the nightly rollup and confirm the NPS StatCard.
+**How to run.** Branch: `fixture/62-nps-survey`. As an admin who hasn't responded in 90d, open `/dashboard/analytics?org=<installationId>` → the NPS prompt appears. Click a score; confirm the thank-you and that `GET /api/nps` now returns `{ eligible: false }`. Inspect the satisfaction store (`NPS#<githubUserId>` item / `nps_responses` row). Trigger the hourly rollup and confirm the NPS StatCard.
 
 **Pass:**
 - [ ] The NPS prompt shows for an eligible admin; the 0–10 scale records on click.
@@ -2256,9 +2257,9 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 
 **Status:** ✅ SHIPPED (#212). See [`docs/pending/cost-analytics.md`](./../docs/pending/cost-analytics.md).
 
-**Behavior:** On every completed review the handler writes a `ReviewCostRecord` (tokens, estimated USD, finding count, model) into the cost store, keyed per (installation, repo, PR, commit). The nightly rollup aggregates a `cost` block onto each `InstallationFPInsight` (7d / 30d / 90d): **total spend** (priced reviews), **avg cost / review**, **cost / finding**, token totals, a **per-repo** spend bucket, and a **priced / unpriced** review split. Reviews on a model not in the pricing table are recorded with `costUsd: null`, counted as **unpriced**, and excluded from the money totals (but their tokens still count). `/api/insights` returns the block unchanged; `/dashboard/insights` renders an **LLM cost** section (StatCards + spend-by-repo + spend-over-time bar). Works on both backends (`mergewatch-review-costs` DynamoDB table / `review_costs` Postgres table).
+**Behavior:** On every completed review the handler writes a `ReviewCostRecord` (tokens, estimated USD, finding count, model) into the cost store, keyed per (installation, repo, PR, commit). The hourly rollup aggregates a `cost` block onto each `InstallationFPInsight` (7d / 30d / 90d): **total spend** (priced reviews), **avg cost / review**, **cost / finding**, token totals, a **per-repo** spend bucket, and a **priced / unpriced** review split. Reviews on a model not in the pricing table are recorded with `costUsd: null`, counted as **unpriced**, and excluded from the money totals (but their tokens still count). `/api/insights` returns the block unchanged; `/dashboard/analytics` renders an **LLM cost** section (StatCards + spend-by-repo + spend-over-time bar). Works on both backends (`mergewatch-review-costs` DynamoDB table / `review_costs` Postgres table).
 
-**How to run.** Branch: `fixture/63-cost`. Trigger a few reviews (ideally across two repos, and one re-review on a new commit). Inspect the cost store (`<repo>#<pr>#<commit>` items / `review_costs` rows). Trigger the nightly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and open `/dashboard/insights`.
+**How to run.** Branch: `fixture/63-cost`. Trigger a few reviews (ideally across two repos, and one re-review on a new commit). Inspect the cost store (`<repo>#<pr>#<commit>` items / `review_costs` rows). Trigger the hourly rollup (EventBridge → `insights-rollup` Lambda on SaaS, or the self-hosted cron) and open `/dashboard/analytics`.
 
 **Pass:**
 - [ ] Each completed review produces one `ReviewCostRecord`; a re-review on a new commit adds a distinct row.
@@ -2271,6 +2272,32 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 - ❌ An unpriced review drags `totalCostUsd` / averages toward 0 (must be excluded, not coerced to 0).
 - ❌ A re-review on the same commit double-counts (must overwrite idempotently).
 - ❌ A cost-store write error blocks the review.
+
+---
+
+### E2E-64: Dashboard restructure — Analytics (value) + Accuracy (correctness), hourly rollup (#218)
+
+**Status:** ✅ SHIPPED.
+
+**Behavior:** The dashboard splits by intent. **`/dashboard/analytics`** shows **Activity** (reviews, findings, severity, categories) **plus an Impact panel** (cycle-time, LLM cost, developer engagement + NPS) fetched from `/api/insights`. The former "FP Insights" page is renamed **Accuracy** at **`/dashboard/accuracy`** (nav: "Accuracy") and carries only the false-positive surface (funnel, dispute-rate-by-agent, severity-shopping, recurring themes, per-repo heatmap). The old **`/dashboard/insights`** path **308-redirects** to `/dashboard/accuracy` (query params preserved). The insight rollup runs **hourly** in both runtimes — SaaS EventBridge `cron(0 * * * ? *)`, self-hosted `setInterval` configurable via `INSIGHTS_ROLLUP_INTERVAL_MINUTES` (default 60). Internal identifiers (`InstallationFPInsight`, `/api/insights`, the `fp-insights` tables) are unchanged.
+
+**How to run.** Use any installation with rollup data (E2E-56 / 59 / 63 seeds).
+1. Open `/dashboard/analytics?org=<id>` — confirm the Activity charts **and** the Impact panel (Cost / Cycle time / Developer engagement) render below them, with their own 7d / 30d / 90d selector.
+2. Open `/dashboard/accuracy?org=<id>` — nav item reads "Accuracy"; page shows only false-positive sections (no cost / cycle / engagement).
+3. Visit `/dashboard/insights?org=<id>` — confirm the 308 redirect to `/dashboard/accuracy?org=<id>` (the `org` query survives).
+4. Confirm cadence: SaaS schedule is `cron(0 * * * ? *)`; self-hosted logs `[fb-e cron] starting insights rollup (every 60 min)` (or the configured interval).
+
+**Pass:**
+- [ ] Analytics shows Activity + Impact; Accuracy shows only false-positive sections.
+- [ ] `/dashboard/insights` (+ `?org=`) 308-redirects to `/dashboard/accuracy` with the query preserved.
+- [ ] No user-facing "FP" jargon remains (nav "Accuracy"; "False-positive funnel"; "Top recurring false-positive themes").
+- [ ] Rollup fires hourly on both backends; `INSIGHTS_ROLLUP_INTERVAL_MINUTES` overrides the self-hosted interval; invalid / unset → 60.
+- [ ] Both pages render identically under `DEPLOYMENT_MODE=saas` (DynamoDB) and self-hosted (Postgres).
+
+**Fail signals:**
+- ❌ Cost / cycle / engagement still appear on `/dashboard/accuracy` (should be Analytics-only).
+- ❌ `/dashboard/insights` 404s instead of redirecting, or drops the `org` query.
+- ❌ The rollup still runs only once a day.
 
 ---
 

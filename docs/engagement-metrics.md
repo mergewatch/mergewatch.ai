@@ -5,15 +5,15 @@
 
 High-signal metrics that show MergeWatch is *used and valued*, not just that reviews ran. Two tiers, shipped in stacked PRs:
 
-- **Tier 1 — behavioral (passive):** acceptance/agreement rate, `/mergewatch` command usage, re-review rate, per-installation activity, and an *approximate* finding-action rate — derived in the nightly insights rollup from data we already capture (`FindingDispositionRecord`, `PRLifecycleRecord`).
+- **Tier 1 — behavioral (passive):** acceptance/agreement rate, `/mergewatch` command usage, re-review rate, per-installation activity, and an *approximate* finding-action rate — derived in the hourly insights rollup from data we already capture (`FindingDispositionRecord`, `PRLifecycleRecord`).
 - **Tier 2 — explicit satisfaction:** a one-click "Was this review helpful? 👍 / 👎" prompt on the summary-comment footer, and a throttled dashboard NPS prompt (0–10) → NPS = %promoters − %detractors.
 
-All of it rides as an optional `engagement?` block on `InstallationFPInsight` and surfaces in a new **Engagement** section on `/dashboard/insights` — mirroring how time-to-merge (#194) shipped its `cycleTime?` block.
+All of it rides as an optional `engagement?` block on `InstallationFPInsight` and surfaces in a new **Engagement** section on `/dashboard/analytics` — mirroring how time-to-merge (#194) shipped its `cycleTime?` block.
 
 ## Architecture
 
 ```
-capture (per finding / per PR)        aggregation (nightly)         surface
+capture (per finding / per PR)        aggregation (hourly)         surface
 ─────────────────────────────        ─────────────────────         ───────────────
 FindingDispositionRecord  ─┐
   .agreementCount          │
@@ -82,7 +82,7 @@ Adds a first-class `resolveCount` counter to the per-finding disposition record 
 
 ## Stage 2 — Engagement rollup (Tier 1 KPIs)
 
-Computes and persists the Tier-1 `engagement` block per window in the nightly insights rollup.
+Computes and persists the Tier-1 `engagement` block per window in the hourly insights rollup.
 
 **`engagement` block (Tier 1)**
 
@@ -124,7 +124,7 @@ engagement?: {
 
 ## Stage 3 — Engagement dashboard section
 
-Surfaces the Tier-1 KPIs on `/dashboard/insights`.
+Surfaces the Tier-1 KPIs on `/dashboard/analytics`.
 
 **What changed** (`packages/dashboard/components/InsightsClient.tsx`)
 
