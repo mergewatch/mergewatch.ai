@@ -44,7 +44,7 @@ const navItems: NavEntry[] = [
     : []),
   { type: "section", label: "RESOURCES" },
   { type: "item", label: "Documentation", href: "https://docs.mergewatch.ai", icon: BookOpen, external: true },
-  { type: "item", label: "GitHub", href: "https://github.com/santthosh/mergewatch.ai", icon: Github, external: true },
+  { type: "item", label: "GitHub", href: "https://github.com/mergewatch/mergewatch.ai", icon: Github, external: true },
 ];
 
 interface SidenavProps {

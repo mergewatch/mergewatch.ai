@@ -265,7 +265,7 @@ export function formatReviewComment(options: FormatOptions): string {
   if (ux?.commentHeader) {
     lines.push(ux.commentHeader);
   } else {
-    lines.push('<img src="https://raw.githubusercontent.com/santthosh/mergewatch.ai/main/assets/mergewatch-wordmark.svg" alt="mergewatch" height="48" />');
+    lines.push('<img src="https://raw.githubusercontent.com/mergewatch/mergewatch.ai/main/assets/mergewatch-wordmark.svg" alt="mergewatch" height="48" />');
   }
   lines.push('');
 

@@ -42,7 +42,7 @@ export default function PricingPage() {
             Pricing
           </Link>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="text-primer-muted transition hover:text-fg-primary"
@@ -96,7 +96,7 @@ export default function PricingPage() {
                   agents, dashboard, GitHub App, AGPL v3 source code.
                 </p>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai"
+                  href="https://github.com/mergewatch/mergewatch.ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-4 inline-flex items-center text-sm font-medium text-primer-green transition hover:brightness-110"
@@ -344,7 +344,7 @@ export default function PricingPage() {
                 codebase. You can export your config and redeploy whenever you
                 like&nbsp;&mdash;{" "}
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai"
+                  href="https://github.com/mergewatch/mergewatch.ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primer-green underline"
@@ -395,7 +395,7 @@ export default function PricingPage() {
               <ArrowIcon />
             </Link>
             <a
-              href="https://github.com/santthosh/mergewatch.ai"
+              href="https://github.com/mergewatch/mergewatch.ai"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center rounded-lg border border-border-default px-6 py-3 text-sm font-semibold text-fg-primary transition hover:bg-surface-card"
@@ -448,7 +448,7 @@ export default function PricingPage() {
             <ul className="mt-3 space-y-2 text-primer-muted">
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai"
+                  href="https://github.com/mergewatch/mergewatch.ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"
@@ -458,7 +458,7 @@ export default function PricingPage() {
               </li>
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai/releases"
+                  href="https://github.com/mergewatch/mergewatch.ai/releases"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"
@@ -473,7 +473,7 @@ export default function PricingPage() {
             <ul className="mt-3 space-y-2 text-primer-muted">
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai/blob/main/LICENSE"
+                  href="https://github.com/mergewatch/mergewatch.ai/blob/main/LICENSE"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"

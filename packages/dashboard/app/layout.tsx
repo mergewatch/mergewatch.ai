@@ -63,7 +63,7 @@ const jsonLd = [
     name: SITE_NAME,
     url: SITE_URL,
     logo: `${SITE_URL}/icon.svg`,
-    sameAs: ["https://github.com/santthosh/mergewatch.ai"],
+    sameAs: ["https://github.com/mergewatch/mergewatch.ai"],
   },
   {
     "@context": "https://schema.org",

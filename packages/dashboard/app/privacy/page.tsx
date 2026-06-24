@@ -136,11 +136,11 @@ export default function PrivacyPolicyPage() {
         KMS encryption. The MergeWatch codebase is fully open source under AGPL
         v3 &mdash; you can audit exactly what runs on your code at{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai"
+          href="https://github.com/mergewatch/mergewatch.ai"
           target="_blank"
           rel="noopener noreferrer"
         >
-          github.com/santthosh/mergewatch.ai
+          github.com/mergewatch/mergewatch.ai
         </a>
         .
       </p>
@@ -157,7 +157,7 @@ export default function PrivacyPolicyPage() {
       <p>
         Material changes to this Privacy Policy will be announced on{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai/releases"
+          href="https://github.com/mergewatch/mergewatch.ai/releases"
           target="_blank"
           rel="noopener noreferrer"
         >

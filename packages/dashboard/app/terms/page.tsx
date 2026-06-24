@@ -60,7 +60,7 @@ export default function TermsOfServicePage() {
         your own modified version is permitted and encouraged under the terms
         of that license. See the{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai/blob/main/LICENSE"
+          href="https://github.com/mergewatch/mergewatch.ai/blob/main/LICENSE"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -119,7 +119,7 @@ export default function TermsOfServicePage() {
         We may update these Terms from time to time. Material changes will be
         announced on{" "}
         <a
-          href="https://github.com/santthosh/mergewatch.ai/releases"
+          href="https://github.com/mergewatch/mergewatch.ai/releases"
           target="_blank"
           rel="noopener noreferrer"
         >

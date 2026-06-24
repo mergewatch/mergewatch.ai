@@ -7,11 +7,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/santthosh/mergewatch.ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/santthosh/mergewatch.ai/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
-  <a href="https://github.com/santthosh/mergewatch.ai/actions/workflows/docker-publish.yml"><img src="https://img.shields.io/github/actions/workflow/status/santthosh/mergewatch.ai/docker-publish.yml?style=flat-square&label=docker" alt="Docker"></a>
+  <a href="https://github.com/mergewatch/mergewatch.ai/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mergewatch/mergewatch.ai/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://github.com/mergewatch/mergewatch.ai/actions/workflows/docker-publish.yml"><img src="https://img.shields.io/github/actions/workflow/status/mergewatch/mergewatch.ai/docker-publish.yml?style=flat-square&label=docker" alt="Docker"></a>
   <img src="https://img.shields.io/badge/coverage-85%25-brightgreen?style=flat-square" alt="Coverage">
-  <a href="https://github.com/santthosh/mergewatch.ai"><img src="https://img.shields.io/github/stars/santthosh/mergewatch.ai?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/santthosh/mergewatch.ai/issues"><img src="https://img.shields.io/github/issues/santthosh/mergewatch.ai?style=flat-square" alt="Issues"></a>
+  <a href="https://github.com/mergewatch/mergewatch.ai"><img src="https://img.shields.io/github/stars/mergewatch/mergewatch.ai?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/mergewatch/mergewatch.ai/issues"><img src="https://img.shields.io/github/issues/mergewatch/mergewatch.ai?style=flat-square" alt="Issues"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
 </p>
@@ -44,7 +44,7 @@ Install it on your repos and it just works. Every PR gets a structured review co
 Three services. One command. No cloud account required.
 
 ```bash
-git clone https://github.com/santthosh/mergewatch.ai.git && cd mergewatch.ai
+git clone https://github.com/mergewatch/mergewatch.ai.git && cd mergewatch.ai
 cp .env.example .env
 # Fill in your GitHub App credentials and LLM provider (see below)
 docker compose up -d

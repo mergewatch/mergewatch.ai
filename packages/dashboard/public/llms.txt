@@ -15,7 +15,7 @@ The project is priced by pull request volume, not per developer seat. Self-hoste
 - [Terms of Service](https://mergewatch.ai/terms): SaaS terms and AGPL v3 reference
 - [Documentation](https://docs.mergewatch.ai): full product docs
 - [Self-hosting guide](https://docs.mergewatch.ai/self-hosting/overview): Docker Compose setup
-- [GitHub repository](https://github.com/santthosh/mergewatch.ai): full source code under AGPL v3
+- [GitHub repository](https://github.com/mergewatch/mergewatch.ai): full source code under AGPL v3
 
 ## Deployment modes
 
@@ -45,7 +45,7 @@ MergeWatch is a pnpm monorepo with Turborepo. Key packages:
 
 ## License
 
-GNU Affero General Public License v3.0. The full source code — every agent prompt, the orchestrator, and all comment templates — is public at https://github.com/santthosh/mergewatch.ai.
+GNU Affero General Public License v3.0. The full source code — every agent prompt, the orchestrator, and all comment templates — is public at https://github.com/mergewatch/mergewatch.ai.
 
 ## Citation
 

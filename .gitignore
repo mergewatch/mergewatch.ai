@@ -24,3 +24,6 @@ package-lock.json
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
+
+# Local agent worktrees (never commit)
+.claude/worktrees/

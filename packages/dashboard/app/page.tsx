@@ -22,7 +22,7 @@ import {
   Lock,
 } from "lucide-react";
 
-const GITHUB_REPO = "santthosh/mergewatch.ai";
+const GITHUB_REPO = "mergewatch/mergewatch.ai";
 
 function serializeJsonLd(value: unknown): string {
   return JSON.stringify(value)
@@ -53,7 +53,7 @@ const faqs: { question: string; answer: string }[] = [
   {
     question: "Does MergeWatch support self-hosting?",
     answer:
-      "Yes. MergeWatch ships as open-source software under the GNU AGPL v3 license, and the full source code — including every agent prompt, the orchestrator, and all comment templates — is available at github.com/santthosh/mergewatch.ai. Self-hosting requires running docker-compose up, which starts an Express server backed by Postgres on any Docker-capable host. You supply your own GitHub App credentials, database URL, and LLM provider via environment variables, and the server auto-runs Drizzle migrations on startup. MergeWatch runs on AWS, GCP, Azure, bare metal, Fly.io, Railway, or any environment that can run a container. Your code never leaves your infrastructure, which makes the self-hosted distribution appropriate for regulated industries, air-gapped environments, and organizations with strict data residency or compliance requirements.",
+      "Yes. MergeWatch ships as open-source software under the GNU AGPL v3 license, and the full source code — including every agent prompt, the orchestrator, and all comment templates — is available at github.com/mergewatch/mergewatch.ai. Self-hosting requires running docker-compose up, which starts an Express server backed by Postgres on any Docker-capable host. You supply your own GitHub App credentials, database URL, and LLM provider via environment variables, and the server auto-runs Drizzle migrations on startup. MergeWatch runs on AWS, GCP, Azure, bare metal, Fly.io, Railway, or any environment that can run a container. Your code never leaves your infrastructure, which makes the self-hosted distribution appropriate for regulated industries, air-gapped environments, and organizations with strict data residency or compliance requirements.",
   },
   {
     question: "Which LLM providers does MergeWatch support?",
@@ -135,7 +135,7 @@ export default async function LandingPage() {
             Pricing
           </Link>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="hidden text-primer-muted transition hover:text-fg-primary sm:inline"
@@ -180,7 +180,7 @@ export default async function LandingPage() {
             <ArrowIcon />
           </Link>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex w-full items-center justify-center rounded-lg border border-border-default px-6 py-3 text-sm font-semibold text-fg-primary transition hover:bg-surface-card sm:w-auto"
@@ -530,7 +530,7 @@ export default async function LandingPage() {
               <li>AGPL v3 &mdash; fork, customize, contribute back</li>
             </ul>
             <a
-              href="https://github.com/santthosh/mergewatch.ai"
+              href="https://github.com/mergewatch/mergewatch.ai"
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 inline-flex w-full items-center justify-center rounded-lg border border-border-default px-6 py-3 text-sm font-semibold text-fg-primary transition hover:bg-surface-card"
@@ -593,7 +593,7 @@ export default async function LandingPage() {
             <ArrowIcon />
           </Link>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center rounded-lg border border-border-default px-6 py-3 text-sm font-semibold text-fg-primary transition hover:bg-surface-card"
@@ -653,7 +653,7 @@ export default async function LandingPage() {
               </li>
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai"
+                  href="https://github.com/mergewatch/mergewatch.ai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"
@@ -663,7 +663,7 @@ export default async function LandingPage() {
               </li>
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai/releases"
+                  href="https://github.com/mergewatch/mergewatch.ai/releases"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"
@@ -694,7 +694,7 @@ export default async function LandingPage() {
               </li>
               <li>
                 <a
-                  href="https://github.com/santthosh/mergewatch.ai/blob/main/LICENSE"
+                  href="https://github.com/mergewatch/mergewatch.ai/blob/main/LICENSE"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition hover:text-fg-primary"

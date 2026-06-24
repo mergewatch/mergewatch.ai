@@ -53,7 +53,7 @@ export function LegalPage({
             Terms
           </Link>
           <a
-            href="https://github.com/santthosh/mergewatch.ai"
+            href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-fg-primary"
