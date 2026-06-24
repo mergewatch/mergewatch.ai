@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
+import ImpactPanel from "./insights/ImpactPanel";
 import {
   LineChart,
   Line,
@@ -820,6 +821,11 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
             </ResponsiveContainer>
           </ChartCard>
         )}
+      </div>
+
+      {/* Impact (value / ROI) — cost, cycle-time, engagement from the hourly rollup. */}
+      <div className="mt-8 border-t border-border-default pt-8">
+        <ImpactPanel installationId={installationId} />
       </div>
     </div>
   );

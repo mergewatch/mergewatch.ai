@@ -38,9 +38,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
 } from "recharts";
 import { ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
-import NpsPrompt from "./NpsPrompt";
 import type { CategoryBucket, ClusterRow, Insight } from "./insights/types";
-import { CostSection, CycleTimeSection, EngagementSection } from "./insights/ImpactSections";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -204,42 +202,21 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
     );
   }
 
-  // TTM (#194) — cycle-time can have data even when no findings were ever
-  // surfaced (a repo with merges but a clean review history), so it must NOT
-  // be gated behind `totalFindingsSurfaced`. We show the page when EITHER
-  // signal has data, and gate each section independently below.
-  const cyc = active?.cycleTime;
-  const hasCycleData = !!cyc && (cyc.mergedCount > 0 || cyc.closedUnmergedCount > 0 || cyc.openCount > 0);
+  // The cost / cycle-time / engagement ("Impact") blocks now live on the
+  // Analytics page; this surface is false-positive feedback only, so it's gated
+  // on `totalFindingsSurfaced`.
   const hasFpData = (active?.totalFindingsSurfaced ?? 0) > 0;
-  // #195 — engagement can carry signal (command usage, re-review) even with no
-  // findings surfaced, so it's gated independently like cycle-time.
-  const eng = active?.engagement;
-  const hasEngagementData = !!eng && (
-    eng.commandUsageCount > 0 ||
-    eng.reviewedPrCount > 0 ||
-    eng.acceptanceRate !== null ||
-    eng.findingActionRateApprox !== null ||
-    // Tier 2 — satisfaction can carry signal independently of Tier 1.
-    (eng.helpfulUp ?? 0) > 0 ||
-    (eng.helpfulDown ?? 0) > 0 ||
-    (eng.npsResponses ?? 0) > 0
-  );
-  // #193 — cost is gated independently: a window can have spend even with no
-  // findings (all-clear reviews still cost tokens).
-  const cost = active?.cost;
-  const hasCostData = !!cost && cost.reviewCount > 0;
 
-  if (insights.length === 0 || !active || (!hasFpData && !hasCycleData && !hasEngagementData && !hasCostData)) {
+  if (insights.length === 0 || !active || !hasFpData) {
     return (
       <div className="rounded-lg border border-border-default bg-surface-card p-6">
         <h2 className="text-base font-semibold text-text-primary">No insights yet</h2>
         <p className="mt-2 text-sm text-text-secondary">
           MergeWatch starts collecting per-finding feedback (👍 / 👎 reactions,
-          inline-thread resolves, <code>/mergewatch reject</code> commands) and
-          PR cycle-time from the moment the GitHub App is installed. The nightly
-          rollup aggregates that data. Once a few reviews have run — and PRs
-          start merging — you&apos;ll see cycle-time, funnel, and dispute-rate
-          charts here.
+          inline-thread resolves, <code>/mergewatch reject</code> commands) from
+          the moment the GitHub App is installed. The hourly rollup aggregates
+          that data. Once a few reviews have run, you&apos;ll see the false-positive
+          funnel and dispute-rate charts here.
         </p>
       </div>
     );
@@ -274,20 +251,6 @@ export default function InsightsClient({ installationId }: InsightsClientProps) 
           last rolled-up {new Date(active.generatedAt).toLocaleString()}
         </span>
       </div>
-
-      {/* ─── TTM (#194): Cycle time (time-to-merge) ──────────────────── */}
-      {hasCycleData && cyc && <CycleTimeSection cycleTime={cyc} window={activeWindow} />}
-
-      {/* ─── #195: Developer engagement ──────────────────────────────── */}
-      {hasEngagementData && eng && (
-        <EngagementSection engagement={eng} insights={insights} window={activeWindow} />
-      )}
-
-      {/* ─── #193: LLM cost ──────────────────────────────────────────── */}
-      {hasCostData && cost && <CostSection cost={cost} insights={insights} window={activeWindow} />}
-
-      {/* ─── #195 Phase 5: throttled NPS survey prompt ───────────────── */}
-      <NpsPrompt installationId={installationId} />
 
       {/* ─── FB-F..FB-J: FP-feedback sections (only when findings exist) ── */}
       {hasFpData && (
