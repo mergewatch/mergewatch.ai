@@ -67,7 +67,10 @@ export class DynamoReviewCostStore implements IReviewCostStore {
         },
       }));
     } catch (err) {
-      console.warn('[fb-cost] recordCost failed (%s/%s#%d):', record.installationId, record.repoFullName, record.prNumber, err);
+      // Best-effort: don't interpolate installation / repo / PR identifiers —
+      // cost-tracking patterns are business-sensitive in centralized logs. The
+      // error carries enough (table, stack) to diagnose a write failure.
+      console.warn('[fb-cost] recordCost failed for a review:', err);
     }
   }
 
