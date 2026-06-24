@@ -389,6 +389,7 @@ describe('parseRejectIntent (FB-D)', () => {
 interface MockOctokitCalls {
   listReviewComments: ReturnType<typeof vi.fn>;
   createReplyForReviewComment: ReturnType<typeof vi.fn>;
+  updateReviewComment: ReturnType<typeof vi.fn>;
   createForPullRequestReviewComment: ReturnType<typeof vi.fn>;
   deleteForPullRequestComment: ReturnType<typeof vi.fn>;
   graphql: ReturnType<typeof vi.fn>;
@@ -406,6 +407,7 @@ function makeOctokitMock(comments: Array<{
   const calls: MockOctokitCalls = {
     listReviewComments: vi.fn(async () => ({ data: comments })),
     createReplyForReviewComment: vi.fn(async () => ({ data: { id: 99999 } })),
+    updateReviewComment: vi.fn(async () => ({ data: {} })),
     createForPullRequestReviewComment: vi.fn(async () => ({ data: { id: 777 } })),
     deleteForPullRequestComment: vi.fn(async () => ({})),
     graphql: vi.fn(async () => ({
@@ -422,6 +424,7 @@ function makeOctokitMock(comments: Array<{
     pulls: {
       listReviewComments: calls.listReviewComments,
       createReplyForReviewComment: calls.createReplyForReviewComment,
+      updateReviewComment: calls.updateReviewComment,
     },
     reactions: {
       createForPullRequestReviewComment: calls.createForPullRequestReviewComment,
@@ -720,10 +723,18 @@ describe('handleInlineReply', () => {
     ]);
     // Zero LLM cost on the fast path.
     expect(llm.calls).toHaveLength(0);
-    // Bot posts a confirming reply with the category name.
-    expect(calls.createReplyForReviewComment).toHaveBeenCalled();
-    const replyArg = (calls.createReplyForReviewComment as any).mock.calls[0][0];
-    expect(replyArg.body).toContain('already-handled');
+    // Bot confirms by EDITING the finding comment (append a footer), NOT a
+    // thread reply — a reply is auto-wrapped into a spurious COMMENTED Review
+    // (#190). The original body is preserved and the category + sentinel added.
+    expect(calls.createReplyForReviewComment).not.toHaveBeenCalled();
+    expect(calls.updateReviewComment).toHaveBeenCalledTimes(1);
+    const editArg = (calls.updateReviewComment as any).mock.calls[0][0];
+    expect(editArg.comment_id).toBe(100);
+    expect(editArg.body).toContain(inlineRoot.body);
+    expect(editArg.body).toContain('already-handled');
+    expect(editArg.body).toContain('Marked **rejected**');
+    expect(editArg.body).toContain('<!-- mergewatch-rejected -->');
+    expect(result.botCommentId).toBe(100);
     // Does NOT auto-resolve the thread (orthogonal verbs).
     expect(calls.graphql).not.toHaveBeenCalled();
   });
@@ -748,9 +759,34 @@ describe('handleInlineReply', () => {
     expect(result.action).toBe('rejected');
     expect(result.rejectCategory).toBe('other');
     expect(result.rejectText).toBe('typo-cat foo');
-    const replyArg = (calls.createReplyForReviewComment as any).mock.calls[0][0];
-    expect(replyArg.body).toContain('other');
-    expect(replyArg.body).toMatch(/known reject category/i);
+    expect(calls.createReplyForReviewComment).not.toHaveBeenCalled();
+    const editArg = (calls.updateReviewComment as any).mock.calls[0][0];
+    expect(editArg.body).toContain('other');
+    expect(editArg.body).toMatch(/known reject category/i);
+  });
+
+  it('FB-D — re-delivery on an already-rejected finding is an idempotent no-op', async () => {
+    const inlineRoot = {
+      id: 100,
+      body: "<!-- mergewatch-inline -->\n**🔴 Some title**\n\nDesc.\n\n<!-- mergewatch-rejected -->\n---\n> ✅ Marked **rejected** (`style-disagreement`) — won't re-raise.",
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'src/a.ts',
+    };
+    const { octokit, calls } = makeOctokitMock([
+      inlineRoot,
+      { id: 101, body: '/mergewatch reject style-disagreement', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    // Sentinel already present → skip without re-editing or re-recording.
+    expect(result.action).toBe('skipped');
+    expect(result.reason).toMatch(/already marked rejected/i);
+    expect(calls.updateReviewComment).not.toHaveBeenCalled();
+    expect(calls.createReplyForReviewComment).not.toHaveBeenCalled();
   });
 
   it('FB-D — resolve takes precedence when both `/resolve` and `/mergewatch reject` appear in the same reply', async () => {

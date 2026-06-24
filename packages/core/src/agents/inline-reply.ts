@@ -30,6 +30,7 @@ import {
   addReviewCommentReaction,
   removeReviewCommentReaction,
   replyToReviewComment,
+  editInlineReviewComment,
   fetchReviewCommentThread,
   resolveReviewThread,
   findReviewThreadIdForComment,
@@ -433,6 +434,14 @@ ${formatThreadTranscript(opts.thread)}`;
  * MergeWatch-authored thread. Returns a result describing what action was
  * taken so callers can track costs and log telemetry.
  */
+/**
+ * Hidden sentinel appended to a finding comment when it's rejected via
+ * `/mergewatch reject`. Lets us (a) confirm the rejection visually and
+ * (b) detect a prior rejection so a re-delivered webhook doesn't
+ * double-append the footer or double-record the disposition.
+ */
+const REJECT_FOOTER_SENTINEL = '<!-- mergewatch-rejected -->';
+
 export async function handleInlineReply(
   ctx: InlineReplyContext,
   deps: InlineReplyDeps,
@@ -504,20 +513,28 @@ export async function handleInlineReply(
     // signal; closure stays a human decision.
     const rejectIntent = parseRejectIntent(lastComment.body);
     if (rejectIntent) {
+      // Idempotency / dedup: we no longer post a bot reply (which used to move
+      // the thread tip and short-circuit re-runs), so a re-delivered webhook
+      // would re-enter this branch. The sentinel on the finding comment is the
+      // guard against double-appending the footer or double-recording the
+      // disposition.
+      if (root.body.includes(REJECT_FOOTER_SENTINEL)) {
+        return { action: 'skipped', reason: 'finding already marked rejected', inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+      }
       const rejectedFindingKeys = deriveResolvedFindingKeys(root);
-      // Confirming reply: short, structured, mentions both the category
-      // we persisted AND (when coerced) the original token so the user
-      // can see what happened.
-      const confirmation = rejectIntent.coerced
-        ? `Got it — your reply didn't match a known reject category, so I'm recording this as \`other\`. Recognised categories: \`already-handled\`, \`out-of-scope\`, \`wrong-target\`, \`style-disagreement\`, \`other\`.`
-        : `Got it — recording as \`${rejectIntent.category}\`. This finding's pattern won't be re-raised on similar code unless conditions change.`;
-      const botCommentId = await replyToReviewComment(
-        deps.octokit, ctx.owner, ctx.repo, ctx.prNumber, root.id, confirmation,
-      );
+      // Confirm by EDITING the finding comment (append a footer) rather than
+      // posting a thread reply: a reply is auto-wrapped by GitHub into a
+      // standalone COMMENTED Review event (#190 — pollutes the PR's review
+      // timeline / W6). The footer names the persisted category AND, when
+      // coerced, explains the fallback so the user sees what happened.
+      const footer = rejectIntent.coerced
+        ? `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`other\`) — your reply didn't match a known reject category. Recognised: \`already-handled\`, \`out-of-scope\`, \`wrong-target\`, \`style-disagreement\`, \`other\`. Won't re-raise on similar code unless conditions change.`
+        : `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`${rejectIntent.category}\`) — won't re-raise on similar code unless conditions change.`;
+      await editInlineReviewComment(deps.octokit, ctx.owner, ctx.repo, root.id, `${root.body}${footer}`);
       return {
         action: 'rejected',
         reason: 'explicit /mergewatch reject',
-        botCommentId,
+        botCommentId: root.id,
         rejectedFindingKeys: rejectedFindingKeys.length > 0 ? rejectedFindingKeys : undefined,
         rejectCategory: rejectIntent.category,
         rejectText: rejectIntent.text,
