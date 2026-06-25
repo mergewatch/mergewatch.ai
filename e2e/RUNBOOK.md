@@ -1442,9 +1442,9 @@ export function parseChunks(raw: unknown[]): unknown[] {
 
 **Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-F](./../docs/false-positive-reduction-plan.md#fp-f--inline-reply-resolve-memory--disputedkeys--shipped).
 
-**Behavior:** when a human posts an inline-thread reply matching `detectResolveIntent` (*"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"*), `handleInlineReply` recovers the finding's stable identity keys from the thread root (file `path` from the GitHub review-comment object + title parsed via `extractInlineCommentTitle` → `findingMatchKeys`) and returns them in the result. The server / lambda handlers append the keys to the latest review record's new `inlineResolvedKeys` field (dedup, cap 500). The next full review unions `prevComplete.inlineResolvedKeys` with the live-computed W3 `disputedKeys` and feeds the union into both FP-B's previousFindings pre-filter and the downstream W3 `partitionDisputed` suppression. Same identity scheme (W9 union-matching) as W3 itself.
+**Behavior:** when a human posts an inline-thread reply matching `detectResolveIntent` (*"resolved"* / *"please resolve"* / *"mergewatch resolve"* / *"/resolve"*), `handleInlineReply` recovers the finding's stable identity keys from the thread root: the file `path`, the title (`extractInlineCommentTitle`), AND — **#182** — the W9 **code fingerprint** that the review pipeline embeds in every inline comment as a hidden base64 `<!-- mw-fp:… -->` marker (`extractInlineCommentFingerprint`). Because the fingerprint key (`file::F::<code>`) is recovered **directly** from the comment, suppression survives the LLM rewording the finding's title between review rounds — it no longer depends on the title key matching the prior-review findings lookup. (Pre-#182 comments have no marker → title-key only, and the `enrichResolvedFindingKeys` fallback still recovers the fingerprint from `latestReview.findings`.) The server / lambda handlers append the keys to the latest review record's `inlineResolvedKeys` field (dedup, cap 500). The next full review unions `prevComplete.inlineResolvedKeys` with the live-computed W3 `disputedKeys` and feeds the union into both FP-B's previousFindings pre-filter and the downstream W3 `partitionDisputed` suppression. Same identity scheme (W9 union-matching) as W3 itself.
 
-Fail-safe: if the root inline comment is missing `path` (pre-FP-F comment shape) or the title can't be parsed (`**🔴 …**` format absent), the keys derivation returns `[]` and resolution proceeds normally — pre-FP-F behavior is preserved.
+Fail-safe: if the root inline comment is missing `path`, or BOTH the title (`**🔴 …**`) and the fingerprint marker are absent, the keys derivation returns `[]` and resolution proceeds normally — pre-FP-F behavior is preserved. Because suppression is code-anchored via the fingerprint, a later commit that **changes** the cited code (new fingerprint) correctly re-raises the finding.
 
 **Setup**
 
@@ -1463,7 +1463,7 @@ Branch: `fixture/35-inline-resolve`. Two-commit sequence:
 - [x] **Regression check**: a non-resolve reply (just discussion) does NOT persist any keys
 
 **Failure modes**
-- ❌ The resolved finding re-appears on the next review under a slightly different framing (FP-F's stable-key persistence missed the framing change — likely a W9 fingerprint coverage gap surfaced via this path)
+- ❌ The resolved finding re-appears on the next review under a slightly different framing on **unchanged** code (#182 — the embedded `mw-fp:` fingerprint should anchor suppression through a title reword; a recurrence means the fingerprint marker wasn't embedded/recovered, or the cited line has no derivable fingerprint)
 - ❌ An unrelated finding gets suppressed (the resolve key was over-broad)
 - ❌ The Postgres `inline_resolved_keys` column is missing — migrations didn't run (self-hosted) or the deploy SAM template is stale (SaaS); resolve still works but the union is a no-op
 

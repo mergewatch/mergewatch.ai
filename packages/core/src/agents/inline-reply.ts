@@ -36,6 +36,7 @@ import {
   findReviewThreadIdForComment,
   INLINE_BOT_COMMENT_MARKER,
   extractInlineCommentTitle,
+  extractInlineCommentFingerprint,
   type ReviewThreadComment,
 } from '../github/client.js';
 import { findingMatchKeys, type FindingLike } from '../review-delta.js';
@@ -240,12 +241,18 @@ export interface InlineReplyResult {
 function deriveResolvedFindingKeys(root: ReviewThreadComment): string[] {
   if (!root.path) return [];
   const title = extractInlineCommentTitle(root.body);
-  if (!title) return [];
-  // `findingMatchKeys` reads only `file`, `title`, and `fingerprint`. The
-  // `line: 0` placeholder satisfies the FindingLike shape without affecting
-  // the emitted keys — the title key is `file::T::title`, which is exactly
-  // what we want here (no fingerprint is recoverable from the comment body).
-  return findingMatchKeys({ file: root.path, line: 0, title });
+  // FP-F (#182) — recover the W9 fingerprint embedded in the comment so the
+  // stable `file::F::<fingerprint>` key is derived DIRECTLY. This survives the
+  // LLM rewording the finding title between review rounds without depending on
+  // the prior-review findings lookup (which itself carries the drifted title).
+  // Pre-#182 comments carry no marker → title-only key, and the caller's
+  // `enrichResolvedFindingKeys` fallback still tries to recover the fingerprint.
+  const fingerprint = extractInlineCommentFingerprint(root.body);
+  if (!title && !fingerprint) return [];
+  // `findingMatchKeys` is the single source of truth for key shape. Drop the
+  // degenerate empty-title key when the title couldn't be parsed.
+  return findingMatchKeys({ file: root.path, line: 0, title, fingerprint: fingerprint || undefined })
+    .filter((k) => k !== `${root.path}::T::`);
 }
 
 /**

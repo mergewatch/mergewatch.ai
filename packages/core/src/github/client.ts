@@ -461,6 +461,12 @@ interface InlineCommentCandidate {
   description: string;
   suggestion: string;
   /**
+   * FP-F (#182) — W9 code fingerprint. Embedded (base64) in the inline comment
+   * so a later `/resolve` can recover the stable fingerprint key directly, even
+   * after the LLM rewords the finding title across review rounds.
+   */
+  fingerprint?: string;
+  /**
    * FP-L — W2 verification verdict. When `'unverified'` the finding is dropped
    * from the inline-comment surface entirely (it still appears in the top-level
    * review comment under "Unverified concerns"). Absent → treated as a pre-W2
@@ -506,7 +512,7 @@ export function buildInlineComments(
       path: f.file,
       line: f.line,
       side: 'RIGHT',
-      body: `${INLINE_BOT_COMMENT_MARKER}\n**🔴 ${f.title}**\n\n${f.description}${f.suggestion ? `\n\n> **Suggestion:** ${f.suggestion}` : ''}`,
+      body: `${INLINE_BOT_COMMENT_MARKER}\n**🔴 ${f.title}**\n\n${f.description}${f.suggestion ? `\n\n> **Suggestion:** ${f.suggestion}` : ''}${f.fingerprint ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->` : ''}`,
     }));
 }
 
@@ -518,6 +524,31 @@ const INLINE_TITLE_REGEX = /\*\*🔴 (.+?)\*\*/;
  */
 export function extractInlineCommentTitle(body: string): string {
   return body.match(INLINE_TITLE_REGEX)?.[1] ?? '';
+}
+
+// FP-F (#182) — hidden fingerprint marker embedded in inline comments. The
+// fingerprint is the finding's (whitespace-collapsed) code line, which can
+// contain `--`/`>` and would break a raw HTML comment, so it's base64-encoded.
+const INLINE_FP_REGEX = /<!-- mw-fp:([A-Za-z0-9+/=]+) -->/;
+
+function encodeInlineFingerprint(fingerprint: string): string {
+  return Buffer.from(fingerprint, 'utf-8').toString('base64');
+}
+
+/**
+ * Recover a finding's code fingerprint from its inline comment body, or `''`
+ * when absent (pre-#182 comments) or malformed. Lets `/resolve` build the
+ * stable `file::F::<fingerprint>` key directly off the comment — so suppression
+ * survives the LLM rewording the title between review rounds.
+ */
+export function extractInlineCommentFingerprint(body: string): string {
+  const b64 = body.match(INLINE_FP_REGEX)?.[1];
+  if (!b64) return '';
+  try {
+    return Buffer.from(b64, 'base64').toString('utf-8');
+  } catch {
+    return '';
+  }
 }
 
 /**

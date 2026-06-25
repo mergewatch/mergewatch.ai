@@ -124,6 +124,7 @@ export {
   dismissStaleReviews,
   buildInlineComments,
   extractInlineCommentTitle,
+  extractInlineCommentFingerprint,
   fetchRepoConfig,
   parseRepoConfigYaml,
 } from './github/client.js';
