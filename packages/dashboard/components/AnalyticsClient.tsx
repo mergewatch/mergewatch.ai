@@ -1,8 +1,17 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, Search, X } from "lucide-react";
 import ImpactPanel from "./insights/ImpactPanel";
+import InsightsClient from "./InsightsClient";
+import {
+  ANALYTICS_TABS,
+  DEFAULT_ANALYTICS_TAB,
+  isAnalyticsDataTab,
+  resolveTab,
+  type AnalyticsTabKey,
+} from "@/lib/analytics-tabs";
 import {
   LineChart,
   Line,
@@ -316,6 +325,16 @@ function SearchableRepoSelect({
 // -- Main Component ----------------------------------------------------------
 
 export default function AnalyticsClient({ installationId }: AnalyticsClientProps) {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // Active tab is initialised from `?tab=` (shareable / refresh-safe) and is the
+  // source of truth thereafter; selectTab keeps the URL in sync without a
+  // server round-trip.
+  const [activeTab, setActiveTab] = useState<AnalyticsTabKey>(() =>
+    resolveTab(searchParams.get("tab")),
+  );
+
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -324,6 +343,22 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
   const [customEnd, setCustomEnd] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<string>("all");
   const [availableRepos, setAvailableRepos] = useState<string[]>([]);
+
+  function selectTab(tab: AnalyticsTabKey) {
+    setActiveTab(tab);
+    // Reflect the tab in the URL without navigating (avoids re-running the
+    // force-dynamic server page); preserve any other params (e.g. ?org=).
+    const params = new URLSearchParams(searchParams.toString());
+    if (tab === DEFAULT_ANALYTICS_TAB) {
+      params.delete("tab");
+    } else {
+      params.set("tab", tab);
+    }
+    const qs = params.toString();
+    window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
+  }
+
+  const showFilterBar = isAnalyticsDataTab(activeTab);
 
   const dateRange = useMemo(
     () => getDateRange(timeRange, customStart, customEnd),
@@ -380,11 +415,9 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
     return () => { cancelled = true; };
   }, [installationId, dateRange, selectedRepo]);
 
-  const filterBar = (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <h1 className="text-xl font-bold text-fg-primary">Analytics</h1>
-      <div className="flex flex-wrap items-center gap-2">
-        {availableRepos.length > 1 && (
+  const filterControls = (
+    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+      {availableRepos.length > 1 && (
           <SearchableRepoSelect
             value={selectedRepo}
             onChange={setSelectedRepo}
@@ -424,62 +457,53 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
           </div>
         )}
       </div>
-    </div>
   );
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className="px-4 py-6 sm:px-8">
-        {filterBar}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-          <SkeletonChartCard />
-        </div>
-      </div>
-    );
-  }
+  // ---- Analytics-data tabs (Overview / Findings / Activity) ----------------
+  // Renders the /api/analytics dataset for the active data tab, owning its own
+  // loading / error / empty states so the tab bar above stays interactive while
+  // the dataset is loading, errored, or empty.
+  function renderDataTab() {
+    if (loading) {
+      return (
+        <>
+          {activeTab === "overview" && (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            <SkeletonChartCard />
+            <SkeletonChartCard />
+            <SkeletonChartCard />
+          </div>
+        </>
+      );
+    }
 
-  // Error state
-  if (error) {
-    return (
-      <div className="px-4 py-6 sm:px-8">
-        {filterBar}
+    if (error) {
+      return (
         <div className="rounded-lg border border-border-default bg-surface-card p-8 text-center">
           <p className="text-sm text-fg-secondary">{error}</p>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // Empty state
-  if (!data || data.totalReviews === 0) {
-    return (
-      <div className="px-4 py-6 sm:px-8">
-        {filterBar}
+    if (!data || data.totalReviews === 0) {
+      return (
         <div className="rounded-lg border border-border-default bg-surface-card p-12 text-center">
           <p className="text-base font-medium text-fg-primary">No review data yet</p>
           <p className="mt-2 text-sm text-fg-secondary">
             Analytics will appear here once MergeWatch has reviewed some pull requests.
           </p>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // Prepare chart data
+    // Prepare chart data
   const scoreTrendData = data.scoreTrend.map((p) => ({
     ...p,
     dateLabel: formatDateLabel(p.date),
@@ -538,30 +562,54 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
     fill: SCORE_DIST_COLORS[score],
   })); // always show all 5 buckets for consistent x-axis
 
-  return (
-    <div className="px-4 py-6 sm:px-8">
-      {filterBar}
+    // Whether the active data tab has anything to chart in the selected range.
+    // Overview always shows the stat cards, so it's never "empty".
+    const hasFindingsCharts =
+      severityData.length > 0 ||
+      categoryData.length > 0 ||
+      scoreDistData.some((d) => d.value > 0);
+    const hasActivityCharts =
+      data.durationStats.count > 0 ||
+      repoData.length > 0 ||
+      statusData.length > 0;
+    const tabIsEmpty =
+      (activeTab === "findings" && !hasFindingsCharts) ||
+      (activeTab === "activity" && !hasActivityCharts);
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
-        <StatCard label="Total Reviews" value={data.totalReviews} />
-        <StatCard label="Total Findings" value={data.totalFindings} />
-        <StatCard
-          label="Avg Merge Score"
-          value={data.avgMergeScore > 0 ? `${data.avgMergeScore} / 5` : "N/A"}
-          subtext={data.avgMergeScore > 0 ? "Higher is better" : undefined}
-        />
-        <StatCard
-          label="Success Rate"
-          value={`${successRate}%`}
-          subtext={`${data.statusCounts.complete ?? 0} completed, ${data.statusCounts.failed ?? 0} failed`}
-        />
-      </div>
+    if (tabIsEmpty) {
+      return (
+        <div className="rounded-lg border border-border-default bg-surface-card p-8 text-center">
+          <p className="text-sm text-fg-secondary">
+            Nothing to chart for this view in the selected range.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {/* Stat cards — Overview only */}
+        {activeTab === "overview" && (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
+          <StatCard label="Total Reviews" value={data.totalReviews} />
+          <StatCard label="Total Findings" value={data.totalFindings} />
+          <StatCard
+            label="Avg Merge Score"
+            value={data.avgMergeScore > 0 ? `${data.avgMergeScore} / 5` : "N/A"}
+            subtext={data.avgMergeScore > 0 ? "Higher is better" : undefined}
+          />
+          <StatCard
+            label="Success Rate"
+            value={`${successRate}%`}
+            subtext={`${data.statusCounts.complete ?? 0} completed, ${data.statusCounts.failed ?? 0} failed`}
+          />
+        </div>
+        )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         {/* Score Trend */}
-        {scoreTrendData.length > 0 && (
+        {activeTab === "overview" && scoreTrendData.length > 0 && (
           <ChartCard title="Merge Score Trend">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={scoreTrendData}>
@@ -594,7 +642,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Severity Breakdown */}
-        {severityData.length > 0 && (
+        {activeTab === "findings" && severityData.length > 0 && (
           <ChartCard title="Findings by Severity">
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
@@ -620,7 +668,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Review Duration */}
-        {data.durationStats.count > 0 && (
+        {activeTab === "activity" && data.durationStats.count > 0 && (
           <ChartCard title="Review Duration">
             <div className="mb-3 flex gap-4">
               <div>
@@ -675,7 +723,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Reviews per Repo */}
-        {repoData.length > 0 && (
+        {activeTab === "activity" && repoData.length > 0 && (
           <ChartCard title="Reviews per Repository">
             <ResponsiveContainer width="100%" height={Math.max(180, repoData.length * 36)}>
               <BarChart data={repoData} layout="vertical">
@@ -706,7 +754,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Category Breakdown */}
-        {categoryData.length > 0 && (
+        {activeTab === "findings" && categoryData.length > 0 && (
           <ChartCard title="Findings by Category">
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={categoryData}>
@@ -735,7 +783,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Review Status Breakdown */}
-        {statusData.length > 0 && (
+        {activeTab === "activity" && statusData.length > 0 && (
           <ChartCard title="Review Status">
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
@@ -761,7 +809,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Findings per Review Trend */}
-        {findingsTrendData.length > 1 && (
+        {activeTab === "overview" && findingsTrendData.length > 1 && (
           <ChartCard title="Findings per Review">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={findingsTrendData}>
@@ -794,7 +842,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         )}
 
         {/* Merge Score Distribution */}
-        {scoreDistData.some((d) => d.value > 0) && (
+        {activeTab === "findings" && scoreDistData.some((d) => d.value > 0) && (
           <ChartCard title="Merge Score Distribution">
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={scoreDistData}>
@@ -822,10 +870,60 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
           </ChartCard>
         )}
       </div>
+      </>
+    );
+  }
 
-      {/* Impact (value / ROI) — cost, cycle-time, engagement from the hourly rollup. */}
-      <div className="mt-8 border-t border-border-default pt-8">
-        <ImpactPanel installationId={installationId} />
+  return (
+    <div className="px-4 py-6 sm:px-8">
+      <h1 className="mb-4 text-xl font-bold text-fg-primary">Analytics</h1>
+
+      {/* Tab bar — always rendered so the Cost & Accuracy tabs stay reachable
+          even while the analytics dataset is loading / empty / errored. Scrolls
+          horizontally on narrow screens. */}
+      <div className="overflow-x-auto">
+        <div className="flex min-w-max gap-1 border-b border-border-default">
+          {ANALYTICS_TABS.map((t) => {
+            const active = activeTab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => selectTab(t.key)}
+                aria-current={active ? "page" : undefined}
+                className={[
+                  "relative whitespace-nowrap px-3 py-2 text-sm transition-colors",
+                  active
+                    ? "text-fg-primary"
+                    : "text-fg-tertiary hover:text-fg-primary",
+                ].join(" ")}
+              >
+                {t.label}
+                {active && (
+                  <span className="absolute inset-x-3 -bottom-px h-0.5 bg-accent-green" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Global date-range + repo filter applies only to the analytics-data
+          tabs; Cost/Impact and Accuracy own their rolling-window selector. */}
+      {showFilterBar && <div className="mt-4">{filterControls}</div>}
+
+      <div className="mt-6">
+        {activeTab === "cost" && <ImpactPanel installationId={installationId} />}
+        {activeTab === "accuracy" && (
+          <div className="space-y-4">
+            <p className="text-sm text-fg-secondary">
+              How often MergeWatch gets it right — false-positive feedback,
+              dispute rates by agent, and recurring review noise. Updated hourly.
+            </p>
+            <InsightsClient installationId={installationId} />
+          </div>
+        )}
+        {isAnalyticsDataTab(activeTab) && renderDataTab()}
       </div>
     </div>
   );
