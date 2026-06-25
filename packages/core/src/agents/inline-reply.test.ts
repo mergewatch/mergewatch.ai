@@ -11,6 +11,8 @@ import {
   REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
 } from './inline-reply.js';
+import { buildInlineComments } from '../github/client.js';
+import { findingMatchKeys } from '../review-delta.js';
 import type { IReviewStore } from '../storage/types.js';
 import type { ReviewItem } from '../types/db.js';
 
@@ -512,6 +514,56 @@ describe('handleInlineReply', () => {
     // Eyes reaction added + removed
     expect(calls.createForPullRequestReviewComment).toHaveBeenCalled();
     expect(calls.deleteForPullRequestComment).toHaveBeenCalled();
+  });
+
+  it('FP-F (#182) — resolve recovers the embedded fingerprint key directly, surviving title rewording', async () => {
+    // Build a real inline comment from a critical finding (with a W9
+    // fingerprint), exactly as the review pipeline does — the round-trip
+    // through buildInlineComments → extractInlineCommentFingerprint is the
+    // crux of #182.
+    const finding = {
+      file: 'src/admin.ts',
+      line: 8,
+      severity: 'critical' as const,
+      title: 'Unauthenticated admin endpoint exposes sensitive data',
+      description: 'Anyone can call this.',
+      suggestion: '',
+      // Code text with chars that would break a raw HTML comment (`--`, `>`).
+      fingerprint: "app.get('/admin', (req, res) => res.json(getAllUsers()))",
+    };
+    const [inline] = buildInlineComments([finding], ['src/admin.ts'], new Map([['src/admin.ts', new Set([8])]]));
+    const root = {
+      id: 100,
+      body: inline.body,
+      user: { login: 'mergewatch[bot]', type: 'Bot' as const },
+      created_at: '2026-04-01T00:00:00Z',
+      path: 'src/admin.ts',
+    };
+    const { octokit } = makeOctokitMock([
+      root,
+      { id: 101, body: 'resolved', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ]);
+    const llm = makeLLM('unused');
+    const result = await handleInlineReply(
+      { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+      { octokit, llm, lightModelId: 'light' },
+    );
+    expect(result.action).toBe('resolved');
+    // Both the title key AND the stable fingerprint key are derived directly
+    // from the comment — no dependency on the prior-review findings lookup.
+    expect(result.resolvedFindingKeys).toContain('src/admin.ts::T::Unauthenticated admin endpoint exposes sensitive data');
+    expect(result.resolvedFindingKeys).toContain(`src/admin.ts::F::${finding.fingerprint}`);
+    // #182: next round, the LLM rewords the title but the code is unchanged
+    // (same fingerprint) — the finding still matches the resolved set via the
+    // fingerprint key, so it is suppressed rather than re-emitted.
+    const rewordedNextRound = {
+      file: 'src/admin.ts',
+      line: 8,
+      title: 'Unauthenticated admin endpoint exposes sensitive USER data',
+      fingerprint: finding.fingerprint,
+    };
+    const stillSuppressed = findingMatchKeys(rewordedNextRound).some((k) => result.resolvedFindingKeys!.includes(k));
+    expect(stillSuppressed).toBe(true);
   });
 
   it('calls the LLM and posts a threaded reply on normal replies', async () => {

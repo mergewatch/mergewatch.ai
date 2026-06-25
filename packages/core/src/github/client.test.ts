@@ -3,6 +3,7 @@ import {
   mergeScoreToReviewEvent,
   buildInlineComments,
   extractInlineCommentTitle,
+  extractInlineCommentFingerprint,
   BOT_COMMENT_MARKER,
   parseRepoConfigYaml,
   addPRReaction,
@@ -61,6 +62,34 @@ describe('buildInlineComments', () => {
     expect(result[0].path).toBe('src/app.ts');
     expect(result[0].line).toBe(10);
     expect(result[0].side).toBe('RIGHT');
+  });
+
+  it('FP-F (#182) — embeds a base64 fingerprint marker that round-trips through extractInlineCommentFingerprint', () => {
+    // Code text with chars that would break a raw HTML comment (`--`, `>`).
+    const fp = "app.get('/admin', (req,res) => res.json(db.query('--x'))) // a-->b";
+    const findings = [
+      { file: 'src/app.ts', line: 10, severity: 'critical' as const, title: 'T', description: 'd', suggestion: '', fingerprint: fp },
+    ];
+    const [c] = buildInlineComments(findings, changedFiles);
+    expect(c.body).toMatch(/<!-- mw-fp:[A-Za-z0-9+/=]+ -->/);
+    // The marker survives the dangerous chars and decodes back exactly.
+    expect(extractInlineCommentFingerprint(c.body)).toBe(fp);
+    // The visible title still extracts cleanly alongside the hidden marker.
+    expect(extractInlineCommentTitle(c.body)).toBe('T');
+  });
+
+  it('FP-F (#182) — omits the fingerprint marker when the finding has none', () => {
+    const findings = [
+      { file: 'src/app.ts', line: 10, severity: 'critical' as const, title: 'T', description: 'd', suggestion: '' },
+    ];
+    const [c] = buildInlineComments(findings, changedFiles);
+    expect(c.body).not.toContain('mw-fp:');
+    expect(extractInlineCommentFingerprint(c.body)).toBe('');
+  });
+
+  it('extractInlineCommentFingerprint returns empty for absent / malformed markers', () => {
+    expect(extractInlineCommentFingerprint('no marker here')).toBe('');
+    expect(extractInlineCommentFingerprint('<!-- mw-fp:!!! not base64 !!! -->')).toBe('');
   });
 
   it('excludes non-critical findings (warning)', () => {
