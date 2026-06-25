@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ILLMProvider } from '../llm/types.js';
 import type { CustomAgentDef } from '../config/defaults.js';
+import { mergeScoreToReviewEvent } from '../github/client.js';
 import {
   isValidMermaidDiagram,
   extractDiagramFilePaths,
@@ -2429,6 +2430,30 @@ describe('reconcileMergeScore', () => {
       // needs fixes before merging") must NOT leak into the reconciled
       // reason — that exact phrase is the user-facing bug.
       expect(r.mergeScoreReason).not.toContain('needs fixes before merging');
+    });
+
+    it('#183 invariant — a verifier-dropped-criticals verdict is non-blocking, matching the success check', () => {
+      // The bug: review STATE was REQUEST_CHANGES (from the orchestrator's ≤2
+      // score) while the CHECK was success (zero post-filter criticals). After
+      // reconcile, the score must map to a NON-blocking review event for BOTH
+      // the warnings-remain (→ 3 / COMMENT) and nothing-remains (→ 5 / APPROVE)
+      // paths — so the review state can never contradict the success check.
+      for (const filteredFindings of [[warning()], [] as ReturnType<typeof warning>[]]) {
+        const r = reconcileMergeScore({
+          filteredFindings,
+          previousFindings: undefined,
+          orchestratorScore: 2,
+          orchestratorReason: 'Critical present; needs fixes before merging.',
+          orchestratorCriticalsCount: 1,
+        });
+        const survivingCriticals = filteredFindings.filter((f) => f.severity === 'critical').length;
+        const checkConclusion = survivingCriticals > 0 ? 'failure' : 'success';
+        const reviewEvent = mergeScoreToReviewEvent(r.mergeScore);
+        expect(checkConclusion).toBe('success');
+        expect(reviewEvent).not.toBe('REQUEST_CHANGES'); // never block when the check passes
+        // …and the stale blocking prose must not leak into the verdict.
+        expect(r.mergeScoreReason).not.toContain('needs fixes before merging');
+      }
     });
 
     it('downgrades on orchestratorScore=1 (the strictest blocking tier) the same way', () => {
