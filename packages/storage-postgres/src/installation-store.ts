@@ -1,7 +1,7 @@
 import { eq, and } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import type { IInstallationStore, InstallationItem, InstallationSettings } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS } from '@mergewatch/core';
+import type { IInstallationStore, InstallationItem, InstallationSettings, OrgCustomAgent } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS, sanitizeOrgCustomAgents } from '@mergewatch/core';
 import { installations, installationSettings } from './schema.js';
 
 export class PostgresInstallationStore implements IInstallationStore {
@@ -65,6 +65,29 @@ export class PostgresInstallationStore implements IInstallationStore {
           modelId: item.modelId ?? null,
           monitored: item.monitored ?? true,
         },
+      });
+  }
+
+  async getCustomAgents(installationId: string): Promise<OrgCustomAgent[]> {
+    const rows = await this.db
+      .select({ customAgents: installationSettings.customAgents })
+      .from(installationSettings)
+      .where(eq(installationSettings.installationId, installationId))
+      .limit(1);
+    if (rows.length === 0) return [];
+    return sanitizeOrgCustomAgents(rows[0].customAgents);
+  }
+
+  async upsertCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void> {
+    const sanitized = sanitizeOrgCustomAgents(agents);
+    // The other settings columns are NOT NULL with defaults, so a bare insert
+    // creates a valid settings row when one doesn't exist yet.
+    await this.db
+      .insert(installationSettings)
+      .values({ installationId, customAgents: sanitized as any })
+      .onConflictDoUpdate({
+        target: installationSettings.installationId,
+        set: { customAgents: sanitized as any },
       });
   }
 

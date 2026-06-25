@@ -173,6 +173,60 @@ export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
 };
 
 // =============================================================================
+// Org Custom Agents (#235) — installation-level custom review agents defined in
+// the dashboard, scoped to repos, and enforced in reviews.
+// Stored as a sentinel row in mergewatch-installations with SK="#AGENTS"
+// (SaaS) / the `custom_agents` jsonb column on installation_settings
+// (self-hosted). They run in *union* with a repo's `.mergewatch.yml`
+// customAgents — repos can add, not remove org ones.
+// =============================================================================
+
+/** Max active org custom agents per installation before the UI warns (soft). */
+export const ORG_CUSTOM_AGENT_SOFT_CAP = 10;
+
+/** How an org custom agent's findings affect the merge gate. */
+export type OrgAgentEnforcement = 'advisory' | 'blocking';
+
+/** Which repos an org custom agent applies to. */
+export type OrgAgentScope =
+  | { mode: 'all' }
+  | { mode: 'selected'; repos: string[] };
+
+/**
+ * An organization-level custom review agent. Extends the per-repo
+ * `CustomAgentDef` (name/prompt/severityDefault/enabled) with org-level
+ * concerns: repo scope, advisory-vs-blocking enforcement, optional path/
+ * language targeting, and last-edited audit metadata.
+ */
+export interface OrgCustomAgent {
+  /** Stable id (assigned on create; survives edits — used for audit/tagging). */
+  id: string;
+  /** Display name; also the finding category. */
+  name: string;
+  /** System prompt for the agent. */
+  prompt: string;
+  /** Default severity for findings from this agent. */
+  severityDefault: 'info' | 'warning' | 'critical';
+  /** advisory = findings only; blocking = critical findings gate the merge. */
+  enforcement: OrgAgentEnforcement;
+  /** Whether this agent runs at all. */
+  enabled: boolean;
+  /** Repos this agent applies to. */
+  scope: OrgAgentScope;
+  /** Optional narrowing: only run when the diff matches. */
+  targeting?: {
+    /** Run only when a changed file matches one of these globs. */
+    pathGlobs?: string[];
+    /** Run only when the PR touches one of these languages (lowercased). */
+    languages?: string[];
+  };
+  /** ISO timestamp of the last edit (audit). */
+  updatedAt: string;
+  /** GitHub login of the last editor (audit). */
+  updatedBy: string;
+}
+
+// =============================================================================
 // mergewatch-reviews Table
 // =============================================================================
 
