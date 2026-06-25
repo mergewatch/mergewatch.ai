@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
-import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor } from '@mergewatch/core';
+import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
 export interface WebhookDeps {
@@ -137,6 +137,27 @@ async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
   // Record lifecycle for every relevant action (incl. `closed`) before the
   // review gate — merges/closes terminate the lifecycle without a review.
   await recordPrLifecycle(payload, deps);
+
+  // FB-C (#189) — reactions don't emit webhooks and the in-review poll can't see
+  // a reaction added after the final review (the common case). On the terminal
+  // `closed` event, sweep once so end-of-PR 👍/👎 aren't lost.
+  if (action === 'closed') {
+    try {
+      const octokit = await deps.authProvider.getInstallationOctokit(installation.id);
+      await sweepInlineReactionsOnClose({
+        octokit,
+        owner: repository.owner.login,
+        repo: repository.name,
+        prNumber: pull_request.number,
+        reviewStore: deps.reviewStore,
+        dispositionStore: deps.dispositionStore,
+        installationId: String(installation.id),
+        repoFullName: repository.full_name,
+      });
+    } catch (err) {
+      console.warn('[fb-c] close reaction sweep failed to start:', err);
+    }
+  }
 
   if (!(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
 

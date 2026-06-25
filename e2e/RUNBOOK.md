@@ -1574,23 +1574,27 @@ Branch: `fixture/38-quiet-drop`. A PR with a finding that the orchestrator's con
 
 Reaction *removal* is a no-op (signal stays monotonic). Anonymous: we count, we don't store reactor identity.
 
+**Capture timing (#189):** GitHub does NOT emit a webhook for reactions, so MergeWatch **polls** them — folding a single `listReviewComments` call (the per-comment `reactions` summary) into the post-pipeline path and counting only the positive delta vs the snapshot persisted on the prior review. Because a reaction is usually added *after* the final review (people react when they read it), an in-review poll alone would miss it — so a final sweep **also runs on the terminal `closed` event** (`sweepInlineReactionsOnClose`, both runtimes). Net: a reaction is captured on the **next review of the PR OR when the PR closes**, whichever comes first.
+
 **Setup**
 
 Branch: `fixture/39-inline-reactions`. A PR with at least one inline-comment-eligible finding:
 1. Confirm `FindingDispositionRecord` row exists post-review with `disputeCount = 0`, `agreementCount = 0`.
-2. Add 👎 to the inline bot comment → confirm `disputeCount = 1`.
-3. Add 🚀 → confirm `agreementCount = 1`.
-4. Remove the 👎 → confirm `disputeCount` stays at 1 (monotonic).
+2. Add 👎 to the inline bot comment, then **trigger a poll** — push a commit (re-review) or **close the PR** — and confirm `disputeCount = 1`.
+3. Add 🚀, trigger another poll → confirm `agreementCount = 1`.
+4. Remove the 👎 before the next poll → after a poll, confirm `disputeCount` stays at 1 (monotonic).
 
 **Expected outcomes**
 
 - [ ] 👎 / 🤔 ↔ `disputeCount` mapping fires per-reaction
 - [ ] 👍 / ❤️ / 🚀 ↔ `agreementCount` mapping fires per-reaction
+- [ ] **#189** — a reaction added *after the final review* is still captured when the PR is **closed** (the close-sweep), not silently lost
 - [ ] Reactions on the TOP-level bot comment continue to populate `ReviewItem.reactions` separately (back-compat)
 - [ ] Reactions added by `mergewatch[bot]` itself are ignored (no self-counting)
 
 **Failure modes**
 - ❌ Reaction removal decrements the counter (must be monotonic)
+- ❌ **#189** — a reaction added after the last review never increments because no poll ever ran (must be captured by the close-sweep)
 - ❌ Reactions on a CopilotAI / dependabot inline comment get attributed to a MergeWatch finding (must filter by `INLINE_BOT_COMMENT_MARKER`)
 - ❌ Bot's own reactions count (loop)
 
