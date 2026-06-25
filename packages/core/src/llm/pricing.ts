@@ -10,18 +10,29 @@ interface ModelPricing {
   outputPer1M: number;
 }
 
-/** Default pricing for known models (USD per 1M tokens). */
+/**
+ * Default pricing for known models (USD per 1M tokens). Covers the Anthropic
+ * models MergeWatch ships/recommends, by both Bedrock and direct-Anthropic ID.
+ * Self-hosted operators on any other model (Ollama, LiteLLM, a newer alias)
+ * should set a `pricing:` override in `.mergewatch.yml`; unknown models return
+ * null (counted but excluded from spend). Tiers: Opus $5/$25, legacy Opus
+ * $15/$75, Sonnet $3/$15, Haiku $0.80/$4 per 1M.
+ */
 export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // Bedrock Anthropic model IDs
+  'us.anthropic.claude-opus-4-8-v1': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-6-v1': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-20250514-v1:0': { inputPer1M: 15, outputPer1M: 75 },
+  'us.anthropic.claude-sonnet-4-6': { inputPer1M: 3, outputPer1M: 15 },
   'us.anthropic.claude-sonnet-4-20250514-v1:0': { inputPer1M: 3, outputPer1M: 15 },
   'us.anthropic.claude-haiku-4-5-20251001-v1:0': { inputPer1M: 0.80, outputPer1M: 4 },
   'us.anthropic.claude-3-5-haiku-20241022-v1:0': { inputPer1M: 0.80, outputPer1M: 4 },
 
   // Direct Anthropic model IDs
+  'claude-opus-4-8': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-6': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-20250514': { inputPer1M: 15, outputPer1M: 75 },
+  'claude-sonnet-4-6': { inputPer1M: 3, outputPer1M: 15 },
   'claude-sonnet-4-20250514': { inputPer1M: 3, outputPer1M: 15 },
   'claude-haiku-4-5-20251001': { inputPer1M: 0.80, outputPer1M: 4 },
   'claude-3-5-haiku-20241022': { inputPer1M: 0.80, outputPer1M: 4 },

@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import type { Cost, CycleTime, Engagement, Insight, Percentiles } from "./types";
 import { fmtHours, fmtPct, fmtUsd } from "./format";
+import { isAllUnpriced } from "@/lib/cost-insight";
 
 /** Small headline metric card matching the dashboard StatCard pattern. */
 function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
@@ -389,6 +390,19 @@ export function CostSection({
           subtext={c.unpricedReviewCount > 0 ? `${c.unpricedReviewCount.toLocaleString()} unpriced` : "all priced"}
         />
       </div>
+
+      {isAllUnpriced(c) && (
+        <div className="mt-4 rounded-md border border-border-default bg-surface-subtle p-3 text-xs text-text-secondary">
+          <p className="font-medium text-text-primary">No spend shown — this model isn&apos;t priced.</p>
+          <p className="mt-1">
+            Every review in this window ran on a model with no known pricing, so
+            spend reads $0. Add a <code className="px-1">pricing:</code> entry (USD
+            per 1M tokens) for your model in <code className="px-1">.mergewatch.yml</code> to
+            surface cost — use <code className="px-1">0</code>/<code className="px-1">0</code> for a
+            local model to record a real $0.
+          </p>
+        </div>
+      )}
 
       {repos.length > 0 && (
         <div className="mt-5">

@@ -172,6 +172,15 @@ excludePatterns:
 tone: collaborative
 
 maxFindings: 25
+
+# LLM cost pricing (USD per 1M tokens). MergeWatch prices the Anthropic models
+# it ships with out of the box; add an entry here for any other model — Ollama,
+# LiteLLM, a newer alias — so per-PR and dashboard cost show real spend instead
+# of "unpriced". Use 0/0 for a local model to record a real $0.
+pricing:
+  gpt-4o:
+    inputPer1M: 2.5
+    outputPer1M: 10
 ```
 
 Settings can also be managed from the dashboard (per-installation).
