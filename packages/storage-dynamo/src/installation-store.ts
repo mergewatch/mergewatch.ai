@@ -7,8 +7,8 @@
 
 import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import type { IInstallationStore } from '@mergewatch/core';
-import type { InstallationItem, InstallationSettings } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS } from '@mergewatch/core';
+import type { InstallationItem, InstallationSettings, OrgCustomAgent } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
 
 export class DynamoInstallationStore implements IInstallationStore {
   constructor(
@@ -59,6 +59,33 @@ export class DynamoInstallationStore implements IInstallationStore {
       new PutCommand({
         TableName: this.tableName,
         Item: item,
+      }),
+    );
+  }
+
+  async getCustomAgents(installationId: string): Promise<OrgCustomAgent[]> {
+    try {
+      const result = await this.client.send(
+        new GetCommand({
+          TableName: this.tableName,
+          Key: { installationId, repoFullName: '#AGENTS' },
+        }),
+      );
+      return sanitizeOrgCustomAgents(result.Item?.agents);
+    } catch {
+      return [];
+    }
+  }
+
+  async upsertCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          installationId,
+          repoFullName: '#AGENTS',
+          agents: sanitizeOrgCustomAgents(agents),
+        },
       }),
     );
   }

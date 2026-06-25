@@ -15,6 +15,7 @@ import type {
   HelpfulVoteRecord,
   NpsResponseRecord,
   ReviewCostRecord,
+  OrgCustomAgent,
 } from '../types/db.js';
 
 export interface IInstallationStore {
@@ -29,6 +30,15 @@ export interface IInstallationStore {
    * hundreds even at scale).
    */
   listInstallationIds(): Promise<string[]>;
+  /**
+   * #235 — read the installation's org custom agents (dashboard-defined,
+   * enforced in reviews). Returns an empty array when none are set. Always
+   * returns a sanitized, well-formed array (defensive against a malformed
+   * stored blob).
+   */
+  getCustomAgents(installationId: string): Promise<OrgCustomAgent[]>;
+  /** #235 — replace the installation's org custom agents (full set). */
+  upsertCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void>;
 }
 
 export interface IReviewStore {

@@ -40,9 +40,9 @@ class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
         ExpressionAttributeValues: { ':iid': installationId },
       }),
     );
-    // Filter out the #SETTINGS sentinel row
+    // Filter out the sentinel rows (#SETTINGS, #AGENTS) — they aren't repos.
     return ((result.Items ?? []) as InstallationItem[]).filter(
-      (item) => item.repoFullName !== '#SETTINGS',
+      (item) => item.repoFullName !== '#SETTINGS' && item.repoFullName !== '#AGENTS',
     );
   }
 

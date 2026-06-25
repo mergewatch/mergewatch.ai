@@ -19,6 +19,8 @@ export const installationSettings = pgTable('installation_settings', {
   summary: jsonb('summary').notNull().default({ prSummary: true, confidenceScore: true, issuesTable: true, diagram: true }),
   customInstructions: text('custom_instructions').notNull().default(''),
   commentHeader: text('comment_header').notNull().default(''),
+  // #235 — org custom agents (dashboard-defined, enforced in reviews).
+  customAgents: jsonb('custom_agents').notNull().default([]),
 });
 
 export const reviews = pgTable('reviews', {

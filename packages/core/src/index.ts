@@ -282,6 +282,10 @@ export type {
   HelpfulVoteRecord,
   NpsResponseRecord,
   ReviewCostRecord,
+  OrgCustomAgent,
+  OrgAgentScope,
+  OrgAgentEnforcement,
 } from './types/db.js';
 
-export { DEFAULT_INSTALLATION_SETTINGS } from './types/db.js';
+export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP } from './types/db.js';
+export { sanitizeOrgCustomAgents } from './org-agents.js';
