@@ -28,6 +28,18 @@ describe('estimateCost', () => {
     expect(cost).toBeCloseTo(0.0175, 6);
   });
 
+  it('prices current-gen Sonnet 4.6 (Bedrock + direct) at $3/$15 per 1M', () => {
+    // (1_000_000/1M)*3 + (1_000_000/1M)*15 = 18
+    expect(estimateCost('us.anthropic.claude-sonnet-4-6', 1_000_000, 1_000_000)).toBeCloseTo(18, 6);
+    expect(estimateCost('claude-sonnet-4-6', 1_000_000, 1_000_000)).toBeCloseTo(18, 6);
+  });
+
+  it('prices current-gen Opus 4.8 (Bedrock + direct) at $5/$25 per 1M', () => {
+    // (1_000_000/1M)*5 + (1_000_000/1M)*25 = 30
+    expect(estimateCost('us.anthropic.claude-opus-4-8-v1', 1_000_000, 1_000_000)).toBeCloseTo(30, 6);
+    expect(estimateCost('claude-opus-4-8', 1_000_000, 1_000_000)).toBeCloseTo(30, 6);
+  });
+
   it('the retired claude-3-5-sonnet is no longer priced (returns null)', () => {
     expect(estimateCost('us.anthropic.claude-3-5-sonnet-20241022-v2:0', 100, 100)).toBeNull();
     expect(estimateCost('claude-3-5-sonnet-20241022', 100, 100)).toBeNull();

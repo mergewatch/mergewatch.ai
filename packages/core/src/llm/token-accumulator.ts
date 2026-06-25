@@ -55,6 +55,20 @@ export class TokenAccumulator {
     }
     return total;
   }
+
+  /**
+   * Model IDs used during this review that have no known pricing (after
+   * applying any custom overrides). Empty when every model is priced. Lets the
+   * caller surface an actionable "set a `pricing:` override" hint instead of a
+   * silent unpriced cost. A `0`/`0` priced model is NOT unpriced.
+   */
+  unpricedModels(customPricing?: Record<string, { inputPer1M: number; outputPer1M: number }>): string[] {
+    const unpriced: string[] = [];
+    for (const modelId of this.usage.keys()) {
+      if (estimateCost(modelId, 0, 0, customPricing) === null) unpriced.push(modelId);
+    }
+    return unpriced;
+  }
 }
 
 /**

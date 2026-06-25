@@ -2042,6 +2042,13 @@ function appendStalenessNote(reason: string, droppedCount: number): string {
 }
 
 /**
+ * #231 — model IDs we've already warned about being unpriced, so a long-lived
+ * self-hosted process logs the "set a pricing override" hint once per model
+ * instead of on every review.
+ */
+const WARNED_UNPRICED_MODELS = new Set<string>();
+
+/**
  * Execute the full multi-agent review pipeline.
  * All independent agents run in parallel; the orchestrator runs after they complete.
  */
@@ -2341,6 +2348,24 @@ export async function runReviewPipeline(
     orchestratorWarningsCount,
   });
 
+  // #231 — when a model isn't priced, cost shows as "unpriced" everywhere (PR
+  // comment + dashboard). Warn once per model so self-hosted operators know to
+  // add a `pricing:` override in .mergewatch.yml. Skipped when all models are
+  // priced (including a deliberate $0 local model).
+  const estimatedCostUsd = accumulator.estimateTotalCost(customPricing);
+  if (estimatedCostUsd === null) {
+    const newlyUnpriced = accumulator
+      .unpricedModels(customPricing)
+      .filter((m) => !WARNED_UNPRICED_MODELS.has(m));
+    if (newlyUnpriced.length > 0) {
+      newlyUnpriced.forEach((m) => WARNED_UNPRICED_MODELS.add(m));
+      console.warn(
+        `[cost] No pricing for model(s) ${newlyUnpriced.join(', ')} — review cost will show as "unpriced". ` +
+        `Add a "pricing:" entry (USD per 1M tokens) for this model in .mergewatch.yml to surface spend.`,
+      );
+    }
+  }
+
   return {
     summary,
     findings: filteredFindings,
@@ -2354,7 +2379,7 @@ export async function runReviewPipeline(
     enabledAgentCount,
     inputTokens: accumulator.totalInputTokens,
     outputTokens: accumulator.totalOutputTokens,
-    estimatedCostUsd: accumulator.estimateTotalCost(customPricing),
+    estimatedCostUsd,
     conventionsUsed: !!(conventions && conventions.trim()),
     deltaCaption,
   };

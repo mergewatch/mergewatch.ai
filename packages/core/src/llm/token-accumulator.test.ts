@@ -61,6 +61,28 @@ describe('TokenAccumulator', () => {
     });
     expect(cost).toBe(6);
   });
+
+  it('unpricedModels() is empty when every model is priced (#231)', () => {
+    const acc = new TokenAccumulator();
+    acc.add('claude-sonnet-4-20250514', { inputTokens: 10, outputTokens: 5 });
+    expect(acc.unpricedModels()).toEqual([]);
+  });
+
+  it('unpricedModels() lists models with no known pricing (#231)', () => {
+    const acc = new TokenAccumulator();
+    acc.add('claude-sonnet-4-20250514', { inputTokens: 10, outputTokens: 5 }); // priced
+    acc.add('llama3-local', { inputTokens: 10, outputTokens: 5 }); // unknown
+    expect(acc.unpricedModels()).toEqual(['llama3-local']);
+  });
+
+  it('unpricedModels() respects custom pricing, incl. a 0/0 priced model (#231)', () => {
+    const acc = new TokenAccumulator();
+    acc.add('llama3-local', { inputTokens: 10, outputTokens: 5 });
+    // Unpriced without an override...
+    expect(acc.unpricedModels()).toEqual(['llama3-local']);
+    // ...but a 0/0 override makes it priced ($0), not unpriced.
+    expect(acc.unpricedModels({ 'llama3-local': { inputPer1M: 0, outputPer1M: 0 } })).toEqual([]);
+  });
 });
 
 describe('TrackingLLMProvider', () => {

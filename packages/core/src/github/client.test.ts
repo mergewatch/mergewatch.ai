@@ -273,6 +273,50 @@ describe('parseRepoConfigYaml', () => {
     expect(result?.model).toBeUndefined();
   });
 
+  it('parses a valid pricing override (#231)', () => {
+    const yaml = `
+pricing:
+  gpt-4o:
+    inputPer1M: 2.5
+    outputPer1M: 10
+`;
+    const result = parseRepoConfigYaml(yaml);
+    expect(result?.pricing).toEqual({ 'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 } });
+  });
+
+  it('accepts 0/0 pricing (priced $0 for a local model) (#231)', () => {
+    const yaml = `
+pricing:
+  llama3:
+    inputPer1M: 0
+    outputPer1M: 0
+`;
+    const result = parseRepoConfigYaml(yaml);
+    expect(result?.pricing).toEqual({ llama3: { inputPer1M: 0, outputPer1M: 0 } });
+  });
+
+  it('skips malformed pricing entries but keeps valid ones (#231)', () => {
+    const yaml = `
+pricing:
+  good-model:
+    inputPer1M: 1
+    outputPer1M: 2
+  missing-output:
+    inputPer1M: 1
+  negative:
+    inputPer1M: -1
+    outputPer1M: 2
+  not-an-object: "nope"
+`;
+    const result = parseRepoConfigYaml(yaml);
+    expect(result?.pricing).toEqual({ 'good-model': { inputPer1M: 1, outputPer1M: 2 } });
+  });
+
+  it('leaves pricing undefined when all entries are invalid or it is an array (#231)', () => {
+    expect(parseRepoConfigYaml('pricing:\n  bad:\n    inputPer1M: "x"\n    outputPer1M: 2')?.pricing).toBeUndefined();
+    expect(parseRepoConfigYaml('pricing:\n  - foo')?.pricing).toBeUndefined();
+  });
+
   it('parses agents as boolean object', () => {
     const yaml = `
 agents:

@@ -49,3 +49,12 @@ minSeverity: info
 
 # Maximum findings posted per review.
 maxFindings: 25
+
+# LLM cost pricing overrides (USD per 1M tokens). The Anthropic models
+# MergeWatch ships with are priced out of the box; add an entry for any other
+# model (Ollama, LiteLLM, a newer alias) so per-PR + dashboard cost show real
+# spend instead of "unpriced". Use 0/0 for a local model to record a real $0.
+# pricing:
+#   gpt-4o:
+#     inputPer1M: 2.5
+#     outputPer1M: 10

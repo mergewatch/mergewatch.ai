@@ -887,6 +887,26 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     if (typeof parsed.model === 'string') config.model = parsed.model;
     if (typeof parsed.lightModel === 'string') config.lightModel = parsed.lightModel;
     if (typeof parsed.maxTokensPerAgent === 'number') config.maxTokensPerAgent = parsed.maxTokensPerAgent;
+
+    // Custom LLM pricing overrides (model ID -> USD per 1M tokens). Lets
+    // self-hosted operators price any model — Ollama, LiteLLM, a newer alias —
+    // so per-PR + dashboard cost show. Each entry needs numeric, non-negative
+    // inputPer1M / outputPer1M; malformed entries are skipped. `0`/`0` records a
+    // real $0 (priced), distinct from an unpriced (unknown) model.
+    if (parsed.pricing && typeof parsed.pricing === 'object' && !Array.isArray(parsed.pricing)) {
+      const pricing: Record<string, { inputPer1M: number; outputPer1M: number }> = {};
+      for (const [modelId, raw] of Object.entries(parsed.pricing as Record<string, unknown>)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const p = raw as Record<string, unknown>;
+        if (
+          typeof p.inputPer1M === 'number' && Number.isFinite(p.inputPer1M) && p.inputPer1M >= 0 &&
+          typeof p.outputPer1M === 'number' && Number.isFinite(p.outputPer1M) && p.outputPer1M >= 0
+        ) {
+          pricing[modelId] = { inputPer1M: p.inputPer1M, outputPer1M: p.outputPer1M };
+        }
+      }
+      if (Object.keys(pricing).length > 0) config.pricing = pricing;
+    }
     if (typeof parsed.minSeverity === 'string' && ['info', 'warning', 'critical'].includes(parsed.minSeverity)) {
       config.minSeverity = parsed.minSeverity as 'info' | 'warning' | 'critical';
     }

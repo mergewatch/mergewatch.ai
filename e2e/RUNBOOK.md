@@ -192,6 +192,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; hourly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 |
 | [E2E-64](#e2e-64-dashboard-restructure--analytics-value--accuracy-correctness-hourly-rollup-218) | Dashboard split by intent: Analytics = Activity + Impact (cost/cycle/engagement); FP Insights renamed Accuracy at `/dashboard/accuracy` (old `/dashboard/insights` 308-redirects, query preserved); rollup hourly both runtimes; both backends (#218) | 3m | 30s | #218 |
 | [E2E-65](#e2e-65-analytics-tabbed-view--accuracy-folded-in-227) | `/dashboard/analytics` is a tabbed view (Overview · Cost & Impact · Findings · Activity · Accuracy); active tab in `?tab=` (shareable, `?org=` preserved); `/dashboard/accuracy` redirects to `?tab=accuracy`; Accuracy nav item removed; filter bar scoped to data tabs (#227) | 2m | 30s | #227 |
+| [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 |
 
 ---
 
@@ -2340,6 +2341,36 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 - ❌ Switching tabs reloads the server page / loses `?org=` / doesn't update the URL.
 - ❌ `/dashboard/accuracy` 404s or the Accuracy tab is blank.
 - ❌ The date filter bar shows on the Cost or Accuracy tab (double window selectors).
+
+---
+
+### E2E-66: Self-hosted cost shows when the model is priced (#231)
+
+**Status:** ✅ SHIPPED.
+
+**Behavior:** On self-hosted, per-PR cost (the "Est. cost" line in the review comment) and the dashboard **Cost & Impact** block now populate whenever the model is priced. There is **no deployment-mode suppression** — cost was previously blank only because the model wasn't in the pricing table. Three things change:
+1. `DEFAULT_PRICING` (`packages/core/src/llm/pricing.ts`) gains the current-gen Anthropic IDs (Sonnet 4.6, Opus 4.8) by both Bedrock and direct ID, so direct-Anthropic self-hosters get cost with zero config. Unknown models still return `null`.
+2. The `.mergewatch.yml` **`pricing:`** override (model ID → `inputPer1M`/`outputPer1M` USD per 1M tokens) is now **parsed** (`parseRepoConfigYaml`). It was silently dropped before. Malformed/negative entries are skipped; `0`/`0` records a real **priced $0** (for a local model), distinct from an unpriced unknown model.
+3. When a review runs on an unpriced model, the server logs a one-time (per-model) `[cost] No pricing for model(s) …` warn pointing at the override, and the dashboard Cost section shows an actionable "set a `pricing:` override" hint instead of a silent $0.
+
+**How to run.** Self-hosted server with Postgres + cost rollup data.
+1. **Priced default** — set `model:` to a priced Anthropic ID (e.g. `claude-sonnet-4-6`). Run a review → the PR comment "Review details" drawer shows an `Est. cost` line; after the hourly rollup, `/dashboard/analytics?tab=cost` shows non-zero Total spend.
+2. **Override** — set `model:` to an unpriced model (e.g. an Ollama/LiteLLM ID) and add a matching `pricing:` block in `.mergewatch.yml`. Re-review → cost appears in both places.
+3. **Local $0** — set `pricing:` to `0`/`0` for the local model → "Reviews" shows "all priced", Total spend `$0.00` (not "unpriced").
+4. **Unpriced hint** — remove the `pricing:` entry → server logs the one-time `[cost]` warn; the dashboard Cost section shows the "this model isn't priced" hint with the `.mergewatch.yml` snippet.
+
+**Pass:**
+- [ ] Priced model → `Est. cost` in the PR comment **and** non-zero dashboard Total spend.
+- [ ] `.mergewatch.yml` `pricing:` override is applied (cost appears for an otherwise-unknown model); malformed entries ignored.
+- [ ] `0`/`0` model counts as priced ($0), not unpriced.
+- [ ] All-unpriced window → dashboard shows the actionable `pricing:` hint (not a silent $0); server logs the one-time warn.
+- [ ] SaaS/Bedrock cost unchanged; rollup still excludes unpriced reviews from money.
+
+**Fail signals:**
+- ❌ Cost still blank on a priced/overridden model.
+- ❌ `pricing:` in `.mergewatch.yml` has no effect (still dropped).
+- ❌ A `0`/`0` model is reported as "unpriced".
+- ❌ The unpriced warn spams every review instead of once per model.
 
 ---
 
