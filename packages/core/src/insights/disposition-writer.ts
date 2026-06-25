@@ -390,26 +390,58 @@ export async function sweepInlineReactionsOnClose(opts: {
   const { octokit, owner, repo, prNumber, reviewStore, dispositionStore, installationId, repoFullName } = opts;
   if (!dispositionStore || installationId == null) return;
   try {
-    const prevReviews = await reviewStore.queryByPR(repoFullName, `${prNumber}#`, 5).catch(() => []);
-    const latest = prevReviews.find((r) => r.status === 'complete');
+    // queryByPR is keyed on `${prNumber}#${commitSha}`; the `#` delimiter makes
+    // the `${prNumber}#` prefix unambiguous (PR 1 cannot match PR 12's `12#…`).
+    const prevReviews = await reviewStore.queryByPR(repoFullName, `${prNumber}#`, 10).catch(() => []);
+    const completes = prevReviews.filter((r) => r.status === 'complete');
+    // Baseline = the MAX reaction count per (comment, type) across EVERY prior
+    // review's snapshot. Counters are monotonic, so the merged view is exactly
+    // what's already been counted by an in-review poll. Merging (rather than
+    // picking "the latest" review) is what makes this correct: queryByPR sorts
+    // by commitSha, NOT by time, so a single `.find(complete)` could return a
+    // stale snapshot and double-count. The merge is order-independent.
+    const baseline = mergeReactionSnapshots(completes.map((r) => r.inlineReactionsSnapshot));
     const updated = await pollAndRecordInlineReactions(
       octokit, owner, repo, prNumber,
-      latest?.inlineReactionsSnapshot,
+      baseline,
       dispositionStore, installationId, repoFullName,
     );
-    // Persist the refreshed snapshot onto the latest review so a (rare)
-    // re-open → react → re-close sequence doesn't re-count earlier reactions.
-    if (latest && Object.keys(updated).length > 0) {
+    // Persist the refreshed snapshot onto a complete review so a later sweep
+    // (rare re-open → react → re-close) folds it into the merged baseline. Any
+    // complete review works — the merge picks it up regardless of order.
+    const target = completes[0];
+    if (target && Object.keys(updated).length > 0) {
       await reviewStore.updateStatus(
         repoFullName,
-        latest.prNumberCommitSha as string,
-        latest.status,
+        target.prNumberCommitSha as string,
+        target.status,
         { inlineReactionsSnapshot: updated },
       ).catch(() => {});
     }
   } catch (err) {
     console.warn('[fb-c] reaction sweep on close failed for %s#%d:', repoFullName, prNumber, err);
   }
+}
+
+/**
+ * Merge inline-reaction snapshots, taking the MAX count per (commentId, type).
+ * Reaction counters are monotonic, so the max across all prior reviews is
+ * everything already counted — the correct baseline for a close-time delta.
+ */
+function mergeReactionSnapshots(
+  snapshots: Array<Record<string, Record<string, number>> | undefined>,
+): Record<string, Record<string, number>> {
+  const merged: Record<string, Record<string, number>> = {};
+  for (const snap of snapshots) {
+    if (!snap) continue;
+    for (const [commentId, counts] of Object.entries(snap)) {
+      const into = (merged[commentId] ??= {});
+      for (const [type, n] of Object.entries(counts)) {
+        if (n > (into[type] ?? 0)) into[type] = n;
+      }
+    }
+  }
+  return merged;
 }
 
 // Re-exported so external callers don't need to dip into review-delta.js

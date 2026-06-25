@@ -487,10 +487,12 @@ describe('sweepInlineReactionsOnClose (FB-C #189)', () => {
   const inlineBody = '<!-- mergewatch-inline -->\n**🔴 Missing try/catch around fetch**\n\nDesc.';
   const expectedKey = 'src/worker.ts::T::Missing try/catch around fetch';
 
-  function makeReviewStore(latest: Partial<{ prNumberCommitSha: string; status: string; inlineReactionsSnapshot: Record<string, Record<string, number>> }> | null) {
+  type ReviewLike = Partial<{ prNumberCommitSha: string; status: string; inlineReactionsSnapshot: Record<string, Record<string, number>> }>;
+  function makeReviewStore(reviews: ReviewLike | ReviewLike[] | null) {
+    const list = reviews == null ? [] : Array.isArray(reviews) ? reviews : [reviews];
     const updates: Array<{ key: string; status: string; extra: Record<string, unknown> }> = [];
     const store = {
-      async queryByPR() { return latest ? [latest] : []; },
+      async queryByPR() { return list; },
       async updateStatus(_repo: string, key: string, status: string, extra: Record<string, unknown>) {
         updates.push({ key, status, extra });
       },
@@ -541,5 +543,25 @@ describe('sweepInlineReactionsOnClose (FB-C #189)', () => {
     });
     expect(octokit.pulls.listReviewComments as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     expect(rs.updates).toHaveLength(0);
+  });
+
+  it('merges ALL prior snapshots (max per type) so it cannot double-count regardless of queryByPR order (#189 review)', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { rocket: 2 } },
+    ]);
+    // queryByPR sorts by commitSha (NOT time). Review B's poll already counted
+    // 🚀:1 (its snapshot), but the stale review A (returned first) has {100:{}}.
+    // Merging both → baseline rocket:1, so only the NEW 🚀 (2−1) is counted.
+    const reviewA = { prNumberCommitSha: '1#aaa', status: 'complete', inlineReactionsSnapshot: { '100': {} } };
+    const reviewB = { prNumberCommitSha: '1#bbb', status: 'complete', inlineReactionsSnapshot: { '100': { rocket: 1 } } };
+    const rs = makeReviewStore([reviewA, reviewB]);
+    await sweepInlineReactionsOnClose({
+      octokit, owner: 'o', repo: 'r', prNumber: 1,
+      reviewStore: rs.store, dispositionStore: store, installationId: 42, repoFullName: 'org/repo',
+    });
+    // Only ONE new agreement (delta 2−1), NOT two — the merge prevents the
+    // double-count a naive `.find(complete)` on the stale review A would cause.
+    expect(store.calls.incrementAgreement.filter((c) => c[2] === expectedKey)).toHaveLength(1);
   });
 });
