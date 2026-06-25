@@ -1942,6 +1942,8 @@ Branch: `fixture/51-no-self-contradiction`. Two-commit sequence:
 
 Pure rendering change — no model calls, no prompt changes, no schema migrations.
 
+**Distinction from a verifier *drop* (#183):** FP-L handles the *demote* case — a critical the verifier kept but couldn't confirm (`verification: 'unverified'`) renders in "Unverified concerns." When the verifier instead **drops** a critical entirely (`keep: false`), it's gone from every surface — and `reconcileMergeScore` then **downgrades the now-stale blocking score** (→ 3 when warnings remain, → 5 when nothing remains) and regenerates the verdict reason, so the verdict prose, the rendered findings, the **review state** (`mergeScoreToReviewEvent`), and the **check conclusion** (`hasCritical`) all agree. Without it, a dropped critical left the state at `CHANGES_REQUESTED` while the check read `success` — the #183 mismatch.
+
 **Setup**
 
 Branch: `fixture/52-unverified-critical-render`. The cleanest repro is to mock the W2 verifier path so a specific critical comes back as `verification: 'unverified'`. Alternatively, exercise the live path on a PR whose critical is shaped like a stale-claim (e.g. a "SQL injection" finding pointed at a Drizzle call site — the verifier cannot confirm against `db.query` and returns `unverified`).
@@ -1955,6 +1957,7 @@ Branch: `fixture/52-unverified-critical-render`. The cleanest repro is to mock t
 - [x] **Empty-case omission:** When there are zero unverified criticals (the all-clean / verified-only path), the "Unverified concerns" sub-section is omitted entirely — no empty headers
 - [x] **W7 score-clamp unchanged:** The formal verdict subtitle still reads *"3/5 — Review recommended. Downgraded to advisory — the PR is not blocked on unverified concerns"* and `mergeScoreToReviewEvent` still returns `COMMENTED`
 - [x] **Back-compat:** A critical with no `verification` field at all (pre-W2 stored record OR a path where W2 didn't run) renders normally in all surfaces — inline, action-table, Critical section
+- [x] **#183 — verifier-dropped criticals stay consistent:** when the verifier drops ALL criticals, `reconcileMergeScore` downgrades the blocking score so the review state is non-blocking (COMMENTED / APPROVE) and matches the `success` check conclusion, and the regenerated reason no longer cites the dropped critical (locked by the `#183 invariant` unit test)
 
 **Failure modes**
 - ❌ Unverified critical still renders as 🔴 inline at the cited line (Layer 1 filter regressed)
@@ -1962,6 +1965,7 @@ Branch: `fixture/52-unverified-critical-render`. The cleanest repro is to mock t
 - ❌ The "Unverified concerns" header renders with `(0)` count when no unverified criticals exist (empty-omission check)
 - ❌ Verified criticals incorrectly land in the Unverified concerns section (the verification check is inverted)
 - ❌ Warnings tagged `verification: 'unverified'` get mis-routed to the Critical Unverified-concerns section (FP-L is explicitly critical-only; warnings retain their existing collapsed surface — see test `does not coerce unverified warnings into the Unverified concerns section`)
+- ❌ **#183** — a verifier-*dropped* critical leaves the review state `CHANGES_REQUESTED` while the check is `success` (the score wasn't reconciled against the post-filter findings)
 
 ---
 
