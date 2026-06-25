@@ -72,12 +72,15 @@ export function parseEnvModelPricing(
   outputPer1M: string | undefined,
 ): Record<string, ModelPricing> | undefined {
   if (!modelId) return undefined;
-  // Blank/whitespace counts as "not provided" — guards against Number('') === 0.
-  if (inputPer1M == null || inputPer1M.trim() === '') return undefined;
-  if (outputPer1M == null || outputPer1M.trim() === '') return undefined;
+  // Blank/whitespace counts as "not provided" — guards against Number('') === 0
+  // and Number('  ') === 0. The trim is applied to both the blank check and the
+  // numeric conversion so a whitespace-only value can never slip through as 0.
+  const inputTrimmed = inputPer1M?.trim();
+  const outputTrimmed = outputPer1M?.trim();
+  if (!inputTrimmed || !outputTrimmed) return undefined;
 
-  const input = Number(inputPer1M);
-  const output = Number(outputPer1M);
+  const input = Number(inputTrimmed);
+  const output = Number(outputTrimmed);
   if (!Number.isFinite(input) || input < 0) return undefined;
   if (!Number.isFinite(output) || output < 0) return undefined;
 

@@ -125,7 +125,14 @@ describe('parseEnvModelPricing (#233)', () => {
     expect(parseEnvModelPricing('m', undefined, '25')).toBeUndefined();
     expect(parseEnvModelPricing('m', '5', undefined)).toBeUndefined();
     expect(parseEnvModelPricing('m', '', '25')).toBeUndefined();
-    expect(parseEnvModelPricing('m', '5', '  ')).toBeUndefined();
+    expect(parseEnvModelPricing('m', '  ', '25')).toBeUndefined(); // whitespace-only input
+    expect(parseEnvModelPricing('m', '5', '  ')).toBeUndefined(); // whitespace-only output
+  });
+
+  it('trims surrounding whitespace around a valid number', () => {
+    expect(parseEnvModelPricing('m', ' 5 ', '  25 ')).toEqual({
+      m: { inputPer1M: 5, outputPer1M: 25 },
+    });
   });
 
   it('returns undefined for non-numeric, negative, or non-finite prices', () => {
