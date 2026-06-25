@@ -2361,7 +2361,9 @@ export async function runReviewPipeline(
       .unpricedModels(customPricing)
       .filter((m) => !WARNED_UNPRICED_MODELS.has(m));
     if (newlyUnpriced.length > 0) {
-      if (WARNED_UNPRICED_MODELS.size + newlyUnpriced.length > MAX_WARNED_UNPRICED_MODELS) {
+      // Bound the Set before adding (per-review unpriced count is tiny, so this
+      // keeps it at ~MAX). On overflow we clear and let warnings re-emit later.
+      if (WARNED_UNPRICED_MODELS.size >= MAX_WARNED_UNPRICED_MODELS) {
         WARNED_UNPRICED_MODELS.clear();
       }
       newlyUnpriced.forEach((m) => WARNED_UNPRICED_MODELS.add(m));
