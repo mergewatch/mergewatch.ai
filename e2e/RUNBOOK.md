@@ -193,6 +193,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-64](#e2e-64-dashboard-restructure--analytics-value--accuracy-correctness-hourly-rollup-218) | Dashboard split by intent: Analytics = Activity + Impact (cost/cycle/engagement); FP Insights renamed Accuracy at `/dashboard/accuracy` (old `/dashboard/insights` 308-redirects, query preserved); rollup hourly both runtimes; both backends (#218) | 3m | 30s | #218 |
 | [E2E-65](#e2e-65-analytics-tabbed-view--accuracy-folded-in-227) | `/dashboard/analytics` is a tabbed view (Overview · Cost & Impact · Findings · Activity · Accuracy); active tab in `?tab=` (shareable, `?org=` preserved); `/dashboard/accuracy` redirects to `?tab=accuracy`; Accuracy nav item removed; filter bar scoped to data tabs (#227) | 2m | 30s | #227 |
 | [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 |
+| [E2E-67](#e2e-67-global-env-pricing-for-the-llm_model-233) | Self-hosted global pricing: `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` price whatever `LLM_MODEL` is set to (e.g. a Bedrock inference-profile ARN) for full reviews **and** inline replies — no per-repo config; per-repo `pricing:` wins; `0`/`0` = real $0; partial/invalid → one-time warn (#233) | 3m | 30s | #233 |
 
 ---
 
@@ -2371,6 +2372,43 @@ Branch: `fixture/60-engagement-dashboard`. Use the E2E-59 installation (an `enga
 - ❌ `pricing:` in `.mergewatch.yml` has no effect (still dropped).
 - ❌ A `0`/`0` model is reported as "unpriced".
 - ❌ The unpriced warn spams every review instead of once per model.
+
+---
+
+### E2E-67: Global env pricing for the LLM_MODEL (#233)
+
+**Status:** ✅ SHIPPED.
+
+**Behavior:** Self-hosted operators usually set the review model globally with the `LLM_MODEL` env var (overrides `model` + `lightModel` for every repo — `review-processor.ts`). When that value is a model MergeWatch can't price by ID — most notably a **Bedrock application-inference-profile ARN** — two new env vars price it globally, with no per-repo `.mergewatch.yml`:
+
+```bash
+LLM_MODEL=arn:aws:bedrock:us-west-2:…:application-inference-profile/abc123
+LLM_MODEL_INPUT_PRICE_PER_1M=5
+LLM_MODEL_OUTPUT_PRICE_PER_1M=25
+```
+
+The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, applied to **both** the full review pipeline and the inline-reply cost (the inline path previously ignored custom pricing entirely — now fixed). Precedence: a per-repo `.mergewatch.yml` `pricing:` entry for the same model **overrides** the env price. `0`/`0` records a real priced `$0` (local model). If `LLM_MODEL` is set but the price vars are partial/invalid (only one set, non-numeric, negative), they're ignored with a **one-time** `[cost]` warn rather than silently reading as $0.
+
+**How to run.** Self-hosted server, `LLM_PROVIDER=bedrock`, `LLM_MODEL` = an application inference profile ARN.
+1. **Before:** with no price vars, run a review → the PR comment "Review details" drawer shows tokens but **no Est. cost**; dashboard Cost shows the ARN as unpriced.
+2. Set `LLM_MODEL_INPUT_PRICE_PER_1M=5` + `LLM_MODEL_OUTPUT_PRICE_PER_1M=25`, restart, re-review (`@mergewatch review`) → the comment now shows an `Est. cost` line; after the hourly rollup, `/dashboard/analytics?tab=cost` shows non-zero spend.
+3. **Inline reply:** reply in an inline thread → the rolled-up PR cost increases (inline reply is now priced too).
+4. **Override:** add a `pricing:` block for the same ARN in a repo's `.mergewatch.yml` with different numbers → that repo uses the per-repo price, not the env one.
+5. **Local $0:** set both vars to `0` → "Reviews" shows "all priced", Total spend `$0.00` (not "unpriced").
+6. **Partial/invalid:** set only the input var (or a non-numeric value) → one `[cost] … must both be set …` warn in the server log, cost stays unpriced.
+
+**Pass:**
+- [ ] `LLM_MODEL_*_PRICE_PER_1M` makes per-PR `Est. cost` + dashboard cost show for the `LLM_MODEL` (incl. an ARN) with no `.mergewatch.yml` change.
+- [ ] Both full-review and inline-reply costs are priced.
+- [ ] Per-repo `.mergewatch.yml` `pricing:` overrides the env price for the same model.
+- [ ] `0`/`0` → priced $0; partial/invalid → one-time warn, ignored.
+- [ ] Unset price vars → no change; SaaS/Bedrock unchanged.
+
+**Fail signals:**
+- ❌ Cost still blank after setting both price vars.
+- ❌ Inline replies stay unpriced while full reviews are priced.
+- ❌ Env price wins over a per-repo `pricing:` for the same model.
+- ❌ A partial/invalid value reads as $0 with no warning, or the warn spams every review.
 
 ---
 

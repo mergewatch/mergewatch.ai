@@ -187,6 +187,13 @@ export interface InlineReplyDeps {
   llm: ILLMProvider;
   /** Light model used for the reply (Haiku-class). */
   lightModelId: string;
+  /**
+   * #233 — custom pricing overrides (model ID → USD per 1M tokens) so the
+   * reply's `estimatedCostUsd` prices a model that isn't in the default table
+   * (e.g. a Bedrock inference-profile ARN set via LLM_MODEL). Optional;
+   * falls back to the default pricing table.
+   */
+  customPricing?: Record<string, { inputPer1M: number; outputPer1M: number }>;
 }
 
 export interface InlineReplyResult {
@@ -570,7 +577,7 @@ export async function handleInlineReply(
       botCommentId,
       inputTokens: accumulator.totalInputTokens,
       outputTokens: accumulator.totalOutputTokens,
-      estimatedCostUsd: accumulator.estimateTotalCost(),
+      estimatedCostUsd: accumulator.estimateTotalCost(deps.customPricing),
     };
   } finally {
     // Always clear the eyes reaction — even on error — so the comment doesn't
