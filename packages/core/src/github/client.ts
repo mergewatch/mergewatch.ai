@@ -546,7 +546,12 @@ export function extractInlineCommentFingerprint(body: string): string {
   if (!b64) return '';
   try {
     return Buffer.from(b64, 'base64').toString('utf-8');
-  } catch {
+  } catch (err) {
+    // Near-unreachable (the regex already constrained b64 to the base64
+    // alphabet), but if a marker is ever truncated/corrupted we log rather than
+    // swallow silently, then fall back to the title key — FP-F is best-effort,
+    // so a missing fingerprint just means the worst case is a re-raise.
+    console.warn('[fp-f] failed to decode inline fingerprint marker — falling back to title key:', err);
     return '';
   }
 }
