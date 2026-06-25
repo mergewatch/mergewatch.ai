@@ -317,6 +317,25 @@ pricing:
     expect(parseRepoConfigYaml('pricing:\n  - foo')?.pricing).toBeUndefined();
   });
 
+  it('skips prototype-pollution keys in pricing (#231)', () => {
+    const yaml = `
+pricing:
+  __proto__:
+    inputPer1M: 1
+    outputPer1M: 2
+  constructor:
+    inputPer1M: 1
+    outputPer1M: 2
+  safe-model:
+    inputPer1M: 3
+    outputPer1M: 4
+`;
+    const result = parseRepoConfigYaml(yaml);
+    expect(result?.pricing).toEqual({ 'safe-model': { inputPer1M: 3, outputPer1M: 4 } });
+    // The prototype is not polluted.
+    expect(({} as Record<string, unknown>).inputPer1M).toBeUndefined();
+  });
+
   it('parses agents as boolean object', () => {
     const yaml = `
 agents:

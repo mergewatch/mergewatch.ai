@@ -2044,9 +2044,12 @@ function appendStalenessNote(reason: string, droppedCount: number): string {
 /**
  * #231 — model IDs we've already warned about being unpriced, so a long-lived
  * self-hosted process logs the "set a pricing override" hint once per model
- * instead of on every review.
+ * instead of on every review. Bounded so a stream of distinct IDs (versioned
+ * names, typos) can't grow it without limit — on overflow we clear and let the
+ * warnings re-emit, which is harmless.
  */
 const WARNED_UNPRICED_MODELS = new Set<string>();
+const MAX_WARNED_UNPRICED_MODELS = 100;
 
 /**
  * Execute the full multi-agent review pipeline.
@@ -2358,6 +2361,9 @@ export async function runReviewPipeline(
       .unpricedModels(customPricing)
       .filter((m) => !WARNED_UNPRICED_MODELS.has(m));
     if (newlyUnpriced.length > 0) {
+      if (WARNED_UNPRICED_MODELS.size + newlyUnpriced.length > MAX_WARNED_UNPRICED_MODELS) {
+        WARNED_UNPRICED_MODELS.clear();
+      }
       newlyUnpriced.forEach((m) => WARNED_UNPRICED_MODELS.add(m));
       console.warn(
         `[cost] No pricing for model(s) ${newlyUnpriced.join(', ')} — review cost will show as "unpriced". ` +

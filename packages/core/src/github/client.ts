@@ -896,6 +896,8 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     if (parsed.pricing && typeof parsed.pricing === 'object' && !Array.isArray(parsed.pricing)) {
       const pricing: Record<string, { inputPer1M: number; outputPer1M: number }> = {};
       for (const [modelId, raw] of Object.entries(parsed.pricing as Record<string, unknown>)) {
+        // Skip prototype-pollution keys — never treat them as model IDs.
+        if (modelId === '__proto__' || modelId === 'constructor' || modelId === 'prototype') continue;
         if (!raw || typeof raw !== 'object') continue;
         const p = raw as Record<string, unknown>;
         if (
