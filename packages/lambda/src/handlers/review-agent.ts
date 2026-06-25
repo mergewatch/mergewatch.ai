@@ -55,6 +55,11 @@ import {
   recordQuietDrops,
   pollAndRecordInlineReactions,
   recordSummaryHelpfulVotes,
+  selectOrgAgentsForReview,
+  unionCustomAgents,
+  blockingCriticalAgents,
+  languagesFromFiles,
+  findingMatchKeys,
 } from '@mergewatch/core';
 import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
@@ -503,6 +508,14 @@ export async function handler(
     const installation = await installationStore.get(String(installationId), repoFullName);
 
     const instSettings = await installationStore.getSettings(String(installationId));
+    // #235 — org custom agents (dashboard-defined). Best-effort; never break a
+    // review on a store read failure.
+    const orgCustomAgents = await installationStore
+      .getCustomAgents(String(installationId))
+      .catch((err) => {
+        console.warn('Failed to load org custom agents:', err);
+        return [];
+      });
 
     const severityMap = { Low: 'info', Med: 'warning', High: 'critical' } as const;
     const settingsOverrides: Partial<MergeWatchConfig> = {
@@ -694,6 +707,37 @@ export async function handler(
       console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
     }
 
+    // #235 — org custom agents that apply to this PR (enabled, in repo scope,
+    // matching path/language targeting), run in union with the repo's
+    // `.mergewatch.yml` customAgents (org wins on name clash).
+    const changedFiles = prContext.files ?? [];
+    const selectedOrgAgents = selectOrgAgentsForReview(orgCustomAgents, {
+      repoFullName,
+      changedFiles,
+      languages: languagesFromFiles(changedFiles),
+    });
+    if (selectedOrgAgents.length > 0) {
+      console.log('[org-agents] %d org custom agent(s) apply to %s', selectedOrgAgents.length, repoFullName);
+    }
+    // Author triage of a blocking org agent's finding is allowed but recorded
+    // (every triage already lands in the disposition store); emit an explicit
+    // blocking-tagged signal for admins.
+    const blockingAgentNames = new Set(
+      selectedOrgAgents.filter((a) => a.enforcement === 'blocking').map((a) => a.name),
+    );
+    if (disputedKeys.length > 0 && blockingAgentNames.size > 0 && prevComplete?.findings) {
+      const disputedSet = new Set(disputedKeys);
+      const triagedBlocking = prevComplete.findings.filter(
+        (f) => blockingAgentNames.has(f.category) && findingMatchKeys(f).some((k) => disputedSet.has(k)),
+      );
+      if (triagedBlocking.length > 0) {
+        console.warn(
+          '[org-agents] author triaged %d finding(s) from blocking org agent(s) on %s#%d — recorded for admin review',
+          triagedBlocking.length, repoFullName, prNumber,
+        );
+      }
+    }
+
     const result = await runReviewPipeline({
       diff: filteredDiff,
       context: {
@@ -712,7 +756,7 @@ export async function handler(
         : { ...runtimeConfig.agents, diagram: instSettings.summary.diagram },
       fileFetchOptions,
       groundingFetch,
-      customAgents: runtimeConfig.customAgents,
+      customAgents: unionCustomAgents(selectedOrgAgents, runtimeConfig.customAgents),
       tone: runtimeConfig.ux.tone,
       customPricing: runtimeConfig.pricing,
       previousDiagram,
@@ -797,8 +841,16 @@ export async function handler(
       conventionsTruncated: conventionsResult?.truncated,
     });
 
+    // #235 — a critical finding from a *blocking* org agent gates the merge
+    // regardless of the overall score (REQUEST_CHANGES + failing check run).
+    const orgBlockedBy = blockingCriticalAgents(selectedOrgAgents, result.findings);
+    const orgBlocked = orgBlockedBy.length > 0;
+    if (orgBlocked) {
+      console.log('[org-agents] blocking gate fired for %s#%d via: %s', repoFullName, prNumber, orgBlockedBy.join(', '));
+    }
+
     // ── Step A: Upsert issue comment (full review — primary artifact) ──────
-    const reviewEvent = mergeScoreToReviewEvent(result.mergeScore);
+    const reviewEvent = orgBlocked ? 'REQUEST_CHANGES' : mergeScoreToReviewEvent(result.mergeScore);
     let commentId: number | undefined;
 
     // Look up existing comment: job payload → DynamoDB → API scan
@@ -978,21 +1030,25 @@ export async function handler(
       }
     }
 
+    // #235 — a blocking org agent fails the check too.
     const hasCritical = criticalCount > 0;
-    const checkConclusion = hasCritical ? 'failure' as const : 'success' as const;
+    const checkConclusion = (hasCritical || orgBlocked) ? 'failure' as const : 'success' as const;
     const findingSummaryParts: string[] = [];
     if (criticalCount) findingSummaryParts.push(`${criticalCount} critical`);
     if (warningCount) findingSummaryParts.push(`${warningCount} warning`);
     if (infoCount) findingSummaryParts.push(`${infoCount} info`);
+    if (orgBlocked) findingSummaryParts.push(`blocked by org agent: ${orgBlockedBy.join(', ')}`);
 
     await createCheckRun(octokit, owner, repo, headSha, {
       status: 'completed',
       conclusion: checkConclusion,
-      title: hasCritical
-        ? `${criticalCount} critical issue${criticalCount > 1 ? 's' : ''} found`
-        : result.findings.length > 0
-          ? `${result.findings.length} finding${result.findings.length > 1 ? 's' : ''} (no critical)`
-          : 'No issues found',
+      title: orgBlocked
+        ? `Blocked by org agent: ${orgBlockedBy.join(', ')}`
+        : hasCritical
+          ? `${criticalCount} critical issue${criticalCount > 1 ? 's' : ''} found`
+          : result.findings.length > 0
+            ? `${result.findings.length} finding${result.findings.length > 1 ? 's' : ''} (no critical)`
+            : 'No issues found',
       summary: findingSummaryParts.length > 0
         ? `Found: ${findingSummaryParts.join(', ')}`
         : 'No issues detected in this PR.',
