@@ -53,3 +53,33 @@ export function estimateCost(
   return (inputTokens / 1_000_000) * pricing.inputPer1M
        + (outputTokens / 1_000_000) * pricing.outputPer1M;
 }
+
+/**
+ * #233 — build a custom-pricing entry for a single model from raw env-var
+ * strings (`LLM_MODEL` + `LLM_MODEL_INPUT_PRICE_PER_1M` /
+ * `LLM_MODEL_OUTPUT_PRICE_PER_1M`). Lets a self-hosted operator price whatever
+ * `LLM_MODEL` is set to — including an opaque Bedrock inference-profile ARN —
+ * without a per-repo `.mergewatch.yml` entry.
+ *
+ * Pure + env-agnostic (the caller reads `process.env`). Returns a single-entry
+ * `{ [modelId]: { inputPer1M, outputPer1M } }` map, or `undefined` when it can't
+ * form a valid price: no model ID, either price missing/blank, or a price that
+ * isn't a finite, non-negative number. `0`/`0` is valid → a real priced $0.
+ */
+export function parseEnvModelPricing(
+  modelId: string | undefined,
+  inputPer1M: string | undefined,
+  outputPer1M: string | undefined,
+): Record<string, ModelPricing> | undefined {
+  if (!modelId) return undefined;
+  // Blank/whitespace counts as "not provided" — guards against Number('') === 0.
+  if (inputPer1M == null || inputPer1M.trim() === '') return undefined;
+  if (outputPer1M == null || outputPer1M.trim() === '') return undefined;
+
+  const input = Number(inputPer1M);
+  const output = Number(outputPer1M);
+  if (!Number.isFinite(input) || input < 0) return undefined;
+  if (!Number.isFinite(output) || output < 0) return undefined;
+
+  return { [modelId]: { inputPer1M: input, outputPer1M: output } };
+}

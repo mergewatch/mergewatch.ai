@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateCost, DEFAULT_PRICING } from './pricing.js';
+import { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './pricing.js';
 
 describe('estimateCost', () => {
   it('returns correct cost for a known Bedrock model', () => {
@@ -92,5 +92,53 @@ describe('estimateCost', () => {
       tokens.output,
     )!;
     expect(haikuCost).toBeLessThan(sonnetCost);
+  });
+});
+
+describe('parseEnvModelPricing (#233)', () => {
+  const ARN = 'arn:aws:bedrock:us-west-2:029800430051:application-inference-profile/hwswp7wpd6c5';
+
+  it('builds a single-entry map for a model + both prices', () => {
+    expect(parseEnvModelPricing(ARN, '5', '25')).toEqual({
+      [ARN]: { inputPer1M: 5, outputPer1M: 25 },
+    });
+  });
+
+  it('parses decimal prices', () => {
+    expect(parseEnvModelPricing('gpt-4o', '2.5', '10')).toEqual({
+      'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 },
+    });
+  });
+
+  it('allows 0/0 (priced $0 for a local model)', () => {
+    expect(parseEnvModelPricing('llama3', '0', '0')).toEqual({
+      llama3: { inputPer1M: 0, outputPer1M: 0 },
+    });
+  });
+
+  it('returns undefined when the model ID is missing', () => {
+    expect(parseEnvModelPricing(undefined, '5', '25')).toBeUndefined();
+    expect(parseEnvModelPricing('', '5', '25')).toBeUndefined();
+  });
+
+  it('returns undefined when either price is missing or blank', () => {
+    expect(parseEnvModelPricing('m', undefined, '25')).toBeUndefined();
+    expect(parseEnvModelPricing('m', '5', undefined)).toBeUndefined();
+    expect(parseEnvModelPricing('m', '', '25')).toBeUndefined();
+    expect(parseEnvModelPricing('m', '5', '  ')).toBeUndefined();
+  });
+
+  it('returns undefined for non-numeric, negative, or non-finite prices', () => {
+    expect(parseEnvModelPricing('m', 'abc', '25')).toBeUndefined();
+    expect(parseEnvModelPricing('m', '5', 'NaN')).toBeUndefined();
+    expect(parseEnvModelPricing('m', '-1', '25')).toBeUndefined();
+    expect(parseEnvModelPricing('m', 'Infinity', '25')).toBeUndefined();
+  });
+
+  it('feeds estimateCost as customPricing for an otherwise-unknown model', () => {
+    const pricing = parseEnvModelPricing(ARN, '5', '25');
+    expect(estimateCost(ARN, 1_000_000, 1_000_000, pricing)).toBeCloseTo(30, 6);
+    // ...and without it the same model is unpriced.
+    expect(estimateCost(ARN, 1_000_000, 1_000_000)).toBeNull();
   });
 });

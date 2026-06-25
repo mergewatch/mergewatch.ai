@@ -589,6 +589,48 @@ describe('handleInlineReply', () => {
     expect(calls.deleteForPullRequestComment).toHaveBeenCalled();
   });
 
+  it('#233 — prices the reply via customPricing keyed to the light model', async () => {
+    const agentResponse = JSON.stringify({
+      reply: 'Thanks — that makes sense.',
+      recommendation: 'keep',
+      reasoning: 'x',
+    });
+    const ARN = 'arn:aws:bedrock:us-west-2:0:application-inference-profile/abc';
+    const llmWithUsage: ILLMProvider = {
+      invoke: async () => ({
+        text: agentResponse,
+        usage: { inputTokens: 1_000_000, outputTokens: 1_000_000 },
+      }),
+    };
+
+    // Unpriced: the ARN light model isn't in the default table → cost is null.
+    {
+      const { octokit } = makeOctokitMock(baseComments);
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+        { octokit, llm: llmWithUsage, lightModelId: ARN },
+      );
+      expect(result.action).toBe('replied');
+      expect(result.estimatedCostUsd).toBeNull();
+    }
+
+    // Priced via customPricing keyed to the same ARN → real spend.
+    {
+      const { octokit } = makeOctokitMock(baseComments);
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+        {
+          octokit,
+          llm: llmWithUsage,
+          lightModelId: ARN,
+          customPricing: { [ARN]: { inputPer1M: 5, outputPer1M: 25 } },
+        },
+      );
+      expect(result.action).toBe('replied');
+      expect(result.estimatedCostUsd).toBeGreaterThan(0);
+    }
+  });
+
   it('stops engaging once the thread already has MAX_BOT_REPLIES bot replies', async () => {
     const thread = [
       { id: 100, body: 'finding', user: { login: 'mergewatch[bot]', type: 'Bot' as const }, created_at: '2026-04-01T00:00:00Z' },

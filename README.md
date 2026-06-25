@@ -185,6 +185,18 @@ pricing:
 
 Settings can also be managed from the dashboard (per-installation).
 
+### Pricing a model set globally (self-hosted)
+
+Self-hosted deployments often set the model once for every repo via the `LLM_MODEL` env var. When that model isn't one MergeWatch already prices — most commonly a **Bedrock application-inference-profile ARN** — price it globally with a matching pair of env vars instead of a per-repo `pricing:` block:
+
+```bash
+LLM_MODEL=arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123
+LLM_MODEL_INPUT_PRICE_PER_1M=5     # USD per 1M input tokens
+LLM_MODEL_OUTPUT_PRICE_PER_1M=25   # USD per 1M output tokens
+```
+
+Both must be set (a partial/invalid value is ignored with a warning). Use `0`/`0` for a local model to record a real `$0`. A per-repo `.mergewatch.yml` `pricing:` entry for the same model **overrides** the env price.
+
 ## Interacting via comments
 
 | Comment | What happens |

@@ -16,8 +16,50 @@ import {
   fetchTriageComments, computeDisputedKeys, partitionDisputed,
   recordFindingSurfacings, recordDisputes, recordResolves, detectQuietDrops, recordQuietDrops,
   pollAndRecordInlineReactions, recordSummaryHelpfulVotes,
+  parseEnvModelPricing,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
+
+// -- LLM cost pricing (#233) -------------------------------------------------
+
+type PricingMap = Record<string, { inputPer1M: number; outputPer1M: number }>;
+
+let warnedEnvPricingInvalid = false;
+
+function hasValue(v: string | undefined): boolean {
+  return v != null && v.trim() !== '';
+}
+
+/**
+ * #233 — custom pricing for the globally-configured `LLM_MODEL`, read from the
+ * `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` env vars.
+ * Returns undefined when not (validly) set. Warns once if `LLM_MODEL` is set and
+ * the price vars are partial/invalid, so a typo doesn't silently read as $0.
+ */
+function envModelPricing(): PricingMap | undefined {
+  const model = process.env.LLM_MODEL;
+  const input = process.env.LLM_MODEL_INPUT_PRICE_PER_1M;
+  const output = process.env.LLM_MODEL_OUTPUT_PRICE_PER_1M;
+  const pricing = parseEnvModelPricing(model, input, output);
+  if (!pricing && model && (hasValue(input) || hasValue(output)) && !warnedEnvPricingInvalid) {
+    warnedEnvPricingInvalid = true;
+    console.warn(
+      '[cost] LLM_MODEL_INPUT_PRICE_PER_1M and LLM_MODEL_OUTPUT_PRICE_PER_1M must both be set ' +
+      'to valid non-negative numbers to price LLM_MODEL — ignoring the partial/invalid value.',
+    );
+  }
+  return pricing;
+}
+
+/**
+ * Merge the global env price (base) with repo/installation/dashboard pricing
+ * (more specific — wins). Returns undefined when neither contributes anything,
+ * so callers pass `undefined` (not `{}`) and behaviour is unchanged.
+ */
+function mergePricing(env: PricingMap | undefined, repo: PricingMap | undefined): PricingMap | undefined {
+  const merged = { ...(env ?? {}), ...(repo ?? {}) };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
 
 // -- Conversational response handler -----------------------------------------
 
@@ -116,6 +158,9 @@ async function handleInlineReplyJob(
     const conventionsResult = await fetchConventions(octokit, owner, repo, ref, yamlConfig?.conventions).catch(() => null);
 
     const lightModelId = process.env.LLM_MODEL ?? 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+    // #233 — price the reply's tokens the same way the full review does: global
+    // LLM_MODEL_*_PRICE env (base) + this repo's `.mergewatch.yml` pricing (wins).
+    const customPricing = mergePricing(envModelPricing(), yamlConfig?.pricing);
 
     const result = await handleInlineReply(
       {
@@ -129,6 +174,7 @@ async function handleInlineReplyJob(
         octokit,
         llm: deps.llm,
         lightModelId,
+        customPricing,
       },
     );
 
@@ -566,7 +612,8 @@ export async function processReviewJob(
         groundingFetch,
         customAgents: config.customAgents,
         tone: config.ux.tone,
-        customPricing: config.pricing,
+        // #233 — global LLM_MODEL_*_PRICE env (base) + repo/dashboard pricing (wins).
+        customPricing: mergePricing(envModelPricing(), config.pricing),
         previousDiagram,
         previousFindings: priorForOrchestrator,
         disputedKeys,
