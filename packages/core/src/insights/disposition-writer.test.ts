@@ -6,8 +6,9 @@ import {
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
+  sweepInlineReactionsOnClose,
 } from './disposition-writer.js';
-import type { IFindingDispositionStore } from '../storage/types.js';
+import type { IFindingDispositionStore, IReviewStore } from '../storage/types.js';
 import type { OrchestratedFinding, PreviousFinding } from '../agents/reviewer.js';
 import type { Octokit } from '@octokit/rest';
 
@@ -477,5 +478,68 @@ describe('pollAndRecordInlineReactions (FB-C)', () => {
     expect(store.calls.incrementDispute).toHaveLength(0);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+// ─── sweepInlineReactionsOnClose (FB-C #189) ────────────────────────────────
+
+describe('sweepInlineReactionsOnClose (FB-C #189)', () => {
+  const inlineBody = '<!-- mergewatch-inline -->\n**🔴 Missing try/catch around fetch**\n\nDesc.';
+  const expectedKey = 'src/worker.ts::T::Missing try/catch around fetch';
+
+  function makeReviewStore(latest: Partial<{ prNumberCommitSha: string; status: string; inlineReactionsSnapshot: Record<string, Record<string, number>> }> | null) {
+    const updates: Array<{ key: string; status: string; extra: Record<string, unknown> }> = [];
+    const store = {
+      async queryByPR() { return latest ? [latest] : []; },
+      async updateStatus(_repo: string, key: string, status: string, extra: Record<string, unknown>) {
+        updates.push({ key, status, extra });
+      },
+      async upsert() { /* unused */ },
+    } as unknown as IReviewStore;
+    return { store, updates };
+  }
+
+  it('counts reactions added since the last review and persists the refreshed snapshot', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { rocket: 1 } },
+    ]);
+    // Latest review's snapshot had no reactions on comment 100 → delta rocket:1.
+    const rs = makeReviewStore({ prNumberCommitSha: '1#abc', status: 'complete', inlineReactionsSnapshot: { '100': {} } });
+    await sweepInlineReactionsOnClose({
+      octokit, owner: 'o', repo: 'r', prNumber: 1,
+      reviewStore: rs.store, dispositionStore: store, installationId: 42, repoFullName: 'org/repo',
+    });
+    expect(store.calls.incrementAgreement.filter((c) => c[2] === expectedKey)).toHaveLength(1);
+    // Refreshed snapshot is persisted back onto the latest review.
+    expect(rs.updates).toHaveLength(1);
+    expect((rs.updates[0].extra.inlineReactionsSnapshot as Record<string, Record<string, number>>)['100'].rocket).toBe(1);
+  });
+
+  it('still captures reactions when there is no prior review (first-ever poll)', async () => {
+    const store = makeMockStore();
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { '-1': 1 } },
+    ]);
+    const rs = makeReviewStore(null); // queryByPR → []
+    await sweepInlineReactionsOnClose({
+      octokit, owner: 'o', repo: 'r', prNumber: 1,
+      reviewStore: rs.store, dispositionStore: store, installationId: 42, repoFullName: 'org/repo',
+    });
+    expect(store.calls.incrementDispute.filter((c) => c[2] === expectedKey)).toHaveLength(1);
+    expect(rs.updates).toHaveLength(0); // nothing to persist onto
+  });
+
+  it('no-ops (no API call) when no disposition store is wired', async () => {
+    const octokit = makeReactionOctokit([
+      { id: 100, body: inlineBody, path: 'src/worker.ts', user: { type: 'Bot' }, reactions: { rocket: 1 } },
+    ]);
+    const rs = makeReviewStore({ prNumberCommitSha: '1#abc', status: 'complete' });
+    await sweepInlineReactionsOnClose({
+      octokit, owner: 'o', repo: 'r', prNumber: 1,
+      reviewStore: rs.store, dispositionStore: undefined, installationId: 42, repoFullName: 'org/repo',
+    });
+    expect(octokit.pulls.listReviewComments as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(rs.updates).toHaveLength(0);
   });
 });

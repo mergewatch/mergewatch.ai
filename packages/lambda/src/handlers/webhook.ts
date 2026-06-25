@@ -23,6 +23,7 @@ import {
   fetchRepoConfig,
   mergeConfig,
   isBotActor,
+  sweepInlineReactionsOnClose,
 } from '@mergewatch/core';
 import type {
   PullRequestEvent,
@@ -34,7 +35,10 @@ import type {
   ReviewJobPayload,
   AgentReviewConfig,
 } from '@mergewatch/core';
-import { DynamoPRLifecycleStore, DEFAULT_PR_LIFECYCLE_TABLE } from '@mergewatch/storage-dynamo';
+import {
+  DynamoPRLifecycleStore, DEFAULT_PR_LIFECYCLE_TABLE,
+  DynamoReviewStore, DynamoFindingDispositionStore, DEFAULT_FINDING_DISPOSITIONS_TABLE,
+} from '@mergewatch/storage-dynamo';
 import { SSMGitHubAuthProvider, getWebhookSecret } from '../github-auth-ssm.js';
 
 // ---------------------------------------------------------------------------
@@ -49,6 +53,13 @@ const authProvider = new SSMGitHubAuthProvider();
 // transitions directly (no review needed); ReviewAgent marks reviewed/skipped.
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const prLifecycleStore = new DynamoPRLifecycleStore(dynamodb, PR_LIFECYCLE_TABLE);
+
+// FB-C (#189) — review + disposition stores for the close-time reaction sweep.
+const reviewStore = new DynamoReviewStore(dynamodb, process.env.REVIEWS_TABLE ?? 'mergewatch-reviews');
+const dispositionStore = new DynamoFindingDispositionStore(
+  dynamodb,
+  process.env.FINDING_DISPOSITIONS_TABLE ?? DEFAULT_FINDING_DISPOSITIONS_TABLE,
+);
 
 // ---------------------------------------------------------------------------
 // Signature verification
@@ -201,6 +212,27 @@ async function handlePullRequestEvent(
   // Record lifecycle for every relevant action (incl. `closed`) before the
   // review gate — merges/closes terminate the lifecycle without a review.
   await recordPrLifecycle(event, installationId);
+
+  // FB-C (#189) — reactions don't emit webhooks and the in-review poll can't see
+  // a reaction added after the final review (the common case). On the terminal
+  // `closed` event, sweep once so end-of-PR 👍/👎 aren't lost.
+  if (action === 'closed') {
+    try {
+      const octokit = await authProvider.getInstallationOctokit(installationId);
+      await sweepInlineReactionsOnClose({
+        octokit,
+        owner: repository.owner.login,
+        repo: repository.name,
+        prNumber: pr.number,
+        reviewStore,
+        dispositionStore,
+        installationId: String(installationId),
+        repoFullName: repository.full_name,
+      });
+    } catch (err) {
+      console.warn('[fb-c] close reaction sweep failed to start:', err);
+    }
+  }
 
   if (!(REVIEW_TRIGGERING_ACTIONS as readonly string[]).includes(action)) return;
 

@@ -163,6 +163,7 @@ export {
   detectQuietDrops,
   recordQuietDrops,
   pollAndRecordInlineReactions,
+  sweepInlineReactionsOnClose,
 } from './insights/disposition-writer.js';
 
 // ─── Insight rollup (FB-E) ─────────────────────────────────────────────────

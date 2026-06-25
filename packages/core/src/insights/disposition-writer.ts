@@ -13,7 +13,7 @@
  * "event". Callers should not loop the same event with the same key set.
  */
 
-import type { IFindingDispositionStore } from '../storage/types.js';
+import type { IFindingDispositionStore, IReviewStore } from '../storage/types.js';
 import type { OrchestratedFinding, PreviousFinding } from '../agents/reviewer.js';
 import { findingMatchKeys, fingerprintFromCode } from '../review-delta.js';
 import { extractSignificantTokens } from '../finding-clustering.js';
@@ -364,6 +364,52 @@ export async function pollAndRecordInlineReactions(
   }
 
   return newSnapshot;
+}
+
+/**
+ * FB-C (#189) — final inline-reaction sweep when a PR closes / merges.
+ *
+ * GitHub does NOT emit a webhook for reactions, and `pollAndRecordInlineReactions`
+ * only runs *during a review*. A reaction added after the last review — the
+ * common case, since people react when they read the review — would otherwise
+ * never be counted. On the terminal `closed` event we do one last poll, seeded
+ * by the latest review's snapshot so only reactions added since the last poll
+ * are counted, and persist the refreshed snapshot (so a rare re-open + re-close
+ * can't double-count). Best-effort; never throws.
+ */
+export async function sweepInlineReactionsOnClose(opts: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  reviewStore: IReviewStore;
+  dispositionStore: IFindingDispositionStore | undefined;
+  installationId: string | number | undefined;
+  repoFullName: string;
+}): Promise<void> {
+  const { octokit, owner, repo, prNumber, reviewStore, dispositionStore, installationId, repoFullName } = opts;
+  if (!dispositionStore || installationId == null) return;
+  try {
+    const prevReviews = await reviewStore.queryByPR(repoFullName, `${prNumber}#`, 5).catch(() => []);
+    const latest = prevReviews.find((r) => r.status === 'complete');
+    const updated = await pollAndRecordInlineReactions(
+      octokit, owner, repo, prNumber,
+      latest?.inlineReactionsSnapshot,
+      dispositionStore, installationId, repoFullName,
+    );
+    // Persist the refreshed snapshot onto the latest review so a (rare)
+    // re-open → react → re-close sequence doesn't re-count earlier reactions.
+    if (latest && Object.keys(updated).length > 0) {
+      await reviewStore.updateStatus(
+        repoFullName,
+        latest.prNumberCommitSha as string,
+        latest.status,
+        { inlineReactionsSnapshot: updated },
+      ).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[fb-c] reaction sweep on close failed for %s#%d:', repoFullName, prNumber, err);
+  }
 }
 
 // Re-exported so external callers don't need to dip into review-delta.js
