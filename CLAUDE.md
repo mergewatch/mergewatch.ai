@@ -106,7 +106,7 @@ The review pipeline runs parallel specialized agents (security, bug, style, summ
 
 ### Data Layer
 **SaaS (DynamoDB):** Two tables defined in `infra/template.yaml`:
-- **mergewatch-installations** — PK: `installationId`, SK: `repoFullName` (or `#SETTINGS` for installation-level settings)
+- **mergewatch-installations** — PK: `installationId`, SK: `repoFullName` (or `#SETTINGS` for installation-level settings, `#AGENTS` for org custom agents)
 - **mergewatch-reviews** — PK: `repoFullName`, SK: `prNumberCommitSha` (format: `42#abc123`). 90-day TTL.
 
 **Self-hosted (Postgres):** Drizzle ORM schema in `packages/storage-postgres/src/schema.ts`:
@@ -128,6 +128,7 @@ Types in `packages/core/src/types/db.ts`, GitHub payload types in `packages/core
 - Comment upsert: finds existing bot comment via HTML marker, DynamoDB lookup, or GitHub API scan
 - Smart skip: `shouldSkipPR()` in `packages/core/src/skip-logic.ts` detects docs-only/lock-file PRs to avoid unnecessary LLM costs
 - Installation settings stored as sentinel row with SK `#SETTINGS` in the installations table
+- Org custom agents (#235): dashboard-defined, stored as the `#AGENTS` sentinel row (DynamoDB) / `installation_settings.custom_agents` jsonb (Postgres); selected by repo scope + path/language targeting, run in union with repo `.mergewatch.yml` `customAgents` (org wins), and a `blocking` agent's critical finding fails the check + requests changes. Logic in `packages/core/src/org-agents.ts`
 - SaaS: Zero API keys — Lambda uses IAM instance profiles for Bedrock; GitHub credentials in SSM
 - Self-hosted: LLM provider configurable via `LLM_PROVIDER` env var (anthropic, bedrock, litellm, ollama)
 

@@ -197,6 +197,17 @@ LLM_MODEL_OUTPUT_PRICE_PER_1M=25   # USD per 1M output tokens
 
 Both must be set (a partial/invalid value is ignored with a warning). Use `0`/`0` for a local model to record a real `$0`. A per-repo `.mergewatch.yml` `pricing:` entry for the same model **overrides** the env price.
 
+## Org Custom Agents
+
+Beyond the per-repo `customAgents` in `.mergewatch.yml`, **organization admins** can define custom review agents from the dashboard (**Settings → Custom Agents**) and have them enforced across the org's repositories. Each org agent has:
+
+- **Prompt + severity** — what it looks for and the default severity of its findings.
+- **Repo scope** — applies to **all repositories** or a **selected allowlist**.
+- **Targeting (optional)** — only run when the PR changes files matching given **path globs** and/or **languages**.
+- **Enforcement** — **advisory** (surfaces findings only) or **blocking** (a *critical* finding fails the check run **and** requests changes, regardless of the overall merge score).
+
+Org agents run **in addition to** each repo's own `.mergewatch.yml` `customAgents` — on a name collision, the org agent wins (repos can add agents, not remove org ones). Only org admins can create or edit them; other members see a read-only view. Each agent adds an LLM call per review, so the dashboard warns past a recommended count. Available on both SaaS and self-hosted.
+
 ## Interacting via comments
 
 | Comment | What happens |
