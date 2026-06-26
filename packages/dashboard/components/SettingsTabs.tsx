@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 
 const tabs = [
   { label: "General", href: "/dashboard/settings" },
+  { label: "Custom Agents", href: "/dashboard/settings/custom-agents" },
   { label: "API Keys", href: "/dashboard/settings/api-keys" },
 ];
 
