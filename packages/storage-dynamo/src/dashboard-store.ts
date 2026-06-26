@@ -92,7 +92,8 @@ class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
         }),
       );
       return sanitizeOrgCustomAgents(result.Item?.agents);
-    } catch {
+    } catch (err) {
+      console.error('[dashboard-store] getCustomAgents failed:', err);
       return [];
     }
   }

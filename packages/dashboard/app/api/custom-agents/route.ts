@@ -69,7 +69,10 @@ export async function PUT(req: NextRequest) {
     if (err instanceof TokenExpiredError) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });
     }
-    throw err;
+    // GitHub API/network failure during the admin check — log for diagnostics
+    // and surface a 503 (rather than an opaque unhandled 500).
+    console.error("[custom-agents] admin check failed:", err);
+    return NextResponse.json({ error: "GitHub API unavailable, please retry" }, { status: 503 });
   }
 
   const body = await req.json().catch(() => null);
