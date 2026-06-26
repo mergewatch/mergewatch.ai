@@ -20,9 +20,8 @@ import type {
   InstallationSettings,
   ReviewItem,
   ReviewStatus,
-  OrgCustomAgent,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS } from '@mergewatch/core';
 import { installations, installationSettings, reviews } from './schema.js';
 
 // ─── Helper: map a Drizzle row to ReviewItem ────────────────────────────────
@@ -119,27 +118,6 @@ class PostgresDashboardInstallationStore implements IDashboardInstallationStore 
           customInstructions: settings.customInstructions,
           commentHeader: settings.commentHeader,
         },
-      });
-  }
-
-  async getCustomAgents(installationId: string): Promise<OrgCustomAgent[]> {
-    const rows = await this.db
-      .select({ customAgents: installationSettings.customAgents })
-      .from(installationSettings)
-      .where(eq(installationSettings.installationId, installationId))
-      .limit(1);
-    if (rows.length === 0) return [];
-    return sanitizeOrgCustomAgents(rows[0].customAgents);
-  }
-
-  async updateCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void> {
-    const sanitized = sanitizeOrgCustomAgents(agents);
-    await this.db
-      .insert(installationSettings)
-      .values({ installationId, customAgents: sanitized as any })
-      .onConflictDoUpdate({
-        target: installationSettings.installationId,
-        set: { customAgents: sanitized as any },
       });
   }
 

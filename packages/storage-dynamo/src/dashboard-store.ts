@@ -8,7 +8,6 @@
 import {
   DynamoDBDocumentClient,
   GetCommand,
-  PutCommand,
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
@@ -22,9 +21,8 @@ import type {
   InstallationItem,
   InstallationSettings,
   ReviewItem,
-  OrgCustomAgent,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS } from '@mergewatch/core';
 
 // ─── Installation store ─────────────────────────────────────────────────────
 
@@ -78,34 +76,6 @@ class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
         ExpressionAttributeValues: {
           ':settings': settings,
           ':now': new Date().toISOString(),
-        },
-      }),
-    );
-  }
-
-  async getCustomAgents(installationId: string): Promise<OrgCustomAgent[]> {
-    try {
-      const result = await this.client.send(
-        new GetCommand({
-          TableName: this.tableName,
-          Key: { installationId, repoFullName: '#AGENTS' },
-        }),
-      );
-      return sanitizeOrgCustomAgents(result.Item?.agents);
-    } catch {
-      return [];
-    }
-  }
-
-  async updateCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void> {
-    await this.client.send(
-      new PutCommand({
-        TableName: this.tableName,
-        Item: {
-          installationId,
-          repoFullName: '#AGENTS',
-          agents: sanitizeOrgCustomAgents(agents),
-          updatedAt: new Date().toISOString(),
         },
       }),
     );

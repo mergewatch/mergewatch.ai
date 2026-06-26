@@ -11,7 +11,7 @@
  *   - PostgresDashboardStore (packages/storage-postgres) — self-hosted / Docker
  */
 
-import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight, NpsResponseRecord, OrgCustomAgent } from '../types/db.js';
+import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight, NpsResponseRecord } from '../types/db.js';
 
 // ─── Paginated result wrapper ───────────────────────────────────────────────
 
@@ -45,12 +45,6 @@ export interface IDashboardInstallationStore {
 
   /** Save installation-level settings. */
   updateSettings(installationId: string, settings: InstallationSettings): Promise<void>;
-
-  /** #235 — read the installation's org custom agents (sanitized; [] when unset). */
-  getCustomAgents(installationId: string): Promise<OrgCustomAgent[]>;
-
-  /** #235 — replace the installation's org custom agents (full set). */
-  updateCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void>;
 }
 
 // ─── Review store (dashboard operations) ────────────────────────────────────
