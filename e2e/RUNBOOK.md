@@ -194,6 +194,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-65](#e2e-65-analytics-tabbed-view--accuracy-folded-in-227) | `/dashboard/analytics` is a tabbed view (Overview · Cost & Impact · Findings · Activity · Accuracy); active tab in `?tab=` (shareable, `?org=` preserved); `/dashboard/accuracy` redirects to `?tab=accuracy`; Accuracy nav item removed; filter bar scoped to data tabs (#227) | 2m | 30s | #227 |
 | [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 |
 | [E2E-67](#e2e-67-global-env-pricing-for-the-llm_model-233) | Self-hosted global pricing: `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` price whatever `LLM_MODEL` is set to (e.g. a Bedrock inference-profile ARN) for full reviews **and** inline replies — no per-repo config; per-repo `pricing:` wins; `0`/`0` = real $0; partial/invalid → one-time warn (#233) | 3m | 30s | #233 |
+| [E2E-68](#e2e-68-org-custom-agents-235) | Org admins define custom review agents in the dashboard (Settings → Custom Agents), scoped to all/selected repos with optional path/language targeting; advisory vs blocking (blocking critical → REQUEST_CHANGES + failing check); union with repo `.mergewatch.yml` (org wins on name clash); admin-only edit, members read-only; both backends (#235) | 3m | 60s | #235 |
 
 ---
 
@@ -2409,6 +2410,37 @@ The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, ap
 - ❌ Inline replies stay unpriced while full reviews are priced.
 - ❌ Env price wins over a per-repo `pricing:` for the same model.
 - ❌ A partial/invalid value reads as $0 with no warning, or the warn spams every review.
+
+---
+
+### E2E-68: Org Custom Agents (#235)
+
+**Status:** ✅ SHIPPED.
+
+**Behavior:** Org admins define custom review agents in the dashboard (**Settings → Custom Agents**) that are enforced across the org's repos — promoting the per-repo `.mergewatch.yml` `customAgents` concept to the installation level. Each agent has a prompt + default severity, a **repo scope** (all repos or a selected allowlist), optional **path-glob / language targeting**, and an **enforcement** mode (advisory or blocking). Stored per installation (DynamoDB `#AGENTS` sentinel row / Postgres `installation_settings.custom_agents` jsonb). At review time the runtime selects enabled agents that are in-scope and match targeting, runs them in **union** with the repo's `.mergewatch.yml` `customAgents` (org wins on a name collision), and — for a **blocking** agent — a **critical** finding forces `REQUEST_CHANGES` + a failing check run regardless of the merge score (`Blocked by org agent: <name>`). Only org admins can edit (members read-only); each agent's last-editor/timestamp is recorded. A soft cap warns past ~10 active agents. Authors can still triage a blocking finding, but it's recorded (disposition store + a `[org-agents]` log).
+
+**How to run.** As an org admin, on an installation with ≥1 repo.
+1. **Create (admin):** Settings → Custom Agents → Add agent. Name `no-todo`, prompt "Flag any new TODO comment", severity `critical`, enforcement **blocking**, scope **All repositories**. Save. Reload as a non-admin member → fields are read-only.
+2. **Advisory run:** set the agent to **advisory**, open a PR that adds a `// TODO`. The review surfaces a finding from `no-todo`; the check still passes / score is normal.
+3. **Blocking run:** set it to **blocking**, push another `// TODO`. The summary review is **REQUEST_CHANGES**, the MergeWatch check run is **failure** titled `Blocked by org agent: no-todo`.
+4. **Scope:** switch the agent to **Selected repositories** and pick only repo B. Open a PR in repo A → the agent does NOT run; in repo B → it does.
+5. **Targeting:** add path glob `src/**`. A PR touching only `docs/**` does NOT trigger it; one touching `src/**` does.
+6. **Union + precedence:** define a repo `.mergewatch.yml` `customAgents` entry with the SAME name as an org agent → only the org definition runs (org wins).
+7. **Both backends:** repeat on a self-hosted (Postgres) instance — same behavior.
+
+**Pass:**
+- [ ] Admins can CRUD org agents; members are read-only; the API rejects non-admin writes (403).
+- [ ] In-scope + targeting-matching agents run, in union with repo `customAgents` (org wins on name clash).
+- [ ] Advisory agent only surfaces findings; blocking agent's critical → REQUEST_CHANGES + failing check (`Blocked by org agent: …`) regardless of score.
+- [ ] Repo scope (all/selected) and path/language targeting gate execution correctly.
+- [ ] Last-edited-by/when recorded; soft-cap warning past the limit.
+- [ ] Identical behavior on DynamoDB (SaaS) and Postgres (self-hosted).
+
+**Fail signals:**
+- ❌ A non-admin can edit org agents (write succeeds).
+- ❌ A blocking critical finding still APPROVES / passes the check.
+- ❌ An out-of-scope or non-matching-targeting agent runs anyway.
+- ❌ A repo `.mergewatch.yml` agent shadows/disables an org agent of the same name.
 
 ---
 
