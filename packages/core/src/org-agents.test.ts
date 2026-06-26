@@ -85,3 +85,116 @@ describe('sanitizeOrgCustomAgents', () => {
     expect(a.updatedBy).toBe('');
   });
 });
+
+import {
+  agentAppliesToRepo,
+  agentMatchesTargeting,
+  selectOrgAgentsForReview,
+  unionCustomAgents,
+  blockingCriticalAgents,
+} from './org-agents.js';
+
+describe('agentAppliesToRepo', () => {
+  it('mode:all matches any repo', () => {
+    expect(agentAppliesToRepo(valid({ scope: { mode: 'all' } }), 'o/anything')).toBe(true);
+  });
+  it('mode:selected matches only listed repos', () => {
+    const a = valid({ scope: { mode: 'selected', repos: ['o/a', 'o/b'] } });
+    expect(agentAppliesToRepo(a, 'o/a')).toBe(true);
+    expect(agentAppliesToRepo(a, 'o/c')).toBe(false);
+  });
+});
+
+describe('agentMatchesTargeting', () => {
+  const ctx = { changedFiles: ['src/api/users.ts', 'README.md'], languages: ['typescript'] };
+  it('no targeting → always matches', () => {
+    expect(agentMatchesTargeting(valid(), ctx)).toBe(true);
+  });
+  it('path globs: matches when a changed file matches', () => {
+    expect(agentMatchesTargeting(valid({ targeting: { pathGlobs: ['src/api/**'] } }), ctx)).toBe(true);
+    expect(agentMatchesTargeting(valid({ targeting: { pathGlobs: ['infra/**'] } }), ctx)).toBe(false);
+  });
+  it('languages: matches case-insensitively', () => {
+    expect(agentMatchesTargeting(valid({ targeting: { languages: ['TypeScript'] } }), ctx)).toBe(true);
+    expect(agentMatchesTargeting(valid({ targeting: { languages: ['go'] } }), ctx)).toBe(false);
+  });
+  it('path AND language both required when both set', () => {
+    const a = valid({ targeting: { pathGlobs: ['src/api/**'], languages: ['go'] } });
+    expect(agentMatchesTargeting(a, ctx)).toBe(false); // path matches, language doesn't
+  });
+});
+
+describe('selectOrgAgentsForReview', () => {
+  it('keeps enabled + in-scope + targeting-matching agents', () => {
+    const agents = [
+      valid({ id: '1', name: 'on-all' }),
+      valid({ id: '2', name: 'disabled', enabled: false }),
+      valid({ id: '3', name: 'other-repo', scope: { mode: 'selected', repos: ['o/other'] } }),
+      valid({ id: '4', name: 'go-only', targeting: { languages: ['go'] } }),
+    ];
+    const selected = selectOrgAgentsForReview(agents, {
+      repoFullName: 'o/repo',
+      changedFiles: ['src/x.ts'],
+      languages: ['typescript'],
+    });
+    expect(selected.map((a) => a.name)).toEqual(['on-all']);
+  });
+});
+
+describe('unionCustomAgents', () => {
+  it('org agents + repo-only agents; org wins on name collision', () => {
+    const org = [valid({ name: 'shared', prompt: 'ORG' }), valid({ id: '2', name: 'org-only' })];
+    const repo = [
+      { name: 'shared', prompt: 'REPO', severityDefault: 'info' as const, enabled: true },
+      { name: 'repo-only', prompt: 'r', severityDefault: 'info' as const, enabled: true },
+    ];
+    const out = unionCustomAgents(org, repo);
+    expect(out.map((a) => a.name).sort()).toEqual(['org-only', 'repo-only', 'shared']);
+    // org wins: the 'shared' entry uses the org prompt
+    expect(out.find((a) => a.name === 'shared')!.prompt).toBe('ORG');
+  });
+  it('handles undefined repo agents', () => {
+    expect(unionCustomAgents([valid({ name: 'a' })], undefined).map((a) => a.name)).toEqual(['a']);
+  });
+});
+
+describe('blockingCriticalAgents', () => {
+  const agents = [
+    valid({ name: 'block-me', enforcement: 'blocking' }),
+    valid({ id: '2', name: 'advise-me', enforcement: 'advisory' }),
+  ];
+  it('fires for a blocking agent with a critical finding', () => {
+    const findings = [{ severity: 'critical', category: 'block-me' }];
+    expect(blockingCriticalAgents(agents, findings)).toEqual(['block-me']);
+  });
+  it('ignores non-critical findings from a blocking agent', () => {
+    expect(blockingCriticalAgents(agents, [{ severity: 'warning', category: 'block-me' }])).toEqual([]);
+  });
+  it('ignores critical findings from an advisory agent', () => {
+    expect(blockingCriticalAgents(agents, [{ severity: 'critical', category: 'advise-me' }])).toEqual([]);
+  });
+  it('dedupes multiple criticals from the same blocking agent', () => {
+    const findings = [
+      { severity: 'critical', category: 'block-me' },
+      { severity: 'critical', category: 'block-me' },
+    ];
+    expect(blockingCriticalAgents(agents, findings)).toEqual(['block-me']);
+  });
+});
+
+import { languagesFromFiles } from './org-agents.js';
+
+describe('languagesFromFiles', () => {
+  it('maps common extensions to languages, deduped', () => {
+    expect(languagesFromFiles(['src/a.ts', 'src/b.tsx', 'x.go']).sort()).toEqual(['go', 'typescript']);
+  });
+  it('ignores extensionless / unknown files', () => {
+    expect(languagesFromFiles(['Makefile', 'LICENSE', 'weird.xyz'])).toEqual([]);
+  });
+  it('returns [] for no files', () => {
+    expect(languagesFromFiles([])).toEqual([]);
+  });
+  it('is case-insensitive on the extension', () => {
+    expect(languagesFromFiles(['A.TS', 'B.Py'])).toEqual(['typescript', 'python']);
+  });
+});

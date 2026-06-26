@@ -288,4 +288,14 @@ export type {
 } from './types/db.js';
 
 export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP } from './types/db.js';
-export { sanitizeOrgCustomAgents } from './org-agents.js';
+export {
+  sanitizeOrgCustomAgents,
+  agentAppliesToRepo,
+  agentMatchesTargeting,
+  selectOrgAgentsForReview,
+  toCustomAgentDef,
+  unionCustomAgents,
+  blockingCriticalAgents,
+  languagesFromFiles,
+} from './org-agents.js';
+export type { ReviewTargetingContext } from './org-agents.js';

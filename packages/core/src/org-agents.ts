@@ -6,11 +6,13 @@
  * Dependency-free + total so every branch is unit-testable.
  */
 
+import { minimatch } from 'minimatch';
 import type {
   OrgCustomAgent,
   OrgAgentScope,
   OrgAgentEnforcement,
 } from './types/db.js';
+import type { CustomAgentDef } from './config/defaults.js';
 
 const SEVERITIES = new Set(['info', 'warning', 'critical']);
 const ENFORCEMENTS = new Set<OrgAgentEnforcement>(['advisory', 'blocking']);
@@ -79,4 +81,121 @@ export function sanitizeOrgCustomAgents(raw: unknown): OrgCustomAgent[] {
     });
   }
   return out;
+}
+
+// ─── Runtime selection + enforcement (#235, PR 2) ───────────────────────────
+
+/** Diff context an org agent's targeting is evaluated against. */
+export interface ReviewTargetingContext {
+  repoFullName: string;
+  /** Paths changed by the PR (repo-relative). */
+  changedFiles: string[];
+  /** Languages the PR touches (case-insensitive). */
+  languages: string[];
+}
+
+/** Whether an agent's repo scope includes `repoFullName`. */
+export function agentAppliesToRepo(agent: OrgCustomAgent, repoFullName: string): boolean {
+  if (agent.scope.mode === 'all') return true;
+  return agent.scope.repos.includes(repoFullName);
+}
+
+/**
+ * Whether the diff matches the agent's optional path/language targeting. Empty
+ * (or absent) targeting always matches. Path globs use minimatch (same matcher
+ * as excludePatterns); a match on ANY changed file / ANY language is enough.
+ */
+export function agentMatchesTargeting(
+  agent: OrgCustomAgent,
+  ctx: { changedFiles: string[]; languages: string[] },
+): boolean {
+  const t = agent.targeting;
+  if (!t) return true;
+  if (t.pathGlobs && t.pathGlobs.length > 0) {
+    const anyPath = ctx.changedFiles.some(
+      (file) => typeof file === 'string' && t.pathGlobs!.some((g) => minimatch(file, g)),
+    );
+    if (!anyPath) return false;
+  }
+  if (t.languages && t.languages.length > 0) {
+    const langs = new Set(ctx.languages.map((l) => l.toLowerCase()));
+    if (!t.languages.some((l) => langs.has(l.toLowerCase()))) return false;
+  }
+  return true;
+}
+
+/** Org agents that should run for this review: enabled ∩ in-scope ∩ targeting-match. */
+export function selectOrgAgentsForReview(
+  agents: OrgCustomAgent[],
+  ctx: ReviewTargetingContext,
+): OrgCustomAgent[] {
+  return agents.filter(
+    (a) => a.enabled && agentAppliesToRepo(a, ctx.repoFullName) && agentMatchesTargeting(a, ctx),
+  );
+}
+
+/** Map an org agent onto the pipeline's per-repo `CustomAgentDef` shape. */
+export function toCustomAgentDef(a: OrgCustomAgent): CustomAgentDef {
+  return { name: a.name, prompt: a.prompt, severityDefault: a.severityDefault, enabled: true };
+}
+
+/**
+ * Union the (already-selected) org agents with a repo's `.mergewatch.yml`
+ * customAgents. Org agents always run; repo agents run in addition EXCEPT when
+ * they collide on name with an org agent — org wins, so a repo can add but not
+ * shadow/remove an org definition.
+ */
+export function unionCustomAgents(
+  orgAgents: OrgCustomAgent[],
+  repoAgents: CustomAgentDef[] | undefined,
+): CustomAgentDef[] {
+  const orgNames = new Set(orgAgents.map((a) => a.name));
+  const repoOnly = (repoAgents ?? []).filter((r) => !orgNames.has(r.name));
+  return [...orgAgents.map(toCustomAgentDef), ...repoOnly];
+}
+
+/** Minimal finding shape the gate reads. */
+type GateFinding = { severity: string; category: string };
+
+/**
+ * Names of *blocking* org agents that produced a **critical** finding in this
+ * review — the merge gate fires when this is non-empty. Custom-agent findings
+ * carry `category === agent.name` (see reviewer tagging), so we match on that.
+ */
+export function blockingCriticalAgents(orgAgents: OrgCustomAgent[], findings: GateFinding[]): string[] {
+  const blocking = new Set(orgAgents.filter((a) => a.enforcement === 'blocking').map((a) => a.name));
+  const triggered = new Set<string>();
+  for (const f of findings) {
+    if (f.severity === 'critical' && blocking.has(f.category)) triggered.add(f.category);
+  }
+  return [...triggered];
+}
+
+/** Extension → coarse language name (lowercased). Covers the common cases. */
+const EXT_TO_LANGUAGE: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+  kt: 'kotlin', kts: 'kotlin', swift: 'swift', c: 'c', h: 'c',
+  cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp', hxx: 'cpp',
+  cs: 'csharp', php: 'php', scala: 'scala', sh: 'shell', bash: 'shell',
+  sql: 'sql', yaml: 'yaml', yml: 'yaml', json: 'json', md: 'markdown',
+  html: 'html', css: 'css', scss: 'css', less: 'css',
+};
+
+/**
+ * Coarse set of languages a PR touches, derived from changed-file extensions
+ * (lowercased, deduped). Used to evaluate an org agent's `targeting.languages`.
+ */
+export function languagesFromFiles(files: string[]): string[] {
+  const langs = new Set<string>();
+  for (const f of files) {
+    if (typeof f !== 'string') continue; // defensive: only operate on path strings
+    const dot = f.lastIndexOf('.');
+    if (dot < 0) continue;
+    const ext = f.slice(dot + 1).toLowerCase();
+    const lang = EXT_TO_LANGUAGE[ext];
+    if (lang) langs.add(lang);
+  }
+  return [...langs];
 }

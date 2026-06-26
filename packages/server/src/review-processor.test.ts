@@ -70,6 +70,8 @@ function makeDeps(overrides?: Partial<Pick<WebhookDeps, 'installationStore' | 'r
       get: vi.fn().mockResolvedValue(null),
       getSettings: vi.fn().mockResolvedValue(DEFAULT_INSTALLATION_SETTINGS),
       upsert: vi.fn(),
+      getCustomAgents: vi.fn().mockResolvedValue([]),
+      upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
     } as unknown as IInstallationStore,
     reviewStore: {
       claimReview: vi.fn().mockResolvedValue(true),
@@ -544,6 +546,7 @@ describe('processReviewJob — config merging', () => {
           severityThreshold: 'High',
         }),
         upsert: vi.fn(),
+        getCustomAgents: vi.fn().mockResolvedValue([]),
       } as unknown as IInstallationStore,
     });
 
@@ -562,6 +565,7 @@ describe('processReviewJob — config merging', () => {
           commentTypes: { logic: false, syntax: true, style: false },
         }),
         upsert: vi.fn(),
+        getCustomAgents: vi.fn().mockResolvedValue([]),
       } as unknown as IInstallationStore,
     });
 
@@ -898,5 +902,91 @@ describe('processReviewJob — FP-F inline-resolve memory', () => {
     const opts = (runReviewPipeline as any).mock.calls[0][0];
     expect(opts.disputedKeys).toEqual([]);
     expect(opts.previousFindings).toEqual(priorFindings);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #235 — Org custom agents: union into the pipeline + blocking gate
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — org custom agents (#235)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (mergeScoreToReviewEvent as any).mockReturnValue('APPROVE');
+  });
+
+  const blockingAgent = {
+    id: 'sec1',
+    name: 'security-policy',
+    prompt: 'Enforce the org security policy.',
+    severityDefault: 'critical' as const,
+    enforcement: 'blocking' as const,
+    enabled: true,
+    scope: { mode: 'all' as const },
+    updatedAt: 'iso',
+    updatedBy: 'admin',
+  };
+
+  function depsWithAgents(agents: any[]) {
+    const deps = makeDeps();
+    (deps.installationStore.getCustomAgents as any).mockResolvedValue(agents);
+    return deps;
+  }
+
+  it('passes in-scope org agents into the pipeline as customAgents', async () => {
+    const deps = depsWithAgents([blockingAgent]);
+    await processReviewJob(makeJob(), deps);
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.customAgents.map((a: any) => a.name)).toContain('security-policy');
+  });
+
+  it('does NOT run an org agent scoped to a different repo', async () => {
+    const deps = depsWithAgents([
+      { ...blockingAgent, scope: { mode: 'selected', repos: ['someone/else'] } },
+    ]);
+    await processReviewJob(makeJob(), deps);
+    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    expect(opts.customAgents.map((a: any) => a.name)).not.toContain('security-policy');
+  });
+
+  it('blocking gate: a critical finding from a blocking agent forces REQUEST_CHANGES + failing check', async () => {
+    const deps = depsWithAgents([blockingAgent]);
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult,
+      mergeScore: 5, // would otherwise APPROVE
+      findings: [{ severity: 'critical', category: 'security-policy', title: 'x', description: 'y', file: 'a.ts', line: 1 }],
+    });
+
+    await processReviewJob(makeJob(), deps);
+
+    // Review submitted as REQUEST_CHANGES despite the 5/5 score.
+    const reviewEvent = (submitPRReview as any).mock.calls[0][5];
+    expect(reviewEvent).toBe('REQUEST_CHANGES');
+
+    // Completion check run is a failure mentioning the agent.
+    const completion = (createCheckRun as any).mock.calls.find(
+      (c: any[]) => c[4]?.status === 'completed',
+    );
+    expect(completion?.[4].conclusion).toBe('failure');
+    expect(completion?.[4].title).toMatch(/security-policy/);
+  });
+
+  it('advisory agent does NOT trigger the blocking gate', async () => {
+    const deps = depsWithAgents([{ ...blockingAgent, enforcement: 'advisory' }]);
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult,
+      findings: [{ severity: 'critical', category: 'security-policy', title: 'x', description: 'y', file: 'a.ts', line: 1 }],
+    });
+
+    await processReviewJob(makeJob(), deps);
+
+    // No org-block override → event comes from the (mocked) score mapping.
+    const reviewEvent = (submitPRReview as any).mock.calls[0][5];
+    expect(reviewEvent).toBe('APPROVE');
   });
 });
