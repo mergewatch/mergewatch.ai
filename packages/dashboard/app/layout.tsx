@@ -6,7 +6,7 @@ import "./globals.css";
 const SITE_URL = "https://mergewatch.ai";
 const SITE_NAME = "MergeWatch";
 const SITE_DESCRIPTION =
-  "AI-powered GitHub App that reviews pull requests with a multi-agent pipeline. Bring your own model, run in your cloud, or use the hosted SaaS.";
+  "Open-source AI PR review using the model stack you choose. Frontier-model review without a closed black-box workflow, priced by reviewed PR instead of developer seat, and free to self-host.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

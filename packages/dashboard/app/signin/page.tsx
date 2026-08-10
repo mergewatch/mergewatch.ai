@@ -32,7 +32,7 @@ export default async function SignInPage() {
             Sign in to mergewatch<span className="opacity-55">.ai</span>
           </h1>
           <p className="mt-2 text-center text-sm text-primer-muted">
-            AI-powered PR reviews — your models, your cloud.
+            Frontier-model PR review — your model, your workflow, priced by PR.
           </p>
 
           {/* Card */}
