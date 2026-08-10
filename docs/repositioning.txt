@@ -1,0 +1,519 @@
+﻿MergeWatch Messaging Repositioning: Open Source, Frontier Models, PR-Based Pricing
+Date: 2026-08-04
+
+
+Audience: Yasha and Santthosh
+
+
+Purpose: Reframe MergeWatch messaging for the next outreach round around three things that are already true or strategically natural for the product:
+
+
+* Use frontier models for PR review without accepting a closed black-box review workflow.
+* Pay by PR/review usage, not by developer seat.
+* Self-hosting is 100% free under AGPL v3; teams control their infrastructure, model provider, token spend, and data path.
+* Give open-source maintainers free hosted frontier-model review access because open-source projects increasingly need strong review defenses against low-quality, careless, or adversarial AI-generated PRs.
+Why We Are Giving This Away
+MergeWatch for Open Source should not sound like a promotional giveaway. It should sound like ecosystem defense.
+
+
+The rationale:
+
+
+Open-source maintainers are about to face more AI-generated code than anyone else, and much of it will be produced by extremely capable frontier models used carelessly, cheaply, or adversarially. Models such as Claude Opus and GPT-class systems can generate plausible PRs at a speed maintainers cannot manually match. MergeWatch gives maintainers frontier-model review on their side too: an open, inspectable reviewer that helps protect open-source software from risky model-generated changes.
+
+
+The message to open-source maintainers:
+
+
+We are giving qualifying open-source projects free hosted MergeWatch access because maintainers should not have to defend critical open-source infrastructure with weaker tools than the people flooding them with AI-generated PRs. Frontier models are powerful. In the wrong workflow, they can create convincing but dangerous code changes. MergeWatch uses frontier-model review to help maintainers spot risk, preserve review quality, and keep human maintainers in control.
+
+
+This is a major selling point:
+
+
+* The program is not charity; it is a security and trust position.
+* Open source is where AI-generated PR volume, quality variance, and supply-chain risk will show up first.
+* Maintainers need review leverage without giving control to a closed black-box vendor.
+* MergeWatch can become the open-source-friendly defensive layer for the frontier-model era.
+* Free hosted access gets maintainers protected quickly; free self-hosting keeps the long-term promise under their control.
+Executive Take
+MergeWatch should stop sounding like "another AI PR reviewer" and become the open-source-friendly, model-flexible, usage-aligned alternative to closed PR review bots.
+
+
+The sharper positioning:
+
+
+MergeWatch is open-source AI PR review for teams that want frontier-model review quality without a closed black-box reviewer or per-seat tax. Use the hosted SaaS and pay only for PRs reviewed, or self-host for free and pay only your own model/token costs.
+
+
+This gives MergeWatch a cleaner wedge:
+
+
+* Against CodeRabbit / Greptile / similar hosted review tools: "Do not put your code review workflow inside a closed black box."
+* Against generic self-hosting claims: "Self-hosting is not an enterprise upsell; it is free and open source."
+* Against per-seat devtool pricing: "Your bill should track review usage, not headcount."
+* For open-source maintainers: "We are the open-source friend and the defensive layer for the AI-generated PR era: free hosted frontier-model review for real OSS projects in exchange for feedback and permission to use your project/logo publicly."
+Current Site Audit
+The current site already contains many of the right raw materials:
+
+
+* Title: "MergeWatch — AI-Powered PR Reviews"
+* Description: "AI-powered GitHub App that reviews pull requests with a multi-agent pipeline. Bring your own model, run in your cloud, or use the hosted SaaS."
+* Hero: "The diff is too long. It always is."
+* Trust framing: "Your reviewer makes the final call."
+* Open source proof: "AGPL v3 — the whole codebase, not just the parts we are comfortable showing you."
+* Deployment proof: "Runs on AWS · GCP · Azure · Bare metal · Fly.io · Railway"
+* Self-hosting claim: "Your code never has to leave your infrastructure."
+* Provider support: Anthropic, LiteLLM, Amazon Bedrock, Ollama.
+* Pricing claim: "Pay for what you review. Not for who reviews it."
+* Self-hosting docs say: "Always free — no MergeWatch billing, you pay your LLM provider directly."
+
+
+What needs to be louder:
+
+
+* "Frontier models" should be explicit near the top. The buyer should understand that MergeWatch is not forcing a weaker built-in model. It lets them use Claude, OpenAI/GPT, Gemini, Bedrock, LiteLLM-routed providers, or local/Ollama where needed.
+* "Not a closed black box" should be a primary positioning claim, not only implied by AGPL.
+* "Pay by PR, not by seat" should be repeated in sales/outreach copy because it is easy to understand and economically distinctive.
+* "Self-host free forever" should be framed as a philosophy, not a deployment footnote.
+* "Open-source maintainers get hosted SaaS free" should become a program with simple eligibility and a clear ask.
+
+
+Site consistency cleanup:
+
+
+* The public materials appear to describe different default agent counts in different places: the homepage references five specialist agents, the pricing page references six agents per review, and the self-hosting docs reference eight review agents. Before this messaging is pushed harder, pick one current number or phrase it as "multiple specialist agents" unless the exact count is important.
+Messaging Pillars
+1. Frontier Model Quality Without Closed Workflow Lock-In
+Core idea:
+
+
+Teams want the best available models reviewing PRs, but they should not have to surrender their review workflow to a closed vendor box.
+
+
+Support points:
+
+
+* Use frontier models through Anthropic, OpenAI/GPT via LiteLLM, Gemini via LiteLLM, Amazon Bedrock, or other provider routes.
+* Use local models through Ollama for air-gapped or privacy-sensitive deployments.
+* The review pipeline, prompts, orchestration, and comment behavior are inspectable in source.
+* Teams can customize agents and prompts for their codebase.
+* Human reviewers keep merge authority.
+
+
+Do not overclaim:
+
+
+* Do not say MergeWatch is always better than every closed competitor.
+* Say the advantage is control, transparency, model choice, auditability, and pricing alignment.
+
+
+Suggested headline:
+
+
+Frontier-model PR review, without the black box.
+
+
+Suggested supporting copy:
+
+
+MergeWatch lets you review pull requests with the model stack you trust: Claude, GPT-class models through LiteLLM, Gemini, Bedrock, or local models through Ollama. The reviewer workflow stays open, inspectable, and under your control.
+2. Pay By PR, Not By Seat
+Core idea:
+
+
+Code review cost should scale with review activity, not the number of engineers on the org chart.
+
+
+Support points:
+
+
+* A five-person team and a hundred-person team with the same review volume should not pay radically different bills.
+* Per-seat pricing punishes hiring, cross-functional visibility, and occasional contributors.
+* MergeWatch SaaS pricing tracks actual review activity: LLM cost plus platform fee.
+* Self-hosted teams pay MergeWatch nothing and pay their own provider directly.
+
+
+Suggested headline:
+
+
+Pay for reviewed PRs. Never for seats.
+
+
+Suggested supporting copy:
+
+
+MergeWatch charges for actual pull-request reviews, not every developer account in your organization. If nobody opens a PR, you do not pay. If you self-host, MergeWatch charges nothing at all.
+3. Free To Self-Host, Always
+Core idea:
+
+
+Self-hosting is not an enterprise-plan feature. It is the default open-source promise.
+
+
+Support points:
+
+
+* AGPL v3 source code.
+* Docker-based self-hosting.
+* You bring GitHub App credentials, database, and model provider.
+* MergeWatch company has zero access to code/diffs/review results in self-hosted deployments.
+* Teams pay their own cloud and model/token costs directly.
+
+
+Suggested headline:
+
+
+Self-host free. Pay only your own model bill.
+
+
+Suggested supporting copy:
+
+
+Run MergeWatch in your cloud, on bare metal, or in an isolated environment. The software is free to self-host under AGPL v3. Your only costs are your infrastructure and the frontier-model or local-model tokens you choose to use.
+4. Open-Source Maintainers Get The SaaS Free
+Core idea:
+
+
+MergeWatch should be visibly on the side of open-source maintainers, especially as frontier models make it easier to generate plausible but risky PRs at scale.
+
+
+Strategic rationale:
+
+
+We are giving this away because open-source software needs protection from the downside of frontier-model coding. Claude Opus, GPT-class models, and similar systems can produce code that looks convincing while hiding subtle correctness, security, dependency, or maintainability problems. Maintainers need frontier-model review working for them, not only against them.
+
+
+Program concept:
+
+
+Free hosted MergeWatch access for qualifying open-source projects in exchange for feedback and permission to list the project/logo publicly.
+
+
+The offer:
+
+
+* Free access to the managed SaaS product for an open-source project.
+* Help installing and configuring the GitHub App.
+* Optional lightweight setup call.
+* Ability to shape review behavior through maintainer feedback.
+
+
+The ask:
+
+
+* Use MergeWatch on the project for real PRs.
+* Give direct product feedback.
+* Allow MergeWatch to list the project/logo as an open-source user/supporter if the maintainer is satisfied.
+* Optional: short quote/case study later, only with separate approval.
+
+
+Guardrails:
+
+
+* Do not require a public endorsement before they have used it.
+* Do not imply maintainers are being paid for promotion.
+* Keep it lightweight: "feedback + permission to use logo" is enough for the first ask.
+* Make it clear maintainers can stop at any time.
+
+
+Suggested program name:
+
+
+MergeWatch for Open Source
+
+
+Suggested landing-page copy:
+
+
+Maintaining an open-source project? We will give your project free hosted MergeWatch access. AI-generated PRs are getting easier to produce and harder to inspect by hand; maintainers deserve frontier-model review on their side too. In exchange, we ask for honest feedback and, if it is useful, permission to list your project/logo as an early open-source user.
+How Do We Make Money
+OSS support should be the credibility engine, not the primary revenue engine. Revenue should come from private-code usage, enterprise governance, and deployment support.
+1. Hosted SaaS For Private Repositories
+This remains the core product. Charge by reviewed PR rather than by seat, using a platform fee plus included review volume.
+
+
+* Team: Monthly minimum plus PR review usage.
+* Business: Higher included volume, organization controls, GitHub/GitLab integrations, and stronger analytics.
+* Enterprise: Annual contract, SSO, audit logs, data controls, security review, SLA, and dedicated support.
+
+
+The customer is an engineering organization reviewing proprietary code.
+2. Enterprise Governance
+The higher-value tier should target regulated and security-conscious organizations. Companies will pay for controls that OSS maintainers generally do not need:
+
+
+* SSO/SAML
+* Audit logs
+* Policy packs
+* Model and provider controls
+* Data-retention controls
+* Approval workflows
+* Organization-wide reporting
+* Private deployment options
+* Procurement and security documentation
+3. Managed Self-Hosting And Private Deployment
+We can keep self-hosting free under AGPL while charging companies to make it reliable and supportable: the Red Hat model.
+
+
+Potential revenue includes:
+
+
+* Implementation packages
+* Upgrade and maintenance support
+* Private cloud or VPC deployment
+* Air-gapped deployment assistance
+* Custom model routing
+* Support and SLA contracts
+4. A Bounded OSS Program
+The OSS program needs clear limits so it remains strategic rather than becoming an open-ended cost center:
+
+
+* Public repositories only
+* Manual approval
+* Fair-use limits
+* No SLA
+* Feedback requested
+* Permission required before using project names or logos
+* Heavy usage moves to BYOK or sponsorship
+
+
+A further revenue path could be OSS dependency sponsorship. Companies could pay to provide frontier-model reviews for important open-source projects they depend on, potentially including security or release-risk reporting. This turns the OSS program into a software supply-chain trust product rather than simply a marketing expense.
+How We Should Describe The Business Model
+MergeWatch makes money from private-code teams that need governed AI code review. The OSS program builds trust, product feedback, public proof, and supply-chain visibility. It can generate commercial leads, but it should remain bounded and could eventually be funded by companies that depend on the supported projects.
+Positioning Statement
+Short:
+
+
+MergeWatch is open-source PR review powered by the model stack you choose. Use frontier models without a closed black-box reviewer, pay by PR instead of by seat, or self-host free and pay only your own tokens.
+
+
+Medium:
+
+
+MergeWatch gives teams AI PR review without handing code review to a closed vendor workflow. The product is open source under AGPL v3, supports frontier models through Anthropic, LiteLLM, Bedrock, and other providers, and can also run local models through Ollama. Hosted SaaS pricing is based on actual PR reviews, not seats. Self-hosting is always free: teams control the infrastructure, data path, model provider, and token spend.
+
+
+Founder / Santthosh version:
+
+
+The bet is that engineering teams want frontier-model review quality, but they do not want a closed black-box reviewer sitting in the middle of their PR workflow. MergeWatch is the open-source alternative: transparent pipeline, model choice, self-hosting for free, and SaaS pricing tied to PR usage instead of developer seats.
+Homepage Messaging Changes
+Current hero is memorable, but it mostly sells "long diffs." That is useful, but the new wedge should appear earlier.
+
+
+Recommended hero:
+
+
+Frontier-model PR review, without the black box.
+
+
+Subhead:
+
+
+MergeWatch reviews pull requests with the model stack you choose: Claude, GPT-class models through LiteLLM, Bedrock, Gemini, or local models through Ollama. Use the hosted SaaS and pay by PR, not by seat. Or self-host the open-source version for free and pay only your own model tokens.
+
+
+CTA options:
+
+
+* Start reviewing in 2 minutes
+* Self-host free
+* Apply for free OSS access
+
+
+Trust strip:
+
+
+* AGPL v3 open source
+* Bring your own model
+* Pay by PR, not seat
+* Self-host free forever
+* Human reviewer makes the final call
+
+
+Section headline:
+
+
+Your model. Your infrastructure. Your review workflow.
+
+
+Section copy:
+
+
+Closed PR review bots ask you to trust their pipeline. MergeWatch lets you inspect and control the pipeline: prompts, agents, provider routing, deployment, and data path.
+
+
+Pricing section headline:
+
+
+Pricing aligned with how code review actually happens.
+
+
+Pricing copy:
+
+
+Teams do not review code by the seat. They review pull requests. MergeWatch SaaS bills actual reviews. Self-hosting is free.
+
+
+Open-source section headline:
+
+
+Free frontier-model review for open-source maintainers.
+
+
+Open-source copy:
+
+
+If you maintain a real open-source project, we will give you free SaaS access because open-source maintainers need help defending against the coming wave of AI-generated PRs. Frontier models can produce plausible code fast; MergeWatch helps maintainers use frontier-model review to catch risky changes while keeping humans in control. In exchange, we ask for feedback and, if MergeWatch helps, permission to list your project/logo as an early open-source user.
+Outreach Messaging: Open-Source Maintainers
+Email / DM Draft
+Subject: Free MergeWatch access for open-source maintainers
+
+
+Hi [Name],
+
+
+I am working on MergeWatch, an open-source AI PR review tool for GitHub projects.
+
+
+The positioning is simple: use frontier models for PR reviews without putting your review workflow inside a closed black-box vendor. MergeWatch is AGPL v3, can be self-hosted for free, and the hosted SaaS is priced by reviewed PR rather than by developer seat.
+
+
+We are starting a small open-source maintainer program: free hosted MergeWatch access for useful open-source projects in exchange for honest feedback. The reason is simple: open-source maintainers are going to see more AI-generated PRs from frontier models like Claude Opus, GPT-class systems, and similar tools. Some will be helpful. Some will be plausible but risky. We want maintainers to have frontier-model review working for them too.
+
+
+If MergeWatch proves helpful, we would also ask permission to list your project/logo as an early open-source user.
+
+
+Would you be open to trying it on [project] for a few real PRs?
+
+
+No contract, no seat pricing, and no obligation to endorse it if it is not useful.
+
+
+Best, [Name]
+Short LinkedIn DM
+Hi [Name] — I am working on MergeWatch, an open-source AI PR reviewer. The wedge is frontier-model PR review without a closed black-box workflow: self-host free, or use SaaS priced by PR rather than seat. We are giving free hosted access to open-source maintainers because OSS projects need help defending against plausible but risky AI-generated PRs from frontier models. The ask is feedback and, if useful, permission to list the project/logo. Would [project] be a reasonable fit to try it on a few real PRs?
+Comment-Friendly Version
+This is exactly the kind of project we want MergeWatch to help with. We are making hosted MergeWatch free for open-source maintainers because AI-generated PRs from frontier models are going to create real review load and real supply-chain risk. Maintainers should have frontier-model review working for them too, without a closed black-box workflow or per-seat pricing. The only ask is honest feedback and permission to list the project/logo if it is actually useful.
+Outreach Messaging: Engineering Leaders
+Subject: AI PR review without the closed black box
+
+
+Hi [Name],
+
+
+Most AI PR review tools make two uncomfortable assumptions: your review workflow should live inside a closed vendor box, and your bill should scale with developer seats.
+
+
+MergeWatch takes the opposite approach:
+
+
+* Open-source review pipeline under AGPL v3
+* Bring your own frontier model provider, or use the hosted SaaS
+* Self-host free and pay only your own cloud/model costs
+* Hosted pricing based on reviewed PRs, not seats
+* Human reviewer keeps final merge control
+
+
+Would it be worth comparing this against how your team currently handles AI-assisted PR review?
+Competitive Framing
+Use this language carefully. It should be confident without sounding petty.
+
+
+Good:
+
+
+* "closed PR review bots"
+* "closed black-box reviewer"
+* "per-seat pricing"
+* "opaque hosted workflow"
+* "model and deployment lock-in"
+
+
+Avoid:
+
+
+* Overstating that competitors cannot be secure.
+* Claiming they are bad products.
+* Naming competitors in cold outreach unless the prospect brings them up.
+
+
+Suggested comparison language:
+
+
+CodeRabbit, Greptile, and similar tools helped prove that AI PR review is useful. MergeWatch is for teams that want that workflow to stay open, inspectable, customizable, and economically aligned with PR usage instead of seats.
+Santthosh Alignment Notes
+The strategic choice:
+
+
+* We should not only sell "AI reviews long diffs."
+* The stronger wedge is "frontier-model PR review with open-source control and fair usage pricing."
+
+
+What this means for product:
+
+
+* Make provider choice obvious in onboarding.
+* Make self-hosting docs and SaaS pricing feel like one coherent philosophy.
+* Add a real "Open Source Maintainer Program" page/form.
+* Track OSS projects separately from design partners.
+* Decide what "free SaaS for open source" includes:
+   * unlimited within reason
+   * fair-use cap
+   * manual approval
+   * public repo only
+   * logo permission after successful trial
+
+
+What this means for marketing:
+
+
+* Homepage hero should lead with frontier models + no black box.
+* Pricing page should keep "pay by PR, not by seat" as the headline.
+* Self-hosting should be phrased as always free, not just "available."
+* Outbound should separate two tracks:
+   * OSS maintainers: free hosted access for feedback/logo permission.
+   * Engineering leaders: open-source alternative to closed PR review bots, PR-based pricing, self-host control.
+Immediate Next Steps
+1. Update homepage hero/subhead to lead with the new wedge.
+2. Add a small "MergeWatch for Open Source" section and Tally/form route.
+3. Write a short OSS maintainer landing page.
+4. Build a list of 50 maintainers from active GitHub projects with frequent PRs.
+5. Start with a manual, respectful outreach batch; do not automate broadly until reply quality is known.
+6. Use feedback from maintainers to tighten review defaults and public proof.
+One-Page Summary For The Next Round
+MergeWatch should be positioned as:
+
+
+Open-source AI PR review using the model stack you choose.
+
+
+The three key claims:
+
+
+1. Frontier-model review without a closed black-box workflow.
+2. Pay by reviewed PR, not by developer seat.
+3. Self-hosting is 100% free; pay only your own cloud and model/token costs.
+
+
+The new community angle:
+
+
+Free hosted SaaS access for open-source maintainers in exchange for honest feedback and permission to use the project/logo if MergeWatch is useful.
+
+
+The business logic:
+
+
+* OSS maintainers create credibility, feedback, and public proof.
+* Engineering teams get a clearer alternative to closed AI review tools.
+* PR-based pricing is simple and differentiated.
+* Self-hosting reinforces trust instead of competing with SaaS.
+
+
+The key message for Santthosh:
+
+
+We are not just selling AI comments on PRs. We are selling an open, controllable AI review workflow: best available models, transparent pipeline, fair pricing, and a credible open-source community wedge.

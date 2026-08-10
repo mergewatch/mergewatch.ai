@@ -73,7 +73,7 @@ export default function PricingPage() {
             No seats. No per-user fees. No contracts. You pay based on the
             actual LLM cost of each review&nbsp;&mdash; and your first{" "}
             <strong className="text-fg-primary">{FREE_REVIEWS} reviews</strong>{" "}
-            are free, no credit card required.
+            each month are free, no credit card required.
           </p>
         </section>
 
@@ -207,15 +207,15 @@ export default function PricingPage() {
                 <p className="mt-3 text-sm leading-relaxed text-primer-muted">
                   Your first{" "}
                   <strong className="text-primer-green">
-                    {FREE_REVIEWS} reviews
+                    {FREE_REVIEWS} reviews each month
                   </strong>{" "}
-                  are completely free&nbsp;&mdash; no credit card required. This
-                  is a one-time evaluation period, not a monthly allowance.
+                  are completely free&nbsp;&mdash; no credit card required. The
+                  free allowance resets at the start of every month.
                 </p>
                 <p className="mt-2 text-xs text-primer-muted">
-                  Free reviews don&rsquo;t reset each month. They&rsquo;re
-                  designed to let you see real value on real PRs before
-                  committing anything.
+                  Low-volume repos can run on the free tier indefinitely. Only
+                  reviews beyond the first {FREE_REVIEWS} in a month draw down
+                  prepaid credits.
                 </p>
               </div>
               <div className="rounded-xl border border-border-default bg-surface-card/60 p-6">
@@ -300,7 +300,7 @@ export default function PricingPage() {
                 detail="Detailed review comments are the biggest cost driver"
               />
               <TokenFact
-                fact="6 agents per review (default pipeline)"
+                fact="5 agents per review (default pipeline)"
                 detail="Each agent call adds input + output tokens"
               />
             </div>
@@ -320,12 +320,12 @@ export default function PricingPage() {
             </h2>
             <div className="mt-8 space-y-2">
               <FaqItem question="What happens when I hit my 5 free reviews?">
-                MergeWatch pauses reviews on your repository and posts a
+                Once you&rsquo;ve used your {FREE_REVIEWS} free reviews for the
+                month, MergeWatch keeps reviewing as long as you have prepaid
+                credits. If your balance runs out, it pauses reviews and posts a
                 comment showing your team&rsquo;s pace and a link to add
-                credits. Reviews resume the moment credits are available&nbsp;
-                &mdash; no subscription required. The {FREE_REVIEWS} free
-                reviews are a one-time, lifetime evaluation&nbsp;&mdash; once
-                used, they don&rsquo;t refresh.
+                credits&nbsp;&mdash; no subscription required. The free
+                allowance refreshes at the start of each month.
               </FaqItem>
               <FaqItem question="How do I know what I'll pay?">
                 Use the calculator on this page to estimate based on your PR
