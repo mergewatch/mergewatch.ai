@@ -60,6 +60,11 @@ const faqs: { question: string; answer: string }[] = [
     answer:
       "MergeWatch supports four LLM provider backends out of the box. Anthropic (direct Claude API) is the default for self-hosted installs and the fastest way to get started. Amazon Bedrock (IAM-authenticated Claude models) powers the managed SaaS and eliminates the need to manage API keys anywhere in your infrastructure. LiteLLM is an OpenAI-compatible proxy that gives access to 100+ providers including OpenAI, Google Gemini, Azure OpenAI, Groq, Together AI, Mistral, and Fireworks. Ollama supports local models like Llama 3 and Qwen for air-gapped or privacy-sensitive environments and is currently experimental. Self-hosted deployments select a provider via the LLM_PROVIDER environment variable. The ILLMProvider interface in @mergewatch/core is a single method, so contributing a new backend usually takes less than a hundred lines of code.",
   },
+  {
+    question: "Is MergeWatch a closed black box?",
+    answer:
+      "No. MergeWatch is open source under the GNU AGPL v3 license, and the entire review pipeline is inspectable: every agent prompt, the orchestrator that deduplicates and ranks findings, the provider routing, and each comment template live in the public repository at github.com/mergewatch/mergewatch.ai. Closed PR review bots ask you to trust a hosted pipeline you cannot see; MergeWatch lets your security team audit exactly what runs on your code before you install it, and lets your engineers fork or customize it. You also choose the model — Claude, GPT-class models via LiteLLM, Gemini, Amazon Bedrock, or local models via Ollama — so you are not locked into a single vendor's model or infrastructure. Human reviewers always keep final merge authority; MergeWatch surfaces flags, it does not gate your merges on a vendor's judgment.",
+  },
 ];
 
 /**
@@ -153,19 +158,24 @@ export default async function LandingPage() {
         </div>
       </nav>
 
-      {/* ─── 2. Hero — Pain hook + identity ────────────────────────────── */}
+      {/* ─── 2. Hero — Positioning wedge + identity ────────────────────── */}
       <section className="flex flex-col items-center px-6 pt-20 pb-16 text-center md:pt-28 md:pb-24">
+        <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-primer-green">
+          Open source &middot; Bring your own model
+        </p>
+
         <h1 className="max-w-3xl text-4xl font-extrabold leading-tight tracking-tight md:text-6xl">
-          The <span className="text-primer-purple">diff</span>{" "}
-          <span className="text-primer-green">is too long.</span>{" "}
-          <span className="text-primer-blue">It always is.</span>
+          <span className="text-fg-primary">Frontier-model PR review,</span>{" "}
+          <span className="text-primer-green">without the black box.</span>
         </h1>
 
         <p className="mt-6 max-w-2xl text-lg leading-relaxed text-primer-muted">
-          MergeWatch runs specialized AI agents on every pull
-          request&nbsp;&mdash; before your reviewer opens the diff. Security
-          issues, logic bugs, style violations, and architectural risks surface
-          as inline comments. Add your own custom agents for anything else.{" "}
+          MergeWatch reviews every pull request with the model stack you
+          choose&nbsp;&mdash; Claude, GPT-class models via LiteLLM, Gemini,
+          Amazon Bedrock, or local models via Ollama. The review pipeline is
+          open and inspectable, not a closed vendor box. Use the hosted SaaS and
+          pay by PR, not by seat&nbsp;&mdash; or self-host the open-source
+          version free and pay only your own model tokens.{" "}
           <strong className="text-fg-primary">
             Your reviewer makes the final call.
           </strong>
@@ -190,13 +200,27 @@ export default async function LandingPage() {
           </a>
         </div>
 
-        <p className="mt-6 max-w-lg text-xs text-primer-muted">
-          AGPL v3&nbsp;&mdash; the whole codebase, not just the parts
-          we&rsquo;re comfortable showing you.
-        </p>
+        <div className="mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-3 gap-y-2 text-xs font-medium text-primer-muted">
+          {[
+            "AGPL v3 open source",
+            "Bring your own model",
+            "Pay by PR, not seat",
+            "Self-host free forever",
+            "Human reviewer makes the final call",
+          ].map((claim, i) => (
+            <span key={claim} className="flex items-center gap-3">
+              {i > 0 && (
+                <span className="text-border-default" aria-hidden="true">
+                  &middot;
+                </span>
+              )}
+              <span className="whitespace-nowrap">{claim}</span>
+            </span>
+          ))}
+        </div>
 
-        <p className="mt-3 text-[11px] uppercase tracking-widest text-primer-muted">
-          v1.0 &middot; Updated April 2026 &middot; Actively maintained
+        <p className="mt-6 text-[11px] uppercase tracking-widest text-primer-muted">
+          v1.0 &middot; Updated August 2026 &middot; Actively maintained
         </p>
       </section>
 
@@ -310,6 +334,43 @@ export default async function LandingPage() {
           </code>{" "}
           with a name and a prompt.
         </p>
+      </section>
+
+      {/* ─── 4.6 No Black Box — Control & Transparency ─────────────────── */}
+      <section className="border-t border-border-default px-6 py-16 md:py-24">
+        <h2 className="text-center text-2xl font-bold md:text-4xl">
+          Your model. Your infrastructure.{" "}
+          <span className="text-primer-green">Your review workflow.</span>
+        </h2>
+
+        <p className="mx-auto mt-4 max-w-2xl text-center text-sm leading-relaxed text-primer-muted">
+          Closed PR review bots ask you to trust their pipeline. MergeWatch lets
+          you inspect and control all of it&nbsp;&mdash; prompts, agents,
+          provider routing, deployment, and data path.
+        </p>
+
+        <div className="mx-auto mt-12 grid max-w-5xl gap-6 md:grid-cols-3">
+          <PillarCard title="Model choice, not lock-in" accent="text-primer-blue">
+            Route to frontier models through Anthropic, GPT-class models via
+            LiteLLM, Gemini, or Amazon Bedrock&nbsp;&mdash; or run local models
+            via Ollama for air-gapped environments. Swap providers with an env
+            var; nothing hard-codes you to one vendor.
+          </PillarCard>
+          <PillarCard
+            title="An inspectable pipeline, not a black box"
+            accent="text-primer-purple"
+          >
+            Every agent prompt, the orchestrator, and each comment template ship
+            in the open under AGPL v3. Your security team can read exactly what
+            runs on your code before a single PR is reviewed.
+          </PillarCard>
+          <PillarCard title="Your data path stays yours" accent="text-primer-green">
+            Self-host and your diffs never leave your network. MergeWatch the
+            company has zero access to code, diffs, or review results in a
+            self-hosted deployment&nbsp;&mdash; the reviewer works for you, not
+            the other way around.
+          </PillarCard>
+        </div>
       </section>
 
       {/* ─── 4.5 Frequently Asked ──────────────────────────────────────── */}

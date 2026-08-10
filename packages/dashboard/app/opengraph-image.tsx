@@ -1,7 +1,8 @@
 import { ImageResponse } from "next/og";
 
 export const runtime = "edge";
-export const alt = "MergeWatch — AI-Powered PR Reviews";
+export const alt =
+  "MergeWatch — Frontier-model PR review, without the black box";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -34,27 +35,27 @@ export default function OpengraphImage() {
         </div>
         <div
           style={{
-            fontSize: 84,
+            fontSize: 76,
             color: "#ffffff",
             fontWeight: 700,
             lineHeight: 1.05,
             letterSpacing: "-0.03em",
-            maxWidth: 1000,
+            maxWidth: 1040,
           }}
         >
-          AI-Powered PR Reviews
+          Frontier-model PR review, without the black box.
         </div>
         <div
           style={{
-            fontSize: 32,
+            fontSize: 30,
             color: "#cbd5e1",
             marginTop: 28,
-            maxWidth: 980,
+            maxWidth: 1000,
             lineHeight: 1.3,
           }}
         >
-          Bring your own model. Run in your cloud. Multi-agent code review for
-          GitHub.
+          Open source · Bring your own model · Pay by PR, not seat · Self-host
+          free.
         </div>
       </div>
     ),

@@ -4,19 +4,19 @@ import { LegalPage } from "@/components/LegalPage";
 export const metadata: Metadata = {
   title: "About",
   description:
-    "MergeWatch is an open-source multi-agent AI code reviewer built by Santthosh. Bring your own model, run in your cloud, or use the hosted SaaS.",
+    "MergeWatch is open-source AI PR review using the model stack you choose — frontier-model review without a closed black-box workflow, priced by reviewed PR instead of developer seat, and free to self-host.",
   alternates: { canonical: "/about" },
 };
 
 export default function AboutPage() {
   return (
-    <LegalPage title="About MergeWatch" lastUpdated="April 13, 2026">
+    <LegalPage title="About MergeWatch" lastUpdated="August 9, 2026">
       <p>
         MergeWatch is an open-source GitHub App that reviews pull requests
         using a multi-agent AI pipeline. It was built to answer a simple
         question: <em>why should the tool that reviews your code cost more as
-        your team grows, run on infrastructure you can&rsquo;t see, and lock you
-        into a model you didn&rsquo;t choose?</em>
+        your team grows, sit inside a closed vendor box you can&rsquo;t
+        inspect, and lock you into a model you didn&rsquo;t choose?</em>
       </p>
 
       <h2>What it does</h2>
@@ -33,10 +33,10 @@ export default function AboutPage() {
       <ul>
         <li>
           <strong>Self-hosted (free, AGPL v3).</strong> One{" "}
-          <code>docker-compose up</code>. Bring your own LLM provider &mdash;
-          Anthropic direct, Amazon Bedrock, any OpenAI-compatible endpoint via
-          LiteLLM (100+ providers), or Ollama for air-gapped environments.
-          Your code never leaves your infrastructure.
+          <code>docker-compose up</code>. Bring your own frontier model &mdash;
+          Claude via Anthropic direct or Amazon Bedrock, GPT-class models and
+          Gemini via LiteLLM (100+ providers), or local models via Ollama for
+          air-gapped environments. Your code never leaves your infrastructure.
         </li>
         <li>
           <strong>Managed SaaS.</strong> Install the GitHub App and go. Runs on
