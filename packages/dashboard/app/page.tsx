@@ -65,6 +65,11 @@ const faqs: { question: string; answer: string }[] = [
     answer:
       "No. MergeWatch is open source under the GNU AGPL v3 license, and the entire review pipeline is inspectable: every agent prompt, the orchestrator that deduplicates and ranks findings, the provider routing, and each comment template live in the public repository at github.com/mergewatch/mergewatch.ai. Closed PR review bots ask you to trust a hosted pipeline you cannot see; MergeWatch lets your security team audit exactly what runs on your code before you install it, and lets your engineers fork or customize it. You also choose the model — Claude, GPT-class models via LiteLLM, Gemini, Amazon Bedrock, or local models via Ollama — so you are not locked into a single vendor's model or infrastructure. Human reviewers always keep final merge authority; MergeWatch surfaces flags, it does not gate your merges on a vendor's judgment.",
   },
+  {
+    question: "Do you offer free access for open-source maintainers?",
+    answer:
+      "Yes. MergeWatch for Open Source gives qualifying open-source projects free hosted access to the managed SaaS, because maintainers are about to face rising volumes of plausible-but-risky AI-generated pull requests and deserve frontier-model review on their side too. The program is for real, actively maintained public repositories, is approved manually with fair-use limits, and carries no SLA. In exchange we ask for honest product feedback and, only if MergeWatch proves useful, permission to list your project or logo as an early open-source user — never before you have used it. Maintainers are not paid for promotion and can stop at any time. You can apply at mergewatch.ai/open-source.",
+  },
 ];
 
 /**
@@ -138,6 +143,12 @@ export default async function LandingPage() {
             className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
           >
             Pricing
+          </Link>
+          <Link
+            href="/open-source"
+            className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
+          >
+            For Open Source
           </Link>
           <a
             href="https://github.com/mergewatch/mergewatch.ai"
@@ -632,6 +643,32 @@ export default async function LandingPage() {
         </div>
       </section>
 
+      {/* ─── 7.5 Open Source Program ───────────────────────────────────── */}
+      <section className="border-t border-border-default px-6 py-16 md:py-24">
+        <div className="mx-auto max-w-3xl rounded-2xl border border-primer-green/30 bg-primer-green/[0.04] p-8 text-center md:p-12">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-primer-green">
+            MergeWatch for Open Source
+          </p>
+          <h2 className="mx-auto mt-3 max-w-2xl text-2xl font-bold md:text-3xl">
+            Free frontier-model review for open-source maintainers.
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-primer-muted">
+            Maintain a real open-source project? We&rsquo;ll give it free hosted
+            access. AI-generated PRs are getting easier to produce and harder to
+            inspect by hand&nbsp;&mdash; maintainers deserve frontier-model
+            review on their side too. In exchange we ask for feedback and, if it
+            helps, permission to list your project.
+          </p>
+          <Link
+            href="/open-source"
+            className="mt-8 inline-flex items-center rounded-lg bg-primer-green px-6 py-3 text-sm font-semibold text-black transition hover:brightness-110"
+          >
+            Apply for free OSS access
+            <ArrowIcon />
+          </Link>
+        </div>
+      </section>
+
       {/* ─── 8. Final CTA — Loss Aversion Close ───────────────────────── */}
       <section className="border-t border-border-default px-6 py-16 text-center md:py-24">
         <h2 className="mx-auto max-w-3xl text-2xl font-bold md:text-4xl">
@@ -687,6 +724,14 @@ export default async function LandingPage() {
                   className="transition hover:text-fg-primary"
                 >
                   Pricing
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/open-source"
+                  className="transition hover:text-fg-primary"
+                >
+                  For Open Source
                 </Link>
               </li>
               <li>
