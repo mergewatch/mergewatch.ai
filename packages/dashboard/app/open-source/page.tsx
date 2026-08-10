@@ -17,9 +17,18 @@ import { ossFaqs } from "./faqs";
  *
  * TODO(oss-program): replace the placeholder with the real Tally form URL
  * once it exists (decision Q6 — new Tally form, matching the design-partner
- * banner pattern). Until then the CTA points at this placeholder.
+ * banner pattern). Until a real URL is set, the apply CTAs render as a
+ * disabled "opening soon" state via `APPLICATIONS_OPEN` below, so the page
+ * never ships a broken link to production.
  */
 const OSS_APPLY_URL = "https://tally.so/r/PLACEHOLDER";
+
+/**
+ * The apply flow only goes live once a real Tally form URL is wired in.
+ * While the constant is still a placeholder, the CTAs degrade to a disabled
+ * "Applications opening soon" button instead of a broken link.
+ */
+const APPLICATIONS_OPEN = !OSS_APPLY_URL.includes("PLACEHOLDER");
 
 const GITHUB_REPO = "mergewatch/mergewatch.ai";
 
@@ -98,15 +107,7 @@ export default function OpenSourcePage() {
             project as an early open-source user.
           </p>
           <div className="mt-9 flex w-full max-w-sm flex-col items-center gap-3 sm:w-auto sm:flex-row">
-            <a
-              href={OSS_APPLY_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex w-full items-center justify-center rounded-lg bg-primer-green px-6 py-3 text-sm font-semibold text-black transition hover:brightness-110 sm:w-auto"
-            >
-              Apply for free OSS access
-              <ArrowIcon />
-            </a>
+            <ApplyButton full />
             <a
               href={`https://github.com/${GITHUB_REPO}`}
               target="_blank"
@@ -262,15 +263,7 @@ export default function OpenSourcePage() {
             Tell us about your project. Approval is manual and lightweight.
           </p>
           <div className="mt-8 flex justify-center">
-            <a
-              href={OSS_APPLY_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center rounded-lg bg-primer-green px-6 py-3 text-sm font-semibold text-black transition hover:brightness-110"
-            >
-              Apply for free OSS access
-              <ArrowIcon />
-            </a>
+            <ApplyButton />
           </div>
         </section>
       </main>
@@ -294,6 +287,42 @@ export default function OpenSourcePage() {
 }
 
 /* ─── Inline sub-components ──────────────────────────────────────────────── */
+
+/**
+ * Primary "Apply for free OSS access" CTA. Renders a live link to the Tally
+ * form once a real URL is configured; until then it degrades to a disabled
+ * "Applications opening soon" button so the page never ships a broken link.
+ * `full` makes it full-width on mobile (used in the hero button row).
+ */
+function ApplyButton({ full = false }: { full?: boolean }) {
+  const width = full ? "w-full sm:w-auto" : "";
+
+  if (!APPLICATIONS_OPEN) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-disabled="true"
+        title="Applications open soon — check back shortly."
+        className={`inline-flex ${width} cursor-not-allowed items-center justify-center rounded-lg border border-border-default bg-surface-card px-6 py-3 text-sm font-semibold text-primer-muted`}
+      >
+        Applications opening soon
+      </button>
+    );
+  }
+
+  return (
+    <a
+      href={OSS_APPLY_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`inline-flex ${width} items-center justify-center rounded-lg bg-primer-green px-6 py-3 text-sm font-semibold text-black transition hover:brightness-110`}
+    >
+      Apply for free OSS access
+      <ArrowIcon />
+    </a>
+  );
+}
 
 function ListItem({ children }: { children: React.ReactNode }) {
   return (
