@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Pricing — Pay for what you review",
   description:
-    "No per-seat fees. First 5 reviews free. Self-host for free or use the managed SaaS with prepaid credits based on actual LLM cost.",
+    "No per-seat fees. First 5 reviews free every month. Self-host for free or use the managed SaaS with prepaid credits based on actual LLM cost.",
   alternates: { canonical: "/pricing" },
 };
 

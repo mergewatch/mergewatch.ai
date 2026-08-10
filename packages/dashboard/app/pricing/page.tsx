@@ -41,6 +41,12 @@ export default function PricingPage() {
           >
             Pricing
           </Link>
+          <Link
+            href="/open-source"
+            className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
+          >
+            For Open Source
+          </Link>
           <a
             href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
@@ -70,10 +76,12 @@ export default function PricingPage() {
             </span>
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-sm leading-relaxed text-primer-muted">
-            No seats. No per-user fees. No contracts. You pay based on the
-            actual LLM cost of each review&nbsp;&mdash; and your first{" "}
+            Code review cost should track review activity, not headcount. No
+            seats. No per-user fees. No contracts. You pay based on the actual
+            LLM cost of each review&nbsp;&mdash; and your first{" "}
             <strong className="text-fg-primary">{FREE_REVIEWS} reviews</strong>{" "}
-            each month are free, no credit card required.
+            each month are free, no credit card required. Prefer to self-host?
+            It&rsquo;s free, and you pay only your own model tokens.
           </p>
         </section>
 
@@ -358,9 +366,12 @@ export default function PricingPage() {
                 PRs over file limits are skipped and never billed.
               </FaqItem>
               <FaqItem question="What LLM does the SaaS version use?">
-                Claude via Amazon Bedrock. We use the best available Sonnet
-                model at the time of your review. Pricing reflects current
-                Bedrock on-demand rates.
+                The hosted SaaS runs frontier Claude models via Amazon Bedrock
+                with IAM auth&nbsp;&mdash; no API keys to manage. We use the best
+                available Sonnet model at the time of your review, and pricing
+                reflects current Bedrock on-demand rates. Self-hosting? You
+                choose the provider&nbsp;&mdash; Claude, GPT-class models via
+                LiteLLM, Gemini, Bedrock, or local models via Ollama.
               </FaqItem>
               <FaqItem question="Why not just show a price-per-PR table?">
                 Because it would be misleading. Your cost depends on diff size,
@@ -432,6 +443,14 @@ export default function PricingPage() {
                 </Link>
               </li>
               <li>
+                <Link
+                  href="/open-source"
+                  className="transition hover:text-fg-primary"
+                >
+                  For Open Source
+                </Link>
+              </li>
+              <li>
                 <a
                   href="https://docs.mergewatch.ai/self-hosting/overview"
                   target="_blank"
@@ -446,6 +465,14 @@ export default function PricingPage() {
           <div>
             <h4 className="font-semibold text-fg-primary">Company</h4>
             <ul className="mt-3 space-y-2 text-primer-muted">
+              <li>
+                <Link
+                  href="/about"
+                  className="transition hover:text-fg-primary"
+                >
+                  About
+                </Link>
+              </li>
               <li>
                 <a
                   href="https://github.com/mergewatch/mergewatch.ai"
