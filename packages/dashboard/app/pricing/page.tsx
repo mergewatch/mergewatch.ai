@@ -41,6 +41,12 @@ export default function PricingPage() {
           >
             Pricing
           </Link>
+          <Link
+            href="/open-source"
+            className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
+          >
+            For Open Source
+          </Link>
           <a
             href="https://github.com/mergewatch/mergewatch.ai"
             target="_blank"
@@ -434,6 +440,14 @@ export default function PricingPage() {
                   className="transition hover:text-fg-primary"
                 >
                   Pricing
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/open-source"
+                  className="transition hover:text-fg-primary"
+                >
+                  For Open Source
                 </Link>
               </li>
               <li>
