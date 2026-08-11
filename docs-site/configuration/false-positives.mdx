@@ -1,0 +1,113 @@
+---
+title: "How MergeWatch Avoids False Positives"
+description: "The machinery between an agent finding something and you reading it — grounding, dedup, clustering, convergence, and the guards that keep reviews quiet enough to trust."
+---
+
+An AI reviewer that reports everything it notices is worse than no reviewer at all. People stop reading it, and the one real bug arrives in a list of nine nits.
+
+Most of MergeWatch's review pipeline is therefore not about *finding* issues. It is about deciding which findings are worth your attention — and, just as importantly, not raising the same one twice.
+
+This page describes what happens between an agent producing a finding and you reading it. Nothing here needs configuration; it is how reviews behave by default.
+
+## The problem each guard solves
+
+<AccordionGroup>
+
+<Accordion title="Findings that cite code that isn't there">
+
+The single worst failure mode for a reviewer is confident nonsense — a critical finding about a vulnerability in code the PR does not contain.
+
+Findings are **grounded against the diff**: a claim is checked against the code it cites before it is reported. Warnings get the same treatment as criticals, and Mermaid diagrams that reference files outside the PR are dropped rather than shown.
+
+There is also a **confidence floor**. An agent that is guessing does not get to file a critical.
+
+</Accordion>
+
+<Accordion title="One problem reported as several findings">
+
+The multi-agent pipeline runs agents in parallel, and they notice the same thing from different angles. A real example from the codebase: one PR produced *"SQL injection risk in dynamic VALUES clause"*, *"Type assertion without runtime validation"*, and *"Untrusted JSON parsing from S3 without validation"* — three findings at three different lines, one root cause.
+
+Two mechanisms handle this:
+
+- **Cross-agent dedup** removes findings that different agents raised about the same line before the orchestrator ever sees them.
+- **Consolidation** clusters fragments of one concern into a single finding carrying the strongest severity, with the absorbed siblings listed under it.
+
+You keep the full audit trail — every framing is preserved inside the merged finding — but you read one row instead of three.
+
+</Accordion>
+
+<Accordion title="The same finding reappearing after you fixed something else">
+
+The whack-a-mole problem: you push a fix, the next review reports the issue you just fixed as *resolved* and an old one as *new*, because the model reworded its title.
+
+**Stable finding identity** solves half of it. Findings are matched across commits by a fingerprint derived from the code they cite, not by their title — so a reworded finding is recognised as the same issue rather than being reported as both resolved and new.
+
+**The convergence guard** solves the other half. Reply to a review with a `## mergewatch triage` comment rebutting or deferring specific findings, and those findings are not re-raised on later commits.
+
+<Note>
+The convergence guard fails safe in the direction that matters. Every error path returns an **empty** suppression set — infrastructure trouble can never *hide* a finding. Only an explicit, parseable author disposition suppresses one.
+</Note>
+
+</Accordion>
+
+<Accordion title="Style nits your linter already covers">
+
+If your repository configures a linter, the style agent defers to it.
+
+MergeWatch detects eslint, biome, ruff, flake8, clippy, golangci-lint, and stylelint from their config files at the repository root — with `pyproject.toml` requiring an actual `[tool.ruff]` section rather than mere presence, since most Python projects have one. When a linter is detected, the style agent stops reporting the things it already enforces: semicolons, quote style, import order, unused imports.
+
+Nothing to configure. Check in a linter config and the reviewer stops duplicating it.
+
+</Accordion>
+
+<Accordion title="Nagging about tests in a repo that has none on purpose">
+
+If your conventions file says the repository has no test harness yet, the test-coverage agent's findings collapse into a single non-blocking note instead of one warning per file.
+
+The detection is deliberately conservative: **the signal is a written declaration, not the absence of test files.** Plenty of repositories keep tests elsewhere, defer coverage deliberately, or are mid-migration — so MergeWatch only suppresses when a maintainer wrote it down. Under-detection is the acceptable failure here; silently dropping coverage findings because it guessed wrong is not.
+
+Write it in your [conventions file](/configuration/conventions) and the nagging stops.
+
+</Accordion>
+
+<Accordion title="One uncertain critical blocking a good PR">
+
+A single unverified critical does not block a merge on its own.
+
+Findings that survive grounding but not verification are surfaced with lower weight rather than treated as blocking facts. Where disputes have accumulated, the merge score accounts for them — an agent whose findings your team consistently rejects carries less weight in your repositories than one you act on.
+
+Reviews that suppress findings say so, with a count of what was removed by dedup and quality filters. You are told when the reviewer decided to stay quiet.
+
+</Accordion>
+
+</AccordionGroup>
+
+## What you see
+
+**One review comment per PR.** Not a verdict comment plus a findings comment plus a summary — one authoritative comment, updated in place.
+
+**Findings snapped to the call site**, not the function definition, so the line number points at the code that has the problem.
+
+**A disclosure footer** noting suppressed findings and dispute-aware adjustments, so the filtering is visible rather than silent.
+
+## What you can do about it
+
+The pipeline gets quieter the more you tell it. Three things help, in order of leverage:
+
+1. **Check in a [conventions file](/configuration/conventions).** The single highest-leverage change. It teaches MergeWatch your patterns so it stops applying generic best practice over your deliberate choices.
+2. **Reject bad findings** with `/mergewatch reject` rather than closing them silently. Disputes down-weight the agent; silence does nothing. See [feedback signals](/configuration/feedback-signals).
+3. **Triage rather than argue.** A `## mergewatch triage` reply stops a finding recurring across commits.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Review behavior" icon="sliders" href="/configuration/review-behavior">
+When reviews trigger, and the statuses they produce.
+</Card>
+
+<Card title="Repository conventions" icon="book" href="/configuration/conventions">
+The highest-leverage way to make reviews quieter.
+</Card>
+
+</CardGroup>
