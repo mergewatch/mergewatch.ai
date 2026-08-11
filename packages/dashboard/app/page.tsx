@@ -108,23 +108,20 @@ export default async function LandingPage() {
   const stars = await getGithubStars();
   return (
     <div className="flex min-h-screen flex-col">
-      {/* ─── 0. Design-partner banner ──────────────────────────────────── */}
-      <a
-        href="https://tally.so/r/GxolrQ"
-        target="_blank"
-        rel="noopener noreferrer"
+      {/* ─── 0. Open-source program banner ─────────────────────────────── */}
+      <Link
+        href="/open-source"
         className="group block w-full bg-primer-green text-black transition hover:brightness-110"
       >
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-center gap-1 px-6 py-2.5 text-center text-sm font-medium sm:flex-row sm:gap-3">
           <span>
-            We&rsquo;re onboarding our first design partners &mdash; free
-            through GA, direct line to the founder.
+            Maintain an open-source project? Get free frontier-model PR review.
           </span>
           <span className="inline-flex items-center gap-1 font-semibold underline-offset-2 group-hover:underline">
-            Join <ArrowIcon />
+            Apply <ArrowIcon />
           </span>
         </div>
-      </a>
+      </Link>
 
       {/* ─── 1. Nav ────────────────────────────────────────────────────── */}
       <nav className="flex items-center justify-between px-6 py-4 md:px-12">
