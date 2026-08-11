@@ -1,0 +1,112 @@
+---
+title: "Installing on an Organization"
+description: "Walk through installing the MergeWatch GitHub App on your GitHub organization."
+---
+
+## Who can install
+
+<Warning>
+Only **GitHub Organization owners** can install GitHub Apps. Organization admins do not have permission to install apps — GitHub enforces this restriction at the platform level.
+
+If you are not an owner, ask an organization owner to install MergeWatch on your behalf.
+</Warning>
+
+## Installation steps
+
+<Steps>
+
+<Step title="Run the install wizard">
+
+```bash
+npx mergewatch@latest init
+```
+
+The wizard walks you through creating the GitHub App and prints the installation URL when finished.
+
+</Step>
+
+<Step title="Open the installation URL">
+
+Open the URL printed by the wizard in your browser. It follows this format:
+
+```
+https://github.com/apps/mergewatch-{slug}/installations/new
+```
+
+</Step>
+
+<Step title="Select the organization">
+
+GitHub displays a list of organizations you own. Select the organization where you want to install MergeWatch.
+
+</Step>
+
+<Step title="Choose repository scope">
+
+Select one of:
+
+- **All repositories** — MergeWatch reviews PRs across every repo in the org.
+- **Only select repositories** — Pick specific repos to include.
+
+</Step>
+
+<Step title="Click Install">
+
+Click **Install** to complete the installation. GitHub redirects you back to MergeWatch.
+
+</Step>
+
+</Steps>
+
+<Tip>
+Start with **Only select repositories** and add a single test repo. Expand coverage after you have confirmed the review quality meets your expectations. You can switch to **All repositories** at any time from GitHub Settings > Applications > MergeWatch > Configure.
+</Tip>
+
+## What happens after install
+
+Once you click Install, the following happens automatically:
+
+1. GitHub fires an `installation` webhook to MergeWatch.
+2. MergeWatch creates an installation record in DynamoDB.
+3. An `installation_repositories` event fires for each repo in scope.
+4. All repos appear in **Dashboard > Repositories** within 30 seconds.
+
+<Note>
+No review runs until a pull request is opened. Installing the app does not trigger reviews on existing PRs.
+</Note>
+
+## Multiple admins
+
+Any organization owner can access the MergeWatch dashboard settings for that org. The account that ran `npx mergewatch@latest init` does not receive any special privileges — admin access is checked live against the GitHub organization membership API on every request.
+
+## Multiple organizations
+
+Each organization requires a separate installation. You can either:
+
+- Run `npx mergewatch@latest init` once per organization.
+- Install directly from your GitHub App settings page for additional organizations.
+
+Each org installation is fully independent with its own configuration and review history.
+
+## Removing MergeWatch
+
+To uninstall MergeWatch from your organization:
+
+1. Go to **GitHub Settings > Applications > MergeWatch > Configure**.
+2. Click **Uninstall**.
+
+This removes the GitHub App installation but does not delete your cloud resources. See [Uninstalling](/self-hosting/uninstalling) for full cleanup instructions.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Permissions reference" icon="shield-check" href="/github-app/permissions">
+  Review the GitHub permissions MergeWatch requests and why each is needed.
+</Card>
+
+<Card title="Quickstart" icon="rocket" href="/overview/quickstart">
+  Go from zero to your first AI-powered PR review in 10 minutes.
+</Card>
+
+</CardGroup>

@@ -1,0 +1,98 @@
+---
+title: "Repository Conventions"
+description: "Teach MergeWatch your repo-specific patterns by checking in a conventions file — it gets injected into every agent's prompt."
+---
+
+MergeWatch can pick up a Markdown file documenting your repo-specific conventions and inject it into every review agent's prompt. This lets MergeWatch respect patterns like *"errors are handled via middleware — don't flag missing try/catch in route handlers"* instead of applying generic best practices.
+
+## Discovery order
+
+When a review starts, MergeWatch resolves conventions in this order:
+
+1. The path set by `conventions:` in `.mergewatch.yml` (if present)
+2. `AGENTS.md` at the repo root
+3. `CONVENTIONS.md` at the repo root
+4. `.mergewatch/conventions.md` at the repo root
+5. No conventions — the agents run without repo-specific context
+
+The first file that resolves wins; later candidates are not fetched.
+
+<Tip>
+If your repo already has an `AGENTS.md` file (for coding agents like Claude Code or Cursor), MergeWatch will pick it up automatically — no configuration needed.
+</Tip>
+
+## Example — `AGENTS.md`
+
+```markdown
+# Repo conventions
+
+## Error handling
+All Express routes use the centralized error middleware in `src/middleware/error.ts`.
+Do not flag missing try/catch in route handlers — throwing is intentional.
+
+## Logging
+Use the `logger` exported from `src/logger.ts`. Never use `console.log` except in CLI scripts under `scripts/`.
+
+## Database
+All queries go through the repository classes in `src/db/`. Direct `pg` / `drizzle`
+calls outside those files should be flagged.
+
+## Testing
+Unit tests live next to their source as `*.test.ts`. Integration tests live under `test/`.
+Missing tests for new exported functions should be flagged — except for React components,
+which are covered by our Playwright suite instead.
+```
+
+## Explicit path in `.mergewatch.yml`
+
+If you want your conventions file somewhere other than the default paths — for example, alongside existing architecture docs — set `conventions:` explicitly:
+
+```yaml .mergewatch.yml
+version: 1
+conventions: docs/mergewatch-conventions.md
+```
+
+When `conventions:` is set, MergeWatch tries only that path. If the file is missing, no conventions are injected (auto-discovery does **not** fall back).
+
+## Size cap
+
+Conventions files are capped at **16 KB** when injected into prompts. If your file is larger, the first 16 KB is used and an explicit `[truncated — showing first 16 KB]` marker is appended so the agents know context was cut.
+
+<Warning>
+Keep your conventions file focused on rules that should influence the review. A lengthy architecture overview or onboarding guide is better suited to a separate doc — the conventions file is shown to every agent on every review, so brevity improves signal.
+</Warning>
+
+## What to put in a conventions file
+
+Things that work well:
+
+- **Opt-out rules** — "don't flag X because we handle it centrally"
+- **House patterns** — naming conventions, folder layout, error-handling idioms
+- **Stack-specific quirks** — "we use server components; don't suggest `'use client'` for anything in `app/`"
+- **Team norms** — commit message style, review checklist expectations
+
+Things that don't belong here:
+
+- Generic best practices (the agents already know those)
+- Repo-wide file exclusions → use [`excludePatterns` / `ignorePatterns`](/configuration/skip-rules)
+- Custom review behaviors that can be toggled → use the [dashboard Settings](/dashboard/settings) or [`.mergewatch.yml`](/configuration/mergewatch-yml) schema directly
+
+## Precedence vs. dashboard Custom Instructions
+
+Both **conventions** and the dashboard's **Custom Instructions** field inject extra text into agent prompts. They stack rather than override:
+
+- **Custom Instructions** are installation-level and capped at 1,000 characters — good for org-wide rules that apply to every repo.
+- **Conventions** are repo-level and capped at 16 KB — good for repo-specific architecture and patterns.
+
+If both are set, agents receive both.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title=".mergewatch.yml Reference" icon="file-code" href="/configuration/mergewatch-yml">
+    Full schema of the per-repo configuration file.
+  </Card>
+  <Card title="Custom Instructions" icon="pen" href="/configuration/custom-instructions">
+    Installation-level prompt additions managed via the dashboard.
+  </Card>
+</CardGroup>

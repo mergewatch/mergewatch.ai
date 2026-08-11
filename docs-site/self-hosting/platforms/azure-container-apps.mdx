@@ -1,0 +1,279 @@
+---
+title: "Azure Container Apps"
+description: "Deploy MergeWatch to Azure Container Apps with Azure Database for PostgreSQL."
+---
+
+Azure Container Apps is a serverless container platform built on Kubernetes. It handles scaling, networking, and TLS certificates automatically, letting you focus on configuring MergeWatch rather than managing infrastructure.
+
+## Overview
+
+This guide walks you through deploying the MergeWatch container to Azure Container Apps, connecting it to Azure Database for PostgreSQL - Flexible Server, and configuring the GitHub App webhook.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Install the Azure CLI">
+
+```bash
+az login
+az account set --subscription YOUR_SUBSCRIPTION_ID
+```
+
+</Step>
+
+<Step title="Create a resource group">
+
+```bash
+az group create --name mergewatch-rg --location eastus
+```
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider. For Azure OpenAI, you can use managed identity authentication via LiteLLM — no static API keys required.
+
+</Step>
+
+</Steps>
+
+## Deploy to Azure Container Apps
+
+<Steps>
+
+<Step title="Create a Container Apps environment">
+
+```bash
+az containerapp env create \
+  --name mergewatch-env \
+  --resource-group mergewatch-rg \
+  --location eastus
+```
+
+</Step>
+
+<Step title="Create the Container App">
+
+```bash
+az containerapp create \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --environment mergewatch-env \
+  --image ghcr.io/santthosh/mergewatch:latest \
+  --target-port 3000 \
+  --ingress external \
+  --min-replicas 0 \
+  --max-replicas 3 \
+  --env-vars \
+    "GITHUB_APP_ID=YOUR_APP_ID" \
+    "GITHUB_PRIVATE_KEY=YOUR_PRIVATE_KEY" \
+    "GITHUB_WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET" \
+    "LLM_PROVIDER=anthropic" \
+    "ANTHROPIC_API_KEY=YOUR_ANTHROPIC_KEY" \
+    "DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/mergewatch"
+```
+
+<Tip>
+Setting `--min-replicas 0` allows the app to scale to zero when no webhooks are being processed. Azure Container Apps scales up automatically when a request arrives.
+</Tip>
+
+</Step>
+
+<Step title="Use secrets for sensitive values (recommended)">
+
+```bash
+az containerapp secret set \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --secrets \
+    "github-pk=YOUR_PRIVATE_KEY" \
+    "webhook-secret=YOUR_WEBHOOK_SECRET" \
+    "anthropic-key=YOUR_ANTHROPIC_KEY" \
+    "db-url=postgresql://USER:PASSWORD@HOST:5432/mergewatch"
+
+az containerapp update \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --set-env-vars \
+    "GITHUB_PRIVATE_KEY=secretref:github-pk" \
+    "GITHUB_WEBHOOK_SECRET=secretref:webhook-secret" \
+    "ANTHROPIC_API_KEY=secretref:anthropic-key" \
+    "DATABASE_URL=secretref:db-url"
+```
+
+</Step>
+
+<Step title="Note the FQDN">
+
+After creation, retrieve the app URL:
+
+```bash
+az containerapp show \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --query properties.configuration.ingress.fqdn \
+  --output tsv
+```
+
+```text
+mergewatch.kindocean-abc123.eastus.azurecontainerapps.io
+```
+
+</Step>
+
+</Steps>
+
+## Set up Postgres
+
+MergeWatch requires PostgreSQL to store installation and review data. Azure Database for PostgreSQL - Flexible Server is the recommended option.
+
+<Steps>
+
+<Step title="Create a Flexible Server instance">
+
+```bash
+az postgres flexible-server create \
+  --resource-group mergewatch-rg \
+  --name mergewatch-db \
+  --location eastus \
+  --admin-user mergewatch \
+  --admin-password YOUR_DB_PASSWORD \
+  --sku-name Standard_B1ms \
+  --tier Burstable \
+  --version 15
+```
+
+</Step>
+
+<Step title="Create the database">
+
+```bash
+az postgres flexible-server db create \
+  --resource-group mergewatch-rg \
+  --server-name mergewatch-db \
+  --database-name mergewatch
+```
+
+</Step>
+
+<Step title="Allow access from Container Apps">
+
+```bash
+az postgres flexible-server firewall-rule create \
+  --resource-group mergewatch-rg \
+  --name mergewatch-db \
+  --rule-name allow-azure-services \
+  --start-ip-address 0.0.0.0 \
+  --end-ip-address 0.0.0.0
+```
+
+<Note>
+The `0.0.0.0` rule allows connections from Azure services. For tighter security, use VNet integration between Container Apps and the Flexible Server.
+</Note>
+
+</Step>
+
+<Step title="Update the DATABASE_URL">
+
+Update your Container App with the Flexible Server connection string:
+
+```bash
+az containerapp update \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --set-env-vars \
+    "DATABASE_URL=postgresql://mergewatch:YOUR_DB_PASSWORD@mergewatch-db.postgres.database.azure.com:5432/mergewatch?sslmode=require"
+```
+
+</Step>
+
+</Steps>
+
+### Managed identity for Azure OpenAI
+
+If you use Azure OpenAI as your LLM provider via LiteLLM, you can authenticate with a managed identity instead of static API keys.
+
+<Steps>
+
+<Step title="Enable managed identity">
+
+```bash
+az containerapp identity assign \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --system-assigned
+```
+
+</Step>
+
+<Step title="Grant the identity access to Azure OpenAI">
+
+```bash
+az role assignment create \
+  --assignee MANAGED_IDENTITY_PRINCIPAL_ID \
+  --role "Cognitive Services OpenAI User" \
+  --scope /subscriptions/SUB_ID/resourceGroups/RG/providers/Microsoft.CognitiveServices/accounts/YOUR_OPENAI_RESOURCE
+```
+
+</Step>
+
+<Step title="Configure LiteLLM environment variables">
+
+```bash
+az containerapp update \
+  --name mergewatch \
+  --resource-group mergewatch-rg \
+  --set-env-vars \
+    "LLM_PROVIDER=azure" \
+    "AZURE_API_BASE=https://YOUR_RESOURCE.openai.azure.com" \
+    "AZURE_API_VERSION=2024-02-01"
+```
+
+</Step>
+
+</Steps>
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub App to the Container App FQDN followed by `/webhook`:
+
+```text
+https://mergewatch.kindocean-abc123.eastus.azurecontainerapps.io/webhook
+```
+
+<Warning>
+Azure Container Apps provides TLS automatically on the default FQDN. Do not use `http://` — GitHub requires HTTPS for webhook delivery.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>

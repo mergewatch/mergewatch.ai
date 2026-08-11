@@ -1,0 +1,104 @@
+---
+title: "Amazon Bedrock"
+description: "Use AWS Bedrock for model inference — keeps LLM calls within your AWS account."
+---
+
+Amazon Bedrock lets you run model inference entirely within your AWS account. Choose this provider if your team is already on AWS, you have Bedrock enabled, or you have compliance requirements that mandate keeping LLM traffic within your cloud boundary.
+
+<Note>
+Bedrock is the LLM provider option that requires AWS — the MergeWatch server itself can still run anywhere (Docker, GCP, Azure, bare metal). Only the LLM API calls go to Bedrock.
+</Note>
+
+## Configuration
+
+Set these environment variables in your `.env` file or container environment:
+
+| Variable | Required | Value |
+| --- | --- | --- |
+| `LLM_PROVIDER` | Yes | `bedrock` |
+| `AWS_REGION` | Yes | AWS region for Bedrock API calls (e.g. `us-east-1`) |
+| `AWS_ACCESS_KEY_ID` | Conditional | Required unless using an instance profile |
+| `AWS_SECRET_ACCESS_KEY` | Conditional | Required unless using an instance profile |
+| `LLM_MODEL` | No | Override the default model |
+
+<Tip>
+If MergeWatch runs on EC2, ECS, or Fargate, you can use an **IAM instance profile** or **task role** instead of static credentials. The AWS SDK picks up credentials automatically — just omit `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+</Tip>
+
+## Default model
+
+MergeWatch uses **`us.anthropic.claude-3-5-haiku-20241022-v1:0`** by default. This is a **cross-region inference profile** that routes requests to the nearest available region.
+
+## Bedrock model access
+
+Before using a model, you must **enable it in the Bedrock console**:
+
+1. Open the [Bedrock Model Access console](https://console.aws.amazon.com/bedrock/home#/modelaccess)
+2. Find the Claude model you want to use
+3. Click **Request model access** if the status is not *Access granted*
+4. Wait for approval (usually instant for Anthropic models)
+
+<Warning>
+If you skip this step, MergeWatch will receive `AccessDeniedException` errors from Bedrock. Check the [Troubleshooting](/reference/troubleshooting) guide if you see these errors.
+</Warning>
+
+## Supported regions
+
+| Region | Region code |
+| --- | --- |
+| US East (N. Virginia) | `us-east-1` |
+| US West (Oregon) | `us-west-2` |
+| Europe (Ireland) | `eu-west-1` |
+| Asia Pacific (Tokyo) | `ap-northeast-1` |
+| Asia Pacific (Singapore) | `ap-southeast-1` |
+| Asia Pacific (Sydney) | `ap-southeast-2` |
+
+## Cross-region inference profiles
+
+Bedrock supports **cross-region inference profiles** that automatically route requests to the nearest region with available capacity. These profiles use a geographic prefix:
+
+| Prefix | Coverage |
+| --- | --- |
+| `us.` | US regions (us-east-1, us-west-2) |
+| `eu.` | European regions (eu-west-1) |
+| `ap.` | Asia Pacific regions (ap-northeast-1, ap-southeast-1, ap-southeast-2) |
+
+The default model `us.anthropic.claude-3-5-haiku-20241022-v1:0` uses the `us.` prefix, routing across US regions. If your deployment is in Europe or Asia Pacific, override the model to use the appropriate prefix.
+
+## Model override examples
+
+```bash
+# US cross-region (default)
+LLM_MODEL=us.anthropic.claude-3-5-haiku-20241022-v1:0
+
+# Europe cross-region
+LLM_MODEL=eu.anthropic.claude-3-5-haiku-20241022-v1:0
+
+# Asia Pacific cross-region
+LLM_MODEL=ap.anthropic.claude-3-5-haiku-20241022-v1:0
+
+# Single-region (no cross-region routing)
+LLM_MODEL=anthropic.claude-3-5-haiku-20241022-v1:0
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Anthropic (direct)" icon="bolt" href="/self-hosting/llm-providers/anthropic">
+  The default provider — simplest setup, no AWS required.
+</Card>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="gear" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Platform guides" icon="server" href="/self-hosting/platforms/aws-ecs-fargate">
+  Deploy MergeWatch on AWS ECS Fargate.
+</Card>
+
+</CardGroup>

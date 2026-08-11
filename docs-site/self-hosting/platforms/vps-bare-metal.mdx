@@ -1,0 +1,255 @@
+---
+title: "VPS / Bare Metal"
+description: "Deploy MergeWatch to any Linux server with Docker."
+---
+
+If you have a Linux server — whether a cloud VPS from DigitalOcean, Hetzner, Linode, or a physical machine in your data center — you can run MergeWatch with Docker Compose. This gives you full control over the deployment with minimal dependencies.
+
+## Overview
+
+This guide covers running MergeWatch and Postgres as Docker containers, setting up a reverse proxy with TLS using nginx or Caddy, and configuring the GitHub App webhook to point at your domain.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Install Docker and Docker Compose">
+
+```bash
+# Ubuntu / Debian
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+```
+
+Verify the installation:
+
+```bash
+docker --version     # 20.10+
+docker compose version   # 2.0+
+```
+
+</Step>
+
+<Step title="Open port 443">
+
+Ensure your firewall allows inbound HTTPS traffic on port 443. If you use `ufw`:
+
+```bash
+sudo ufw allow 443/tcp
+```
+
+</Step>
+
+<Step title="Point a domain at your server">
+
+Create a DNS A record pointing your domain (e.g. `mergewatch.example.com`) to your server's public IP address. A domain is required for TLS certificates.
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider. For the default Anthropic provider, you also need `ANTHROPIC_API_KEY`.
+
+</Step>
+
+</Steps>
+
+## Deploy with Docker Compose
+
+<Steps>
+
+<Step title="Create the project directory">
+
+```bash
+mkdir -p /opt/mergewatch && cd /opt/mergewatch
+```
+
+</Step>
+
+<Step title="Create the docker-compose.yml">
+
+```yaml
+version: "3.8"
+
+services:
+  mergewatch:
+    image: ghcr.io/santthosh/mergewatch:latest
+    container_name: mergewatch
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GITHUB_APP_ID=${GITHUB_APP_ID}
+      - GITHUB_PRIVATE_KEY=${GITHUB_PRIVATE_KEY}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DATABASE_URL=postgresql://mergewatch:${DB_PASSWORD}@postgres:5432/mergewatch
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: mergewatch-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=mergewatch
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=mergewatch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mergewatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+```
+
+</Step>
+
+<Step title="Create the .env file">
+
+```bash
+cat > .env << 'EOF'
+GITHUB_APP_ID=your_app_id
+GITHUB_PRIVATE_KEY=your_private_key
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_anthropic_key
+DB_PASSWORD=a_strong_random_password
+EOF
+```
+
+<Warning>
+Protect the `.env` file. Set permissions to owner-only: `chmod 600 .env`
+</Warning>
+
+</Step>
+
+<Step title="Start the services">
+
+```bash
+docker compose up -d
+```
+
+Verify both containers are running:
+
+```bash
+docker compose ps
+```
+
+```text
+NAME                  STATUS          PORTS
+mergewatch            Up 10 seconds   0.0.0.0:3000->3000/tcp
+mergewatch-postgres   Up 12 seconds   5432/tcp
+```
+
+</Step>
+
+</Steps>
+
+## Set up Postgres
+
+By default, the `docker-compose.yml` above runs PostgreSQL as a container alongside MergeWatch. Data is persisted to a Docker volume (`pgdata`).
+
+<Note>
+If you prefer an external managed database, remove the `postgres` service from `docker-compose.yml` and set `DATABASE_URL` in your `.env` file to the external connection string.
+</Note>
+
+## Set up a reverse proxy with TLS
+
+Expose MergeWatch on port 443 with TLS using nginx or Caddy. GitHub requires HTTPS for webhook delivery.
+
+<CodeGroup>
+
+```nginx nginx
+# /etc/nginx/sites-available/mergewatch
+server {
+    listen 443 ssl http2;
+    server_name mergewatch.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/mergewatch.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mergewatch.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name mergewatch.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+```text Caddy (Caddyfile)
+mergewatch.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+</CodeGroup>
+
+<Tip>
+Caddy automatically provisions and renews TLS certificates from Let's Encrypt. With nginx, use `certbot` to obtain certificates: `sudo certbot --nginx -d mergewatch.example.com`
+</Tip>
+
+Enable the nginx site and reload:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/mergewatch /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub App to your domain followed by `/webhook`:
+
+```text
+https://mergewatch.example.com/webhook
+```
+
+<Warning>
+Do not expose port 3000 directly to the internet without TLS. Always use a reverse proxy with HTTPS.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>

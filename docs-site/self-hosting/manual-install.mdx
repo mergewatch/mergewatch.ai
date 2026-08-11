@@ -1,0 +1,188 @@
+---
+title: "Manual Install"
+description: "Deploy MergeWatch with individual docker run commands — for environments where Docker Compose is not available."
+---
+
+## When to use manual install
+
+Use this guide if you:
+
+- Cannot use Docker Compose (minimal Docker installations, orchestration platforms that run individual containers)
+- Want individual control over each container's lifecycle
+- Need to integrate MergeWatch containers into an existing infrastructure setup
+
+<Note>
+For most users, the recommended path is Docker Compose. See the [install guide](/self-hosting/install) for the simpler setup.
+</Note>
+
+---
+
+## Prerequisites
+
+- Docker installed and running
+- A GitHub App configured with the [required permissions](/github-app/permissions)
+- Your GitHub App credentials: App ID, private key (`.pem` file), and webhook secret
+- An API key or endpoint for your chosen LLM provider
+
+---
+
+## Deployment steps
+
+<Steps>
+  <Step title="Create a Docker network">
+    All MergeWatch containers must communicate over a shared network.
+
+    ```bash
+    docker network create mergewatch-net
+    ```
+  </Step>
+
+  <Step title="Start Postgres">
+    MergeWatch requires a Postgres database for storing installation and review data.
+
+    ```bash
+    docker run -d \
+      --name postgres \
+      --network mergewatch-net \
+      -e POSTGRES_USER=mergewatch \
+      -e POSTGRES_PASSWORD=mergewatch \
+      -e POSTGRES_DB=mergewatch \
+      -v mergewatch-pgdata:/var/lib/postgresql/data \
+      -p 5432:5432 \
+      postgres:16-alpine
+    ```
+
+    <Tip>
+    The `-v mergewatch-pgdata:/var/lib/postgresql/data` flag creates a named volume so your data persists across container restarts.
+    </Tip>
+  </Step>
+
+  <Step title="Start the MergeWatch server">
+    Run the MergeWatch server container, passing all required environment variables via `-e` flags.
+
+    ```bash
+    docker run -d \
+      --name mergewatch \
+      --network mergewatch-net \
+      -e GITHUB_APP_ID=your_app_id \
+      -e GITHUB_PRIVATE_KEY="$(cat private-key.pem)" \
+      -e GITHUB_WEBHOOK_SECRET=your_webhook_secret \
+      -e DATABASE_URL=postgresql://mergewatch:mergewatch@postgres:5432/mergewatch \
+      -e LLM_PROVIDER=anthropic \
+      -e ANTHROPIC_API_KEY=sk-ant-your-key \
+      -p 3000:3000 \
+      ghcr.io/santthosh/mergewatch:latest
+    ```
+
+    <Warning>
+    Replace the placeholder values with your actual credentials. The `DATABASE_URL` hostname `postgres` matches the `--name` of the Postgres container on the shared network.
+    </Warning>
+
+    For other LLM providers, replace the provider-specific variables:
+
+    <AccordionGroup>
+      <Accordion title="Bedrock">
+        ```bash
+        -e LLM_PROVIDER=bedrock \
+        -e AWS_REGION=us-east-1 \
+        -e AWS_ACCESS_KEY_ID=your_access_key \
+        -e AWS_SECRET_ACCESS_KEY=your_secret_key \
+        ```
+      </Accordion>
+
+      <Accordion title="LiteLLM">
+        ```bash
+        -e LLM_PROVIDER=litellm \
+        -e LITELLM_BASE_URL=http://litellm:4000 \
+        -e LITELLM_API_KEY=your_litellm_key \
+        ```
+      </Accordion>
+
+      <Accordion title="Ollama">
+        ```bash
+        -e LLM_PROVIDER=ollama \
+        -e OLLAMA_BASE_URL=http://ollama:11434 \
+        ```
+      </Accordion>
+    </AccordionGroup>
+  </Step>
+
+  <Step title="(Optional) Start the dashboard">
+    ```bash
+    docker run -d \
+      --name dashboard \
+      --network mergewatch-net \
+      -e DEPLOYMENT_MODE=self-hosted \
+      -e DATABASE_URL=postgres://postgres:postgres@postgres:5432/mergewatch \
+      -e GITHUB_CLIENT_ID=your_client_id \
+      -e GITHUB_CLIENT_SECRET=your_client_secret \
+      -e NEXTAUTH_SECRET=$(openssl rand -base64 32) \
+      -e NEXTAUTH_URL=http://localhost:3001 \
+      -p 3001:3001 \
+      ghcr.io/santthosh/mergewatch-dashboard:0.1.0
+    ```
+
+    The dashboard reads directly from the MergeWatch Postgres database, so no `NEXT_PUBLIC_API_URL` is required.
+  </Step>
+
+  <Step title="Update the GitHub App webhook URL">
+    Go to your GitHub App settings and set the **Webhook URL** to your server's publicly accessible URL (e.g. `https://mergewatch.example.com/webhook`).
+
+    For local development, use a tunnel:
+
+    ```bash
+    ngrok http 3000
+    ```
+  </Step>
+
+  <Step title="Install the GitHub App">
+    Navigate to your GitHub App's public page and install it on the repositories you want MergeWatch to review.
+  </Step>
+
+  <Step title="Verify the deployment">
+    Check that all containers are running:
+
+    ```bash
+    docker ps --filter network=mergewatch-net
+    ```
+
+    Check the MergeWatch server logs:
+
+    ```bash
+    docker logs mergewatch
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Managing containers
+
+| Task | Command |
+| --- | --- |
+| View logs | `docker logs -f mergewatch` |
+| Restart server | `docker restart mergewatch` |
+| Stop all | `docker stop mergewatch dashboard postgres` |
+| Remove all | `docker rm mergewatch dashboard postgres` |
+| Pull latest images | `docker pull ghcr.io/santthosh/mergewatch:latest && docker pull ghcr.io/santthosh/mergewatch-dashboard:latest` |
+
+To upgrade, pull the latest images and recreate the containers:
+
+```bash
+docker pull ghcr.io/santthosh/mergewatch:latest
+docker stop mergewatch && docker rm mergewatch
+# Re-run the docker run command from Step 3
+```
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose Install" icon="bolt" href="/self-hosting/install">
+    Use Docker Compose for a simpler setup experience.
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/reference/env-vars">
+    Full reference for all environment variables.
+  </Card>
+</CardGroup>

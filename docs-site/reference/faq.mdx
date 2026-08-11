@@ -1,0 +1,88 @@
+---
+title: FAQ
+description: Frequently asked questions about MergeWatch.
+---
+
+<AccordionGroup>
+  <Accordion title="How does MergeWatch compare to CodeRabbit, Greptile, Copilot, and others?">
+    MergeWatch can run entirely self-hosted with Docker Compose — your code never leaves your infrastructure. There is no per-seat pricing. The project is AGPL v3 open source, and reviews run through a multi-agent parallel pipeline rather than a single-pass model. You can choose your own LLM provider (Anthropic, Bedrock, LiteLLM, or Ollama).
+
+    For detailed side-by-side breakdowns sourced from each vendor's own docs, see [Comparisons](/comparisons/overview) or the [feature matrix](/comparisons/feature-matrix). Per-tool pages: [CodeRabbit](/comparisons/coderabbit), [Greptile](/comparisons/greptile), [GitHub Copilot](/comparisons/github-copilot), [Claude Code](/comparisons/claude-code), [OpenAI Codex](/comparisons/openai-codex), [Cursor BugBot](/comparisons/cursor-bugbot), [Qodo](/comparisons/qodo).
+  </Accordion>
+
+  <Accordion title="Does MergeWatch store my code?">
+    - **Self-hosted:** No. Everything runs on your own machine or server. MergeWatch has zero access to your code.
+    - **SaaS:** MergeWatch processes the diff in-memory to call the LLM. Nothing is persisted beyond the review metadata stored in DynamoDB.
+  </Accordion>
+
+  <Accordion title="What are the two deployment modes?">
+    MergeWatch offers two ways to run:
+
+    - **Self-hosted:** Clone the repo, configure a `.env` file, and run `docker compose up`. You control the entire stack — the server, database, dashboard, and LLM provider.
+    - **SaaS:** Use the hosted version at mergewatch.ai. No infrastructure to manage. The first 5 PR reviews are free (lifetime), then pay-as-you-go with prepaid credits. A typical review costs $0.01–$0.10.
+  </Accordion>
+
+  <Accordion title="Do I need an AWS account to self-host?">
+    No. Self-hosted MergeWatch runs entirely with Docker and does not require any AWS services. The only scenario where you need an AWS account is if you set `LLM_PROVIDER=bedrock` to use Amazon Bedrock as your LLM backend. All other providers (Anthropic, LiteLLM, Ollama) work without AWS.
+  </Accordion>
+
+  <Accordion title="Which LLM provider should I use?">
+    **Anthropic** is the recommended default. It offers the best balance of review quality and ease of setup — you only need an API key. Here is a quick comparison:
+
+    | Provider | Best for |
+    | --- | --- |
+    | `anthropic` | Recommended default. High-quality reviews, simple setup. |
+    | `bedrock` | Teams already using AWS who want to keep traffic within their AWS account. |
+    | `litellm` | Organizations running a LiteLLM proxy for centralized model access and cost tracking. |
+    | `ollama` | Air-gapped or fully offline environments. |
+  </Accordion>
+
+  <Accordion title="Can I run MergeWatch without internet access?">
+    Yes. Set `LLM_PROVIDER=ollama` and run an Ollama instance as a sidecar container (or on a separate host on your network). The MergeWatch server, Postgres database, and Ollama can all run on the same machine with no outbound internet required. The only external connection needed is the GitHub webhook — which requires inbound HTTPS from GitHub's IP ranges.
+  </Accordion>
+
+  <Accordion title="Is SaaS really free?">
+    The first 5 PR reviews per installation are free with no credit card required. After that, MergeWatch uses a **prepaid credits** model — add a card, top up a balance, and each review deducts its actual cost. The formula is `llmCost + $0.005 infra fee + 40% margin`, which typically works out to $0.01–$0.10 per review. See [Billing & Pricing](/saas/billing) for details.
+  </Accordion>
+
+  <Accordion title="Do I need to host model weights or GPUs?">
+    Not unless you use `LLM_PROVIDER=ollama`. Anthropic and Bedrock are managed API services — the provider hosts the models. With Ollama, you run the model locally, which does require sufficient hardware (CPU or GPU depending on the model size).
+  </Accordion>
+
+  <Accordion title="What happens if the LLM provider is unavailable?">
+    The review fails gracefully. A "Review failed" comment is posted on the PR, and the review is marked as failed in the dashboard. You can retrigger it with `@mergewatch review`.
+  </Accordion>
+
+  <Accordion title="Can I use models other than Claude?">
+    Yes. With `LLM_PROVIDER=bedrock`, you can use any Bedrock-supported model. With `LLM_PROVIDER=litellm`, you can use any model your LiteLLM proxy supports (OpenAI, Gemini, Mistral, etc.). With `LLM_PROVIDER=ollama`, you can use any model Ollama supports. Set the `LLM_MODEL` environment variable to override the default.
+  </Accordion>
+
+  <Accordion title="What counts as a PR for billing purposes?">
+    - **Self-hosted:** No billing from MergeWatch. You pay only your LLM provider costs.
+    - **SaaS:** Each PR that triggers a review counts. Skipped PRs (drafts, excluded paths) do not count.
+  </Accordion>
+
+  <Accordion title="What happens when I use up my 5 free reviews?">
+    MergeWatch posts a GitHub Check Run with `action_required: credits required` on the next PR and opens a GitHub Issue titled *"MergeWatch: reviews paused — credits required"*. Add a payment method and top up via **Dashboard → Billing**; the next PR event will be reviewed and the blocking issue auto-closed.
+  </Accordion>
+
+  <Accordion title="Can I use MergeWatch on private repos?">
+    Yes. The GitHub App requests `contents: read` permission to access diffs.
+  </Accordion>
+
+  <Accordion title="Does it work with GitHub Enterprise?">
+    GitHub Enterprise Cloud: yes. GitHub Enterprise Server: not yet (planned).
+  </Accordion>
+
+  <Accordion title="How do I add MergeWatch to multiple orgs?">
+    Install the GitHub App on each org separately. Each installation appears in the dashboard.
+  </Accordion>
+
+  <Accordion title="Why AGPL v3 and not MIT?">
+    AGPL ensures improvements to the core stay open source. Companies can use it freely for internal purposes. A commercial license is available for those who need it.
+  </Accordion>
+
+  <Accordion title="How do I get a commercial license?">
+    Contact [sales@mergewatch.ai](mailto:sales@mergewatch.ai).
+  </Accordion>
+</AccordionGroup>

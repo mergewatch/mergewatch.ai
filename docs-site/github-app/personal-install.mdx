@@ -1,0 +1,75 @@
+---
+title: "Installing on Personal Repos"
+description: "Install the MergeWatch GitHub App on your personal GitHub account."
+---
+
+## Personal vs organization
+
+Installing MergeWatch on personal repositories works the same way as an organization install, but the installation is tied to your personal GitHub account rather than an org. There is no concept of organization membership or multiple admins — you are the sole owner of the installation.
+
+## Installation steps
+
+<Steps>
+
+<Step title="Run the install wizard or open the installation URL">
+
+Either run the CLI wizard:
+
+```bash
+npx mergewatch@latest init
+```
+
+Or open the GitHub App installation URL directly in your browser:
+
+```
+https://github.com/apps/mergewatch-{slug}/installations/new
+```
+
+</Step>
+
+<Step title="Select your personal account">
+
+GitHub displays your personal account and any organizations you own. Select your **personal account** (not an organization).
+
+</Step>
+
+<Step title="Choose repository scope">
+
+Select one of:
+
+- **All repositories** — MergeWatch reviews PRs across every personal repo.
+- **Only select repositories** — Pick specific repos to include.
+
+</Step>
+
+<Step title="Click Install">
+
+Click **Install** to complete the installation. GitHub redirects you back to MergeWatch.
+
+</Step>
+
+</Steps>
+
+## Limitations
+
+<Note>
+Personal accounts do not have org-level admin concepts. You are the sole admin of your installation. There is no way to grant other GitHub users access to your personal installation's dashboard or settings.
+</Note>
+
+## Dashboard access
+
+Sign in to the MergeWatch dashboard with the same GitHub account you used for installation. All settings, review history, and repository configuration are editable by you.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Quickstart" icon="rocket" href="/overview/quickstart">
+  Go from zero to your first AI-powered PR review in 10 minutes.
+</Card>
+
+<Card title="Configure mergewatch.yml" icon="file-code" href="/configuration/mergewatch-yml">
+  Customize review behavior with a configuration file in your repository.
+</Card>
+
+</CardGroup>

@@ -1,0 +1,122 @@
+---
+title: "Environment Variables"
+description: "All environment variables used by MergeWatch in self-hosted and SaaS deployment modes."
+---
+
+## Self-Hosted Variables
+
+These variables are configured in your `.env` file or passed directly to `docker compose`.
+
+<Note>
+Self-hosted deployments use a `.env` file alongside `docker-compose.yml`. See the [install guide](/self-hosting/install) for the recommended setup path.
+</Note>
+
+### Core
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `GITHUB_APP_ID` | Yes | — | Numeric GitHub App ID from your app settings page |
+| `GITHUB_PRIVATE_KEY` | Yes | — | PEM-encoded RSA private key generated for the GitHub App |
+| `GITHUB_WEBHOOK_SECRET` | Yes | — | HMAC secret used to validate incoming webhook payloads |
+| `DATABASE_URL` | Yes | — | Postgres connection string, e.g. `postgresql://user:pass@postgres:5432/mergewatch` |
+| `LLM_PROVIDER` | Yes | `anthropic` | LLM backend to use: `anthropic`, `litellm`, `bedrock`, or `ollama` |
+| `LLM_MODEL` | No | — | Override the default model for the selected provider |
+| `PORT` | No | `3000` | Port the MergeWatch server listens on inside the container |
+| `GITHUB_APP_SLUG` | No | — | GitHub App slug, used to generate the installation link |
+| `GITHUB_PRIVATE_KEY_FILE` | No | — | Path to PEM file — alternative to inline `GITHUB_PRIVATE_KEY` |
+| `DASHBOARD_BASE_URL` | No | — | Public base URL of the dashboard (e.g., `https://dashboard.example.com`). Read by the server to generate deep links in PR comments. |
+| `DASHBOARD_URL` | No | `http://localhost:3001` | Consumed by `docker-compose.yml` to set `NEXTAUTH_URL` on the dashboard container. Set when serving the dashboard on a public domain. |
+
+### Provider-specific: Anthropic
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ANTHROPIC_API_KEY` | If `LLM_PROVIDER=anthropic` | — | API key from [console.anthropic.com](https://console.anthropic.com) |
+
+### Provider-specific: LiteLLM
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `LITELLM_BASE_URL` | If `LLM_PROVIDER=litellm` | — | Base URL of your LiteLLM proxy, e.g. `http://litellm:4000` |
+| `LITELLM_API_KEY` | No | — | Optional API key if your LiteLLM proxy requires authentication |
+
+### Provider-specific: Ollama
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `OLLAMA_BASE_URL` | If `LLM_PROVIDER=ollama` | `http://localhost:11434` | Base URL of the Ollama server |
+
+### Provider-specific: AWS Bedrock
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `AWS_REGION` | If `LLM_PROVIDER=bedrock` | — | AWS region for Bedrock API calls |
+| `AWS_ACCESS_KEY_ID` | If `LLM_PROVIDER=bedrock` | — | AWS access key (or use an instance profile instead) |
+| `AWS_SECRET_ACCESS_KEY` | If `LLM_PROVIDER=bedrock` | — | AWS secret key (or use an instance profile instead) |
+
+<Tip>
+If you run MergeWatch on an EC2 instance or ECS task with an IAM instance profile or task role that has Bedrock permissions, you can omit `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The AWS SDK will pick up credentials automatically.
+</Tip>
+
+### Dashboard (Self-Hosted)
+
+The dashboard container runs on port **3001** (the Express server uses 3000). These variables are set on the `dashboard` service in `docker-compose.yml`.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `GITHUB_CLIENT_ID` | Yes | — | OAuth client ID from your GitHub App's **OAuth Credentials** section |
+| `GITHUB_CLIENT_SECRET` | Yes | — | OAuth client secret from your GitHub App |
+| `NEXTAUTH_SECRET` | Yes | — | Random secret for session signing (generate with `openssl rand -base64 32`) |
+| `NEXTAUTH_URL` | No | `http://localhost:3001` | Public URL the dashboard is served from. Docker Compose sets this from `DASHBOARD_URL`. |
+| `DEPLOYMENT_MODE` | No | `self-hosted` | Set to `saas` to enable the billing UI. |
+
+---
+
+## SaaS Lambda Variables
+
+<Warning>
+These variables are used internally by the MergeWatch SaaS infrastructure. They are documented here for reference only and are **not user-configurable**.
+</Warning>
+
+The SaaS deployment runs on AWS Lambda and does not use `LLM_PROVIDER`, `DATABASE_URL`, or any of the self-hosted provider variables. Bedrock access is handled via the Lambda execution role.
+
+### Core Lambda
+
+| Variable | Description |
+| --- | --- |
+| `DEPLOYMENT_MODE` | Deployment mode — `saas` or `self-hosted`. Gates billing and SaaS-only code paths. |
+| `INSTALLATIONS_TABLE` | DynamoDB table name for GitHub App installations |
+| `REVIEWS_TABLE` | DynamoDB table name for review records |
+| `REVIEW_AGENT_FUNCTION_NAME` | Name of the ReviewAgent Lambda (the WebhookHandler invokes it async) |
+| `DEFAULT_BEDROCK_MODEL_ID` | Bedrock model used by the review agents (SAM parameter) |
+
+### Billing Lambda (Stripe)
+
+Configured when `DeploymentMode=saas`. Credentials are pulled from SSM at deploy time — see [BILLING_SETUP.md](https://github.com/santthosh/mergewatch.ai/blob/main/BILLING_SETUP.md) for details.
+
+| Variable | Description |
+| --- | --- |
+| `STRIPE_SECRET_KEY` | Stripe API secret key (from `/mergewatch/{stage}/stripe-secret-key`) |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (from `/mergewatch/{stage}/stripe-webhook-secret`) |
+| `BILLING_API_SECRET` | Shared secret for dashboard → BillingHandler auth (from `/mergewatch/{stage}/billing-api-secret`) |
+
+### Dashboard (Amplify) env vars for SaaS mode
+
+| Variable | Description |
+| --- | --- |
+| `DEPLOYMENT_MODE` | `saas` — toggles the billing UI in the dashboard |
+| `BILLING_API_URL` | `BillingUrl` from SAM stack outputs (e.g., `https://…/dev/billing`) |
+| `BILLING_API_SECRET` | Same value as above, read from SSM and set in Amplify |
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Install Guide" icon="download" href="/self-hosting/install">
+    Set up MergeWatch with Docker Compose.
+  </Card>
+  <Card title="Commands Reference" icon="terminal" href="/reference/cli">
+    Manage your deployment with Docker and repo scripts.
+  </Card>
+</CardGroup>

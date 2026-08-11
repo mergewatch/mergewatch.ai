@@ -1,0 +1,92 @@
+---
+title: "Billing & Pricing"
+description: "MergeWatch SaaS pricing — a 5-review free tier, pay-as-you-go credits, auto-reload, and a transparent per-review cost formula."
+---
+
+MergeWatch SaaS uses a **prepaid credits** model. After a free tier, you load a balance with a card (via Stripe), and each review deducts its actual cost from that balance. No subscriptions, no per-seat fees, no volume contracts.
+
+## Free tier
+
+Every installation gets **5 free PR reviews** total (lifetime, not per month). No credit card is required to start. The free counter is tracked per GitHub App installation — once you've used all 5, you'll need to add a payment method to continue.
+
+<Tip>
+The free tier is intended to let you evaluate MergeWatch on real PRs. If you reach the limit and want to keep going, add a card via **Dashboard → Billing**.
+</Tip>
+
+## Per-review pricing
+
+Each review is priced transparently from the actual LLM cost. There are no tiers or commitments.
+
+```
+total = llmCost + $0.005 infra fee + (llmCost × 40% margin)
+```
+
+**Example.** A review that costs $0.02 in LLM tokens:
+
+```
+$0.02 + $0.005 + ($0.02 × 0.40) = $0.033
+```
+
+A typical small-to-medium PR review lands between **$0.01 and $0.10**, depending on diff size, number of agents enabled, and whether codebase-awareness triggers file fetches.
+
+<Info>
+The minimum balance required to start a paid review is **$0.05**. If your balance drops below that, MergeWatch pauses reviews until you top up or auto-reload fires.
+</Info>
+
+## Topping up
+
+Add credits from **Dashboard → Billing**:
+
+1. Click **Add payment method** → complete Stripe Checkout to save a card.
+2. Pick a top-up amount: **$10**, **$25**, **$50**, or **$100**.
+3. Credits post instantly. The balance appears in the dashboard header.
+
+### Auto-reload
+
+Enable auto-reload to avoid interruptions. When your balance drops below the configured threshold (default **$1**), MergeWatch charges your saved card for the configured top-up amount.
+
+Configure it in **Dashboard → Billing → Auto-reload**:
+- Toggle auto-reload on/off
+- Set the threshold (e.g., $5)
+- Set the top-up amount (e.g., $25)
+
+<Tip>
+Auto-reload uses a DynamoDB mutex to guarantee it fires at most once per drop below the threshold — you won't see double charges on rapid back-to-back reviews.
+</Tip>
+
+## What counts as a billable review
+
+A **billable review** is any review that completes and posts a comment. Specifically:
+
+- Each `pull_request` event (opened, synchronize, ready_for_review) that runs to completion counts as one review.
+- PRs **skipped** by a skip rule in your `.mergewatch.yml` (draft PRs, ignored labels, oversized diffs, matched ignore patterns) do **not** count.
+- Each push to a PR re-runs the review on the updated diff and counts as a separate review.
+- `@mergewatch` mentions in PR comments that trigger a re-review also count.
+
+## What happens when your balance runs out
+
+If a review is dispatched and your balance is below the minimum:
+
+1. MergeWatch posts a **GitHub Check Run** with `action_required: credits required` on the PR.
+2. A **GitHub Issue** is filed in the repository: *"MergeWatch: reviews paused — credits required"*.
+3. No review comment is posted. Existing comments on prior PRs remain untouched.
+4. Once you add credits, the next PR event is reviewed normally and the blocking issue is auto-closed.
+
+## No per-seat fees
+
+MergeWatch never charges per user, per seat, or per repository. A single billing account covers everyone in your GitHub organization. Add as many developers and repos as you want — billing is based solely on review cost.
+
+## Self-hosted is always free
+
+If you self-host MergeWatch, there is no MergeWatch fee. You pay only your LLM provider (Anthropic API, Amazon Bedrock, Ollama, or any provider supported via LiteLLM). See [Self-Hosting Overview](/self-hosting/overview).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/saas/getting-started">
+    Install the GitHub App and start reviewing PRs in minutes.
+  </Card>
+  <Card title="Data Residency" icon="shield-halved" href="/saas/data-residency">
+    Understand where your data is processed and stored.
+  </Card>
+</CardGroup>

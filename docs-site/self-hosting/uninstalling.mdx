@@ -1,0 +1,65 @@
+---
+title: "Uninstalling"
+description: "Remove MergeWatch from your infrastructure and GitHub."
+---
+
+<Note>
+Uninstalling the GitHub App (Step 1) is sufficient to stop all reviews immediately. The Docker cleanup steps are optional but recommended.
+</Note>
+
+## Full removal process
+
+<Steps>
+  <Step title="Uninstall the GitHub App">
+    1. Go to **GitHub Settings > Applications**
+    2. Find **MergeWatch** and click **Configure**
+    3. Click **Uninstall**
+
+    This stops all webhook delivery immediately. No new reviews will be triggered.
+  </Step>
+
+  <Step title="Stop the containers">
+    ```bash
+    docker compose down
+    ```
+
+    This stops and removes the MergeWatch and PostgreSQL containers. Your data in the Postgres volume is preserved.
+  </Step>
+
+  <Step title="Remove data (optional — destructive)">
+    To also remove the PostgreSQL volume and all stored data:
+
+    ```bash
+    docker compose down -v
+    ```
+
+    <Warning>
+    This permanently deletes all review history, installation config, and repository settings stored in PostgreSQL. This action cannot be undone.
+    </Warning>
+  </Step>
+
+  <Step title="Delete the GitHub App (optional)">
+    If you no longer need the GitHub App registration:
+
+    1. Go to **GitHub Settings > Developer settings > GitHub Apps**
+    2. Find **MergeWatch**
+    3. Click **Edit** then **Delete GitHub App**
+
+    <Tip>
+    You can skip this step if you plan to re-install MergeWatch later. The app registration has no cost.
+    </Tip>
+  </Step>
+</Steps>
+
+## Platform-specific teardown
+
+If you deployed MergeWatch to a specific platform, you may need additional cleanup steps:
+
+<CardGroup cols={2}>
+  <Card title="Platform Guides" icon="cloud" href="/self-hosting/platforms/google-cloud-run">
+    Google Cloud Run, AWS ECS, Azure, Fly.io, Railway, and more.
+  </Card>
+  <Card title="Re-install MergeWatch" icon="rotate-right" href="/self-hosting/install">
+    Changed your mind? Set up MergeWatch again in under ten minutes.
+  </Card>
+</CardGroup>

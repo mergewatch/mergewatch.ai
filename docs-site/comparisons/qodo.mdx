@@ -1,0 +1,64 @@
+---
+title: MergeWatch vs Qodo Merge
+description: Two AGPL-licensed PR-review projects compared — pipeline shape, deployment, and commercial model.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [qodo.ai/products/qodo-merge](https://www.qodo.ai/products/qodo-merge/), [qodo.ai/pricing](https://www.qodo.ai/pricing/), and the [PR-Agent repository](https://github.com/qodo-ai/pr-agent). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | Qodo Merge |
+|---|---|---|
+| License | AGPL-3.0 (full pipeline) | AGPL-3.0 core (PR-Agent) + commercial Qodo Merge layer |
+| Self-host | Docker + Postgres, any cloud | SaaS, on-premises, air-gapped |
+| BYO LLM | Bedrock, Anthropic, LiteLLM (100+), Ollama | OSS core: OpenAI, Claude, DeepSeek, "and more"; commercial tier not publicly detailed |
+| Agent architecture | 6 review + 2 utility agents, parallel, orchestrator | "Specialized agents" (count not disclosed) + context engine |
+| Platforms | GitHub (Cloud) | GitHub, GitLab, Bitbucket, Azure DevOps |
+| Pricing | Usage-based via Stripe balance | Developer $0/month, Teams $30/user/month annual ($38 monthly), Enterprise custom |
+| Data handling | Diff in-memory; 90-day metadata TTL | Zero data retention, SOC 2 certified, RBAC |
+
+## Qodo (formerly Codium)
+
+- **What it is.** "AI code review platform that brings automated, context-aware review into your IDE, pull requests, CLI, and Git workflows." ([qodo.ai/products/qodo-merge](https://www.qodo.ai/products/qodo-merge/))
+- **Trigger model.** PRs on GitHub, GitLab, Bitbucket, Azure DevOps. Also IDE plugin, CLI tool, and Git workflows.
+- **Where it runs.** SaaS (single- and multi-tenant), on-premises, and air-gapped deployments.
+- **LLM flexibility.** The open-source PR-Agent project supports OpenAI GPT, Claude, DeepSeek, "and more." LLM flexibility on the commercial Qodo Merge tier is not publicly detailed.
+- **Open source.** The PR-Agent core is AGPL-3.0. The hosted Qodo Merge product is a commercial layer on top.
+- **Agent architecture.** "Specialized agents" deployed during reviews to find specific issues, backed by a "context engine" with multi-repo intelligence and PR history awareness.
+- **Key claims.** Open-source foundation, multi-platform Git support, multi-repo context engine, "zero data retention, SOC 2, RBAC."
+- **Pricing.** Developer $0/month (30 free PRs/month promo, IDE plugin, 75 credits). Teams $30/user/month annual ($38 monthly) with 2,500 credits/user/month and an unlimited-PR promo. Enterprise custom with SSO, dashboard, on-prem/air-gapped deployment, 2-business-day SLA. ([qodo.ai/pricing](https://www.qodo.ai/pricing/))
+- **Data handling.** "Zero data retention, SOC 2 certified, RBAC."
+
+## Where MergeWatch differs
+
+Qodo is the closest comparison in the set — both are AGPL-licensed and both ship a self-hostable core. The meaningful differences:
+
+- **Fully AGPL pipeline vs AGPL core.** MergeWatch's entire review pipeline (agents, orchestrator, comment templates, merge-readiness logic) is AGPL-3.0. Qodo's PR-Agent is AGPL but the commercial Qodo Merge product — with "specialized agents" and the "context engine" — is a closed layer on top.
+- **Documented multi-agent composition.** MergeWatch names every agent (security, bug, style, error handling, test coverage, comment accuracy, summary, diagram). Qodo says "specialized agents" without disclosing count or composition.
+- **Merge-readiness score.** A 1–5 composite signal isn't publicly documented on Qodo.
+- **Agent-authored PR detection.** MergeWatch classifies PRs from coding agents with a stricter prompt suffix. Qodo doesn't document an equivalent.
+- **LLM flexibility.** MergeWatch ships four first-party providers (Bedrock, Anthropic, LiteLLM, Ollama). Qodo's OSS core supports a handful of providers; the commercial tier's LLM flexibility is not publicly detailed.
+- **MCP server (outbound).** MergeWatch exposes `review_diff` + `get_review_status` tools to external coding agents via a Lambda Function URL with API-key auth. Qodo doesn't publicly document an MCP server.
+
+## Where Qodo differs from MergeWatch
+
+Worth calling out honestly:
+
+- **Git-platform coverage.** Qodo supports GitHub, GitLab, Bitbucket, and Azure DevOps. MergeWatch is GitHub-only today.
+- **Compliance posture.** Qodo publishes SOC 2 certification and RBAC. MergeWatch does not claim SOC 2 at time of writing.
+- **Multi-repo context engine.** Qodo's context engine has documented multi-repo awareness — useful if your PRs touch many repos at once.
+
+## When Qodo might be the better fit
+
+- You need GitLab, Bitbucket, or Azure DevOps support natively.
+- SOC 2 certification is a hard procurement requirement today.
+- Your PRs routinely need cross-repo context and Qodo's multi-repo context engine solves it.
+- You're already on PR-Agent and want to upgrade to the commercial tier rather than migrate platforms.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [MergeWatch LLM providers](/self-hosting/llm-providers/anthropic)

@@ -1,0 +1,53 @@
+---
+title: MergeWatch vs GitHub Copilot code review
+description: Dedicated multi-agent PR reviewer you can self-host vs GitHub's bundled in-platform review feature.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [github.com/features/copilot](https://github.com/features/copilot) and [docs.github.com Copilot code review](https://docs.github.com/en/copilot/using-github-copilot/code-review/using-copilot-code-review). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | GitHub Copilot code review |
+|---|---|---|
+| License | AGPL-3.0 | Closed-source, bundled in Copilot |
+| Self-host | Docker + Postgres, any cloud | No (GitHub.com infrastructure) |
+| BYO LLM | Bedrock, Anthropic, LiteLLM, Ollama | No — uses Copilot's internal selection |
+| Agent architecture | 6 review + 2 utility agents, parallel | Not publicly documented |
+| Trigger | PR webhook, `@mergewatch`, Checks re-run | Manual or auto-assigned reviewer, IDE, `gh` CLI |
+| Pricing | Usage-based via Stripe balance | Included in Copilot Pro/Business/Enterprise; premium requests for unlicensed org members |
+| Data retention | Diff in-memory; 90-day metadata TTL | Business/Enterprise: 28-day prompt retention, 2-year engagement data |
+
+## GitHub Copilot code review
+
+- **What it is.** A pull-request review feature built into GitHub Copilot that "provides contextual explanations and code suggestions to help developers fix vulnerabilities in code." ([docs.github.com](https://docs.github.com/en/copilot/using-github-copilot/code-review/using-copilot-code-review))
+- **Trigger model.** Manual by default — open the Reviewers menu on a PR and select Copilot; reviews typically complete "in less than 30 seconds." Can be configured to auto-review all PRs. Works across GitHub web, VS Code, Visual Studio 17.14+, GitHub Mobile, Xcode, JetBrains IDEs, and `gh` CLI. ([docs.github.com](https://docs.github.com/en/copilot/using-github-copilot/code-review/using-copilot-code-review))
+- **Where it runs.** SaaS only (github.com infrastructure). ([github.com/features/copilot](https://github.com/features/copilot))
+- **LLM flexibility.** The exact model powering Copilot code review is not specified on the public pages. Copilot-as-platform uses models from OpenAI, Anthropic, Google, and Microsoft, but the specific one for review is not publicly documented.
+- **Open source.** Closed-source.
+- **Agent architecture.** Not publicly documented.
+- **Pricing.** Included in Copilot Pro, Business, and Enterprise. For non-licensed users accessing it through an org, usage bills as "premium requests." ([github.com/features/copilot](https://github.com/features/copilot))
+- **Data handling.** For Business/Enterprise tiers on github.com, prompts and suggestions are retained for 28 days; user engagement data for two years.
+
+## Where MergeWatch differs
+
+- **You control the infrastructure.** Copilot review runs on GitHub.com; your code flows through Microsoft. MergeWatch self-hosted keeps the PR diff and all review metadata inside your own VPC / cluster.
+- **You choose the model.** Copilot's review model is a black box. MergeWatch lets you route to Bedrock Claude Sonnet, Anthropic direct, any OpenAI / Azure / Gemini / Mistral model via LiteLLM, or a local Ollama model. Swap with one env var.
+- **You can audit the review logic.** AGPL-3.0: every prompt, every orchestration rule is public. Copilot's review behavior is not documented.
+- **Documented multi-agent pipeline.** Six specialized review agents (security, bug, style, error handling, test coverage, comment accuracy) plus two utilities (summary, diagram) run in parallel. Copilot's internal composition is not disclosed.
+- **Merge-readiness score.** MergeWatch surfaces a 1–5 composite. Copilot review produces inline suggestions without a composite gate.
+- **No per-seat Copilot license required.** MergeWatch is a direct GitHub App install; reviews cost only your LLM provider + an optional managed-SaaS margin.
+
+## When Copilot code review might be the better fit
+
+- You already pay for Copilot Business or Enterprise org-wide and want zero additional setup — Copilot review is already on.
+- Your team relies on deep IDE integration across VS Code, Visual Studio, JetBrains, and Xcode, and wants review in the same surface as inline completion.
+- You want reviews to complete "in less than 30 seconds" on small PRs without managing LLM provider accounts.
+- You have strict GitHub-sole-vendor policies and can't introduce new third-party apps with `contents: read`.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [GitHub App permissions](/github-app/permissions) — exactly what MergeWatch requests when installed.

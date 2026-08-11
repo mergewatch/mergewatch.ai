@@ -1,0 +1,70 @@
+---
+title: Other AI code review tools worth knowing
+description: Short entries on Ellipsis, Sourcery, and Graphite Diamond — plus leads we have not yet verified.
+---
+
+<Note>
+**Verified April 2026.** Short entries below. Facts are sourced from each vendor's own pages; for deep comparisons see the [main overview](/comparisons/overview).
+</Note>
+
+## Ellipsis
+
+*Source: [docs.ellipsis.dev/features/code-review](https://docs.ellipsis.dev/features/code-review).*
+
+- **What it is.** A GitHub/GitLab app that posts AI code reviews within approximately 2–3 minutes of a PR being opened or updated.
+- **Notable.** Assigns confidence scores to each comment so reviewers can triage low-confidence suggestions separately.
+- **Pricing.** Free for public GitHub repositories.
+
+### Where MergeWatch differs
+
+- Self-hostable with no seat minimum; Ellipsis is SaaS-only.
+- Six named review agents + orchestrator + merge-readiness score vs per-comment confidence only.
+- Multi-provider LLM choice (Bedrock, Anthropic, LiteLLM, Ollama).
+
+---
+
+## Sourcery
+
+*Source: [sourcery.ai/code-review](https://sourcery.ai/code-review/).*
+
+- **What it is.** AI reviewer covering 30+ languages, triggered automatically on new PRs or manually via `@sourcery-ai review`. Also works in the IDE.
+- **Notable.** SOC 2 certified; claims zero data retention through the Anthropic API.
+- **Pricing.** See vendor pricing page for current tiers.
+
+### Where MergeWatch differs
+
+- AGPL-3.0 and self-hostable.
+- LLM flexibility beyond Anthropic — Bedrock, LiteLLM (100+ providers), local Ollama.
+- Documented multi-agent pipeline with merge-readiness score and agent-authored PR detection.
+
+---
+
+## Graphite Diamond
+
+*Source: [graphite.com/features/diamond](https://graphite.com/features/diamond).*
+
+- **What it is.** The AI reviewer built into Graphite's stacked-PR platform.
+- **Notable.** Tight integration with Graphite's stacked-PR workflow — reviews in the context of a chain of dependent PRs, not individual ones.
+- **Pricing.** Bundled with Graphite plans; see vendor pricing.
+
+### Where MergeWatch differs
+
+- No lock-in to a stacked-PR tool — MergeWatch works with any GitHub PR flow.
+- Self-hostable and open source.
+- Usage-based pricing rather than bundled with a separate developer platform.
+
+---
+
+## Tools we've flagged but not yet verified
+
+The following are widely used enough to know about, but we have not verified their current facts against primary sources in this pass. Treat as leads to check directly with the vendor:
+
+- **Sweep ([sweep.dev](https://sweep.dev/))** — AI junior-dev agent that turns GitHub issues into PRs and can review PRs.
+- **Bito AI Code Review Agent ([bito.ai](https://bito.ai/))** — PR-review agent with CLI and CI integration; markets multi-model support.
+
+When we verify either of these, we'll promote them to a full per-tool page.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)

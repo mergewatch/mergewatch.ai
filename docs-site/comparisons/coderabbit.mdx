@@ -1,0 +1,54 @@
+---
+title: MergeWatch vs CodeRabbit
+description: Open-source, self-hostable AI code review vs a commercial closed-source platform with 500-seat self-host gate.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [coderabbit.ai](https://www.coderabbit.ai/), [coderabbit.ai/pricing](https://www.coderabbit.ai/pricing), [docs.coderabbit.ai/self-hosted/github](https://docs.coderabbit.ai/self-hosted/github), and [coderabbit.ai/oss](https://www.coderabbit.ai/oss). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | CodeRabbit |
+|---|---|---|
+| License | AGPL-3.0 | Closed-source commercial |
+| Self-host | Docker + Postgres, any cloud, no seat minimum | Enterprise only, 500+ seats |
+| BYO LLM | Bedrock, Anthropic, LiteLLM (100+), Ollama | Self-host only: OpenAI, Azure, Bedrock, Anthropic |
+| Agent architecture | 6 review + 2 utility agents, parallel | "Agentic reviews" + 40+ linters (count not disclosed) |
+| Merge-readiness score | Yes (1–5) | Not publicly documented |
+| Starting paid tier | Usage-based via Stripe balance | $24/seat/month Pro, $48/seat/month Pro Plus (annual) |
+| Data retention | Diff in-memory only; 90-day metadata TTL | "Zero retention post-review"; SOC 2 Type II |
+
+## CodeRabbit
+
+- **What it is.** A commercial AI code review platform that positions itself as the most-installed AI app on GitHub. ([coderabbit.ai](https://www.coderabbit.ai/))
+- **Trigger model.** PR webhook is primary. Also supports IDE integration, CLI, and an "Agentic Chat" bot interface. ([coderabbit.ai](https://www.coderabbit.ai/))
+- **Where it runs.** SaaS by default. Self-hosted is available only to Enterprise customers with 500+ seats. ([docs.coderabbit.ai](https://docs.coderabbit.ai/self-hosted/github))
+- **LLM flexibility.** On default SaaS the model is not publicly documented. The self-hosted build lets customers plug in OpenAI, Azure OpenAI, AWS Bedrock (Claude 3/3.5/4 family), or Anthropic directly. ([docs.coderabbit.ai](https://docs.coderabbit.ai/self-hosted/github))
+- **Open source.** Closed-source commercial product. Runs a "free for OSS projects" program and has distributed $600K+ to maintainers. ([coderabbit.ai/oss](https://www.coderabbit.ai/oss))
+- **Agent architecture.** Described as "agentic reviews" with codegraph/AST context, 40+ integrated linters and security scanners, and a "Fix with AI" remediation step. Agent count or single-vs-multi-pass composition not publicly documented. ([coderabbit.ai](https://www.coderabbit.ai/))
+- **Pricing.** Free $0 (14-day Pro trial, PR summarization, IDE reviews). Pro $24/user/month annual (linters/SAST, Jira/Linear, 5 MCP connections, 5 reviews/hour). Pro Plus $48/user/month annual (custom pre-merge checks, 15 MCP connections, 10 reviews/hour). Enterprise custom (RBAC, SSO, self-hosting, SLA). ([coderabbit.ai/pricing](https://www.coderabbit.ai/pricing))
+- **Data handling.** "SSL encrypted data," "zero data retention post-review," SOC 2 Type II certified. ([coderabbit.ai](https://www.coderabbit.ai/))
+
+## Where MergeWatch differs
+
+- **Self-host with a single `docker-compose up`, no seat minimum.** MergeWatch runs as three Docker containers (Express server, Next.js dashboard, Postgres 16) plus your chosen LLM provider. Any team size can self-host.
+- **Fully open source under AGPL-3.0.** Every agent prompt, the orchestrator, and the comment templates live in the public repository. You can read exactly what runs on your code.
+- **LLM choice beyond the big four.** MergeWatch ships first-party providers for Amazon Bedrock, Anthropic direct, LiteLLM (100+ providers via one proxy), and Ollama (local/air-gapped). You can switch at any time with a single `LLM_PROVIDER` env change.
+- **Merge-readiness score.** MergeWatch produces a 1–5 score per PR based on severity + confidence across all findings. CodeRabbit does not document an equivalent composite signal.
+- **Agent-authored PR detection.** MergeWatch classifies each PR as `source='agent'` vs `source='human'` using commit trailers, branch prefixes, and PR labels configured in `.mergewatch.yml`. Agent-authored PRs get a stricter prompt suffix that flags hallucinated imports, tests without assertions, and stale APIs.
+- **Conventions auto-discovery.** Drop an `AGENTS.md`, `CONVENTIONS.md`, or `.mergewatch/conventions.md` in the repo root and the content (up to 16 KB) is injected into every agent's prompt automatically — no YAML rules DSL to learn.
+- **No per-seat pricing.** Managed SaaS bills usage directly via a prepaid Stripe balance; self-hosted bills only your LLM provider.
+
+## When CodeRabbit might be the better fit
+
+- You want the most widely-installed GitHub Marketplace brand and already have budget for per-seat SaaS.
+- You want 40+ pre-integrated third-party linters and SAST scanners wired into the review with no configuration.
+- You are a 500+ seat enterprise that wants self-hosting *and* an established SOC 2 Type II vendor with a sales motion around it.
+- You actively use CodeRabbit's Jira / Linear integrations and chat surface in ways MergeWatch does not replicate.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview) — all eight tools side by side.
+- [Feature matrix](/comparisons/feature-matrix) — boolean checkmark grid.
+- [Self-hosting MergeWatch](/self-hosting/overview) — the `docker-compose up` path.

@@ -1,0 +1,129 @@
+---
+title: "Deployment Models"
+description: "Choose how MergeWatch runs — fully self-hosted with Docker or fully managed SaaS."
+---
+
+MergeWatch supports two deployment models. Each makes a different trade-off between setup effort, infrastructure control, and data residency. Pick the one that matches your compliance and operational requirements.
+
+## At a glance
+
+| Feature | Self-Hosted | Managed SaaS |
+|---|---|---|
+| **Where it runs** | Your infrastructure (Docker) | MergeWatch AWS account |
+| **Storage** | Postgres (you manage) | DynamoDB (MergeWatch manages) |
+| **LLM provider** | Your choice (Anthropic, Bedrock, Ollama, LiteLLM) | Amazon Bedrock (MergeWatch account) |
+| **Code leaves your infra?** | No — all processing is local | Diff transits MergeWatch in-memory, not persisted |
+| **Billing** | Free (you pay your LLM provider only) | 5 free reviews (lifetime), then prepaid credits (≈$0.01–$0.10 per review) |
+| **AWS account required?** | No | No |
+| **Setup time** | ~15–30 min | ~5 min |
+| **Dashboard** | docker-compose second service | Next.js on Amplify (hosted by MergeWatch) |
+
+---
+
+## Self-hosted
+
+<Card title="Best for strict compliance, air-gapped environments, or full control" icon="server">
+  You run the MergeWatch Docker container on your own infrastructure. Nothing touches MergeWatch systems. You choose your LLM provider and manage your own database.
+</Card>
+
+### How it works
+
+You run MergeWatch as a Docker container exposing an Express server on port 3000. A reverse proxy (nginx or Caddy) terminates TLS and routes GitHub webhooks to the container. Review data is stored in Postgres.
+
+```
+PR opened → GitHub webhook → Your Domain (nginx/Caddy) → Express Server (Docker, port 3000)
+  → LLM Provider (your choice) → Review posted to GitHub
+  → Postgres (review history)
+```
+
+### What you manage
+
+| Resource | Your responsibility |
+|---|---|
+| **Docker container** | Deploying updates, monitoring, scaling replicas |
+| **Reverse proxy** | TLS certificates, domain DNS, rate limiting |
+| **Postgres** | Backups, migrations, connection pooling |
+| **LLM provider** | API keys, quotas, cost monitoring |
+| **Dashboard** | Second service in docker-compose, optional |
+
+### Data residency
+
+- **All data** stays on your infrastructure. No data is sent to MergeWatch.
+- **No telemetry**, no phone-home, no external dependency beyond your chosen LLM provider.
+- Suitable for air-gapped environments when combined with a local LLM via Ollama.
+
+<Note>
+Updates are applied by pulling the latest MergeWatch Docker image and restarting the container. You control when to upgrade.
+</Note>
+
+---
+
+## Managed SaaS
+
+<Card title="Best for teams that want zero infrastructure overhead" icon="cloud">
+  Everything is hosted by MergeWatch. Install the GitHub App and start getting reviews. No AWS account, no Docker, no server management.
+</Card>
+
+### How it works
+
+MergeWatch runs the full pipeline on AWS — API Gateway, Lambda functions, DynamoDB, and Bedrock. You install the GitHub App and configure your repositories. That is it.
+
+```
+PR opened → GitHub webhook → MergeWatch API Gateway
+  → WebhookHandler Lambda (512 MB, 30s) → ReviewAgent Lambda (1024 MB, 300s)
+  → Bedrock (us.anthropic.claude-sonnet-4-20250514-v1:0)
+  → Review posted to GitHub
+  → DynamoDB (review history)
+```
+
+### What you get
+
+- No AWS account required
+- No infrastructure to manage
+- Bedrock costs are included in your MergeWatch pricing
+- Automatic updates to the latest review pipeline
+- Dashboard hosted on Amplify at mergewatch.ai
+
+### Data residency
+
+- **PR diffs** are processed in-memory on MergeWatch Lambda functions (`us-east-1`). Diffs are not persisted after the review completes.
+- **Bedrock calls** run in MergeWatch's AWS account. Model inputs and outputs are not logged or stored beyond the review lifecycle.
+- **Review metadata** (timestamps, repo, score) is stored in MergeWatch-managed DynamoDB with a 90-day TTL.
+
+<Tip>
+You can start with SaaS and migrate to self-hosted later without losing your configuration. Your `.mergewatch.yml` stays in your repo either way.
+</Tip>
+
+---
+
+## Decision guide
+
+<CardGroup cols={2}>
+  <Card title="Strict compliance or air-gapped?" icon="shield-halved">
+    Choose **Self-Hosted**. No data leaves your infrastructure. You control every component and can run fully offline with a local LLM.
+  </Card>
+  <Card title="No infrastructure team?" icon="cloud">
+    Choose **Managed SaaS**. Install the GitHub App and you are done. No cloud account, no Docker, no server management. First 5 reviews free, then pay-as-you-go.
+  </Card>
+</CardGroup>
+
+## Data residency summary
+
+| Data type | Self-Hosted | Managed SaaS |
+|---|---|---|
+| **PR diff** | Never leaves your infrastructure | In-memory transit through MergeWatch, not persisted |
+| **LLM inputs/outputs** | Your LLM provider | MergeWatch Bedrock account |
+| **Review metadata** | Your Postgres | MergeWatch DynamoDB (90-day TTL) |
+| **GitHub credentials** | Your environment variables | MergeWatch SSM Parameter Store |
+| **Configuration (.mergewatch.yml)** | Your GitHub repo | Your GitHub repo |
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosting Install" icon="server" href="/self-hosting/install">
+    Deploy MergeWatch on your own infrastructure with Docker.
+  </Card>
+  <Card title="SaaS Getting Started" icon="rocket" href="/saas/getting-started">
+    Install the GitHub App and start reviewing PRs in minutes.
+  </Card>
+</CardGroup>

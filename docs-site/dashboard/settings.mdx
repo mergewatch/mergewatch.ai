@@ -1,0 +1,81 @@
+---
+title: "Settings"
+description: "Configure installation-level review settings for all repositories."
+---
+
+The Settings page controls review behavior for all repositories in the current installation. These settings act as defaults — a `.mergewatch.yml` file in any repository overrides them for that repo.
+
+## Who can edit
+
+Only GitHub org owners (or personal-account installation owners) can modify settings. Non-admins see the full Settings page in read-only mode with a banner explaining why all fields are disabled.
+
+<Warning>
+Admin status is verified server-side on every `PUT /api/settings` request by calling the GitHub API live. Even if the UI is manipulated, the API rejects changes from non-admin users with `403 Forbidden`.
+</Warning>
+
+## Precedence
+
+<Note>
+Settings configured here apply to all repositories in the installation. A `.mergewatch.yml` file checked into a repository always takes precedence. See [Configuration priority](/configuration/mergewatch-yml#configuration-priority) for the full resolution order.
+</Note>
+
+## Schema
+
+The stored settings object (`InstallationSettings` in `@mergewatch/core`) has the following shape and defaults:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `severityThreshold` | `"Low" \| "Med" \| "High"` | `"Med"` | Minimum severity level to post as a comment. Findings below this threshold are suppressed. |
+| `commentTypes.syntax` | boolean | `true` | Include syntax-category findings. |
+| `commentTypes.logic` | boolean | `true` | Include logic / bug-category findings. |
+| `commentTypes.style` | boolean | `true` | Include style-category findings. |
+| `maxComments` | number (1–50) | `10` | Upper limit on findings posted per PR. Prevents noisy reviews on large changesets. |
+| `summary.prSummary` | boolean | `true` | Post a high-level summary comment on each PR. |
+| `summary.confidenceScore` | boolean | `true` | Show the AI confidence score in the summary. |
+| `summary.issuesTable` | boolean | `true` | Add a severity-ranked table of all findings to the summary. |
+| `summary.diagram` | boolean | `true` | Render a Mermaid architecture diagram in the summary comment. |
+| `customInstructions` | string (≤ 1000 chars) | `""` | Free-text instructions injected into every agent prompt. |
+| `commentHeader` | string | `""` | Optional header line prepended to every MergeWatch comment. When empty, MergeWatch uses its built-in header. |
+
+<Tip>
+Use **custom instructions** to encode team-wide conventions: *"We use structured logging — flag any use of console.log in production code"* or *"All API endpoints must validate input with Zod schemas."* The live character counter enforces the 1,000-character cap.
+</Tip>
+
+## Comment header
+
+The **Comment header** field sets a line prepended to every MergeWatch comment. It supports Markdown. A live preview below the input shows how it renders on GitHub. When left blank, MergeWatch posts its standard header.
+
+## Saving changes
+
+The **Save** button activates only when you have unsaved changes. It is permanently disabled for non-admin users.
+
+<Steps>
+<Step title="Make changes">
+  Modify any setting on the page. The Save button becomes active and shows unsaved changes.
+</Step>
+<Step title="Click Save">
+  The dashboard sends a `PUT` request to `/api/settings?installation_id=...`. The server re-verifies your admin status against GitHub before applying changes.
+</Step>
+<Step title="Confirmation">
+  A success toast confirms the settings were saved. Changes take effect on the next PR review — in-progress reviews use the settings that were active when they started.
+</Step>
+</Steps>
+
+## Validation
+
+The API rejects requests that fail any of the following checks with `400 Bad Request`:
+
+- `severityThreshold` must be one of `Low`, `Med`, `High`.
+- `maxComments` must be a number between 1 and 50 (inclusive).
+- `customInstructions` must be a string of at most 1,000 characters.
+
+---
+
+<CardGroup cols={2}>
+  <Card title=".mergewatch.yml Reference" icon="file-code" href="/configuration/mergewatch-yml">
+    Override any installation-level setting on a per-repo basis.
+  </Card>
+  <Card title="Custom Instructions" icon="pen" href="/configuration/custom-instructions">
+    Detailed guide on writing effective custom instructions for the review agents.
+  </Card>
+</CardGroup>

@@ -1,0 +1,73 @@
+---
+title: "Anthropic"
+description: "Use Anthropic's Claude models directly — the default and recommended LLM provider."
+---
+
+Anthropic is the **default and recommended** LLM provider for MergeWatch. It offers the simplest setup — just add your API key and you are ready to go. Works on every platform (Docker, AWS, GCP, bare metal).
+
+## Configuration
+
+Set these environment variables in your `.env` file or container environment:
+
+| Variable | Required | Value |
+| --- | --- | --- |
+| `LLM_PROVIDER` | Yes | `anthropic` |
+| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
+| `LLM_MODEL` | Yes | Anthropic model ID to use (e.g., `claude-sonnet-4-20250514`) |
+
+<Note>
+When `LLM_PROVIDER=anthropic`, you **must** set `LLM_MODEL` to an Anthropic-native model ID. The built-in defaults (`us.anthropic.claude-sonnet-4-20250514-v1:0` for the primary model and `us.anthropic.claude-haiku-4-5-20251001-v1:0` for the light model) are [Bedrock inference profile IDs](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) and are not valid on the Anthropic API.
+</Note>
+
+## Model roles
+
+MergeWatch uses two model slots per review:
+
+- **Primary model** (`model` in `.mergewatch.yml`) — runs the agent pipeline (security, bugs, style, error handling, test coverage, comment accuracy). Use **Claude Sonnet 4** for the best review quality.
+- **Light model** (`lightModel` in `.mergewatch.yml`) — runs the summary and diagram passes. **Claude Haiku 4.5** is a good cost-optimized choice here.
+
+Setting `LLM_MODEL` overrides **both** slots with the same model. For split primary/light models, configure them in `.mergewatch.yml` instead — see [mergewatch.yml reference](/configuration/mergewatch-yml).
+
+## Example `.env` file
+
+```bash
+# LLM Provider
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Pick a model — Sonnet for the highest review quality
+LLM_MODEL=claude-sonnet-4-20250514
+```
+
+## Model suggestions
+
+| Anthropic model ID | Best for |
+| --- | --- |
+| `claude-sonnet-4-20250514` | Recommended. Highest review quality for deep agent analysis. |
+| `claude-haiku-4-5-20251001` | Cost-optimized. Faster and cheaper; good for summary/diagram. |
+
+## Pricing
+
+You pay Anthropic directly for API usage. MergeWatch does not add any markup or proxy fees. See the [Anthropic pricing page](https://www.anthropic.com/pricing#702702) for current per-token rates.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="LiteLLM Proxy" icon="shuffle" href="/self-hosting/llm-providers/litellm">
+  Use OpenAI, Azure, Gemini, or 100+ other providers via LiteLLM.
+</Card>
+
+<Card title="Environment variables" icon="gear" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Platform guides" icon="server" href="/self-hosting/platforms/google-cloud-run">
+  Deploy MergeWatch on your platform of choice.
+</Card>
+
+</CardGroup>

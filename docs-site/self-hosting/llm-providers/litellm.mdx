@@ -1,0 +1,123 @@
+---
+title: "LiteLLM Proxy"
+description: "Use OpenAI, Azure OpenAI, Google Gemini, Mistral, or 100+ other providers via LiteLLM."
+---
+
+[LiteLLM](https://github.com/BerriAI/litellm) is an open-source proxy that exposes an **OpenAI-compatible API** in front of 100+ LLM providers. MergeWatch connects to your LiteLLM instance and sends review requests through it, so you can use whichever model and provider you prefer.
+
+## When to use LiteLLM
+
+Choose this provider when you want to use:
+
+- **OpenAI** (GPT-4o, GPT-4 Turbo)
+- **Azure OpenAI**
+- **Google Gemini**
+- **Mistral**
+- **Cohere**
+- Any other provider supported by LiteLLM
+
+<Tip>
+LiteLLM handles model routing, retries, and key management. You configure your models in LiteLLM — MergeWatch just sends requests to the proxy endpoint.
+</Tip>
+
+## Configuration
+
+Set these environment variables in your MergeWatch `.env` file:
+
+| Variable | Required | Value |
+| --- | --- | --- |
+| `LLM_PROVIDER` | Yes | `litellm` |
+| `LITELLM_BASE_URL` | Yes | URL of your LiteLLM proxy (e.g. `http://litellm:4000`) |
+| `LITELLM_API_KEY` | No | API key if your LiteLLM proxy requires authentication |
+
+<Note>
+The model is configured in your LiteLLM `config.yaml`, not in the MergeWatch `.env` file. MergeWatch sends requests to the proxy and LiteLLM routes them to the correct provider and model.
+</Note>
+
+## Docker Compose setup
+
+Run LiteLLM as a sidecar alongside MergeWatch:
+
+```yaml docker-compose.yml
+services:
+  mergewatch:
+    image: ghcr.io/santthosh/mergewatch:latest
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      LLM_PROVIDER: litellm
+      LITELLM_BASE_URL: http://litellm:4000
+    depends_on:
+      - litellm
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    command: --config /app/config.yaml
+```
+
+## LiteLLM config examples
+
+Create a `litellm-config.yaml` file next to your `docker-compose.yml`.
+
+### OpenAI
+
+```yaml litellm-config.yaml
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: sk-...
+```
+
+### Azure OpenAI
+
+```yaml litellm-config.yaml
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: azure/gpt-4o
+      api_base: https://my-resource.openai.azure.com/
+      api_key: ...
+      api_version: "2024-06-01"
+```
+
+### Google Gemini
+
+```yaml litellm-config.yaml
+model_list:
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: ...
+```
+
+<Warning>
+Review quality varies by model. GPT-4o and Gemini 1.5 Pro produce results comparable to Claude. Smaller or older models may produce lower-quality reviews.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Anthropic (direct)" icon="bolt" href="/self-hosting/llm-providers/anthropic">
+  The default provider — simplest setup, no proxy needed.
+</Card>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="gear" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Platform guides" icon="server" href="/self-hosting/platforms/google-cloud-run">
+  Deploy MergeWatch on your platform of choice.
+</Card>
+
+</CardGroup>

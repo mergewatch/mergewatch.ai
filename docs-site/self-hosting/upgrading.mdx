@@ -1,0 +1,58 @@
+---
+title: "Upgrading"
+description: "Upgrade MergeWatch to the latest version."
+---
+
+## Pull and restart
+
+Upgrading MergeWatch is a single command:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+This pulls the latest image (`ghcr.io/santthosh/mergewatch:latest`) and restarts the container. The Postgres sidecar is unaffected.
+
+## Database migrations
+
+Database migrations run automatically on container startup. When a new version includes schema changes, they are applied as soon as the container starts. No manual migration steps are needed.
+
+<Note>
+Your existing review history and configuration data are preserved during upgrades. Migrations only add or modify schema — they never delete data.
+</Note>
+
+## Zero-downtime upgrades
+
+Docker Compose restarts containers sequentially. During an upgrade:
+
+- The old container processes any in-flight review before shutting down
+- The new container starts and begins accepting webhooks
+- GitHub retries any webhook deliveries that fail during the brief restart window
+
+For true zero-downtime upgrades in production, consider running MergeWatch behind a load balancer with multiple replicas, or use a platform with rolling deployments (e.g., Kubernetes, ECS, Cloud Run).
+
+## Rollback
+
+To roll back to a specific version, pin the image tag:
+
+```bash
+docker compose pull ghcr.io/santthosh/mergewatch:v0.1.0
+docker compose up -d
+```
+
+<Warning>
+Rolling back to a version with an older database schema may cause issues if newer migrations have already run. Test rollbacks in a staging environment first.
+</Warning>
+
+## Platform-specific upgrades
+
+If you deployed MergeWatch to a specific platform, see the corresponding guide for platform-native upgrade instructions:
+
+<CardGroup cols={2}>
+  <Card title="Platform Guides" icon="cloud" href="/self-hosting/platforms/google-cloud-run">
+    Google Cloud Run, AWS ECS, Azure, Fly.io, Railway, and more.
+  </Card>
+  <Card title="Changelog" icon="clock-rotate-left" href="/reference/changelog">
+    See what changed in each release.
+  </Card>
+</CardGroup>

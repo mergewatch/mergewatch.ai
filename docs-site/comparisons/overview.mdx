@@ -1,0 +1,69 @@
+---
+title: AI Code Review Tools — Comparison
+description: A factual comparison of MergeWatch against CodeRabbit, Greptile, GitHub Copilot code review, OpenAI Codex, Claude Code, Cursor BugBot, and Qodo Merge.
+---
+
+<Note>
+**Verified April 2026.** Pricing, model availability, and features in this space change on a near-weekly basis — verify current details against each vendor's own pricing and docs pages before making a purchase decision.
+</Note>
+
+## How to read this comparison
+
+- **Primary sources only.** Every factual claim on these pages was sourced from the vendor's own docs, pricing, changelog, or product pages. Third-party summaries, Reddit threads, and AI tool directories were not used. Source URLs are cited inline.
+- **"Not publicly documented" is a real answer.** Some vendors don't disclose their agent architecture, the exact model powering their product, or their data-retention policy. Where that's the case, these pages say so rather than guessing.
+- **MergeWatch is the publisher.** These pages live in the MergeWatch docs. Factual bias was minimized by sticking to competitors' own marketing claims and documented behavior; cells where MergeWatch has a differentiator are marked by what MergeWatch *does*, not by negatives inferred about competitors.
+- **Pricing is in USD and per-seat/month unless noted.** Promotional discounts and annual/monthly splits are collapsed for readability; see each vendor's pricing page for current exact structure.
+
+## Tools covered
+
+<CardGroup cols={2}>
+  <Card title="MergeWatch" href="/overview/introduction">Open-source, multi-agent, self-hostable</Card>
+  <Card title="CodeRabbit" href="/comparisons/coderabbit">Commercial PR-review platform</Card>
+  <Card title="Greptile" href="/comparisons/greptile">Graph-based codebase indexing</Card>
+  <Card title="GitHub Copilot code review" href="/comparisons/github-copilot">Native PR review inside GitHub</Card>
+  <Card title="Claude Code" href="/comparisons/claude-code">Anthropic's CLI + GitHub Action</Card>
+  <Card title="OpenAI Codex" href="/comparisons/openai-codex">OpenAI's agentic coding product</Card>
+  <Card title="Cursor BugBot" href="/comparisons/cursor-bugbot">Bug-focused PR reviewer</Card>
+  <Card title="Qodo Merge" href="/comparisons/qodo">AGPL core + commercial product</Card>
+</CardGroup>
+
+Also see [other tools worth knowing](/comparisons/other-tools) — Ellipsis, Sourcery, Graphite Diamond.
+
+## Quick matrix
+
+| | MergeWatch | CodeRabbit | Greptile | GitHub Copilot review | OpenAI Codex | Claude Code | Cursor BugBot | Qodo Merge |
+|---|---|---|---|---|---|---|---|---|
+| **License** | AGPL-3.0 | Closed | Closed | Closed | Mixed (CLI open, hosted closed) | Closed (action open) | Closed | AGPL-3.0 core + commercial |
+| **Self-host** | Yes (Docker + Postgres) | Enterprise only (500+ seats) | Yes (Enterprise, in AWS) | No | No (CLI runs locally but calls OpenAI API) | GitHub Actions runner | No | Yes (SaaS, on-prem, air-gapped) |
+| **BYO LLM** | Bedrock, Anthropic, LiteLLM (100+), Ollama | Self-host: OpenAI, Azure, Bedrock, Anthropic | Enterprise self-host only | No (uses Copilot's selection) | No (OpenAI only) | Anthropic only (direct, Bedrock, Vertex) | No (Cursor-managed) | Open-source core: OpenAI, Claude, DeepSeek, more |
+| **Primary trigger** | PR webhook + `@mergewatch` comments + Checks UI re-run | PR webhook + IDE + CLI + chat | PR comments + IDE + MCP + `/greploop` | Manual or auto PR, in web + many IDEs | CLI + IDE + web + desktop | CLI + `@claude` mentions + GitHub Action | Auto on PR update + manual comment | PR + IDE + CLI |
+| **Free tier for private repos** | Yes (see pricing) | 14-day trial | No (OSS discount available) | Inside paid Copilot only | Inside paid ChatGPT only | Inside paid Claude only | 14-day trial | Yes (Developer $0, limited credits) |
+| **Multi-agent architecture** | Yes (6 review + 2 utility, parallel, capped at 3 concurrent) | "Agentic reviews" + 40+ linters; agent count not disclosed | "Swarm of agents" + TREX for tests | Not publicly documented | Agentic, multi-tool, skills + automations | Single agent loop with tool use | Not publicly documented as multi-agent | "Specialized agents" (count not disclosed) |
+| **MCP server (outbound)** | Yes (core + Lambda transport) | Not publicly documented | MCP connection documented | No | No | No | No | Not publicly documented |
+| **Merge-readiness score** | Yes (1–5) | Not publicly documented | Not publicly documented | No | No | No | No | Not publicly documented |
+| **Conventions injection** | Yes (AGENTS.md / CONVENTIONS.md auto-discovered) | YAML customization | Plain-English custom rules; learns from past PR comments | Not publicly documented | Skills | `CLAUDE.md` project standards | Bugbot Rules | PR-Agent rules |
+| **Data retention claim** | No persistent code storage (diff in-memory only); 90-day review metadata TTL | "Zero retention post-review"; SOC 2 Type II | DPA on Enterprise | Business/Enterprise: 28-day prompt retention | Governed by OpenAI policy | Direct to API, no backend index | "Privacy-mode compliant" | Zero data retention, SOC 2 |
+| **Starting paid tier (per seat / month)** | Usage-based via Stripe balance | $24 Pro, $48 Pro Plus | $30 + $1/review over 50 | Bundled in Copilot | Bundled in ChatGPT Plus/Pro | Bundled in Claude Pro | $40 | $30 Teams |
+
+Cells above are compressed for skim-ability. For side-by-side boolean features, see the [feature matrix](/comparisons/feature-matrix). For full sourced detail on any tool, click its name in the cards above.
+
+## Known gaps in this comparison
+
+A handful of facts we could not fully verify in primary sources; worth checking vendor pages directly if these matter to your decision:
+
+- **CodeRabbit** — specific model used on the default SaaS tier.
+- **Greptile** — public data retention and training posture (DPA exists on Enterprise).
+- **GitHub Copilot code review** — the specific model powering the review feature.
+- **OpenAI Codex** — Codex-specific retention numbers beyond OpenAI's general policy.
+- **Cursor BugBot** — the exact models used for detection (vs. autofix).
+- **Qodo Merge commercial tier** — LLM flexibility beyond the open-source PR-Agent core.
+
+## Dimensions deliberately left out
+
+- **Review quality / false-positive rate.** Every vendor has a marketing number (CodeRabbit's "75M defects," BugBot's "50% of issues get fixed"). None are independently verifiable and all use different counting methods. Benchmarking is outside the scope of a feature-and-pricing comparison.
+- **Supported languages / frameworks.** Too stack-specific to matrix; check the individual vendor docs for your language.
+- **SSO / RBAC granularity.** All vendors at the Enterprise tier offer SSO; the differences between SAML providers and RBAC granularity need a vendor-specific RFP, not a table row.
+
+## Contributing
+
+If a fact on any of these pages is wrong or out of date, please [open a PR](https://github.com/santthosh/mergewatch.ai) with the correction **and the vendor URL that backs it up**. Unsourced changes will be asked for a source before merge. The aim is for this section to stay factual — a snapshot readers can trust, not a marketing artifact.

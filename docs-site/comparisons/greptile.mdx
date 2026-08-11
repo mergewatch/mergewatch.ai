@@ -1,0 +1,54 @@
+---
+title: MergeWatch vs Greptile
+description: Multi-agent open-source PR review vs graph-indexed "swarm of agents" with per-review pricing.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [greptile.com](https://www.greptile.com/) and [greptile.com/pricing](https://www.greptile.com/pricing). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | Greptile |
+|---|---|---|
+| License | AGPL-3.0 | Proprietary / closed |
+| Self-host | Docker + Postgres, any cloud, no seat minimum | Enterprise only, in AWS |
+| BYO LLM | Bedrock, Anthropic, LiteLLM (100+), Ollama | Enterprise self-host only |
+| Agent architecture | 6 review + 2 utility agents, parallel, merge score | "Swarm of agents" + TREX autonomous test generation |
+| Codebase context | Per-PR diff + auto-discovered conventions | Graph-based full-codebase index |
+| Starting paid tier | Usage-based via Stripe balance | $30/seat/month + $1/review over 50 |
+| Free tier | Public repos free | None (OSS / startup discounts available) |
+
+## Greptile
+
+- **What it is.** "AI agents that review and test pull requests with full context of the codebase." ([greptile.com](https://www.greptile.com/))
+- **Trigger model.** PR comments on GitHub/GitLab; IDE integrations with Claude Code, Cursor, Codex, Devin; MCP connection; a `/greploop` command for iterative workflows. ([greptile.com](https://www.greptile.com/))
+- **Where it runs.** Both SaaS and self-hosted (self-hosting in AWS is available on the Enterprise plan). ([greptile.com/pricing](https://www.greptile.com/pricing))
+- **LLM flexibility.** Cloud plan uses Greptile's managed stack. Enterprise self-host can deploy with their own LLM providers.
+- **Open source.** Proprietary / closed source.
+- **Agent architecture.** "A swarm of agents" operating in parallel; codebase indexed as a graph; dedicated TREX agent for autonomous test generation. ([greptile.com](https://www.greptile.com/))
+- **Key claims.** Graph-based codebase indexing, learning from team PR comments, plain-English custom rules, multi-file logical bug detection, MCP integration with coding agents.
+- **Pricing.** Cloud $30/seat/month with 50 reviews included + $1 per additional review; unlimited repos and users. Enterprise custom pricing adds self-hosting, SSO/SAML, custom DPA, and a forward-deployed engineer. No free tier; OSS and startup discounts available. ([greptile.com/pricing](https://www.greptile.com/pricing))
+- **Data handling.** Retention/training posture not publicly documented on pages fetched. Custom DPA offered on Enterprise.
+
+## Where MergeWatch differs
+
+- **Self-host without an Enterprise contract.** MergeWatch self-hosting works with `docker-compose up` on any cloud or VPS. Greptile's self-hosting is Enterprise-tier only and runs in AWS.
+- **Fully open-source review pipeline.** AGPL-3.0 across prompts, orchestrator, and templates. Greptile's review logic is closed — you cannot audit the agent behavior.
+- **Pricing model.** MergeWatch has no per-seat charge. On Greptile Cloud you pay $30 per seat + $1 per review above 50; on a busy repo this compounds quickly.
+- **Pluggable LLM on SaaS.** MergeWatch SaaS runs on Bedrock; self-hosted supports four providers out of the box. Greptile's non-Enterprise tier uses Greptile's managed stack only.
+- **Merge-readiness score.** MergeWatch produces a 1–5 composite score. Greptile does not publicly document an equivalent signal.
+- **Agent-authored PR detection.** MergeWatch flags PRs from coding agents and tightens the review prompt. Greptile does not publicly document this.
+
+## When Greptile might be the better fit
+
+- You want a graph-indexed full-codebase context layer for cross-file logical-bug detection and are willing to trust a closed index.
+- You have a flat, low-review-volume repo where $30/seat + $1/review is cheaper than paying LLM tokens directly.
+- You specifically want the `/greploop` iterative workflow or the TREX test-generation agent — both are Greptile-native behaviors.
+- You're on GitLab and need a batteries-included PR-review integration.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [How MergeWatch uses conventions](/configuration/conventions) — MergeWatch's equivalent to Greptile's "plain-English custom rules."

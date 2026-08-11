@@ -1,0 +1,305 @@
+---
+title: "Air-Gapped Deployment"
+description: "Deploy MergeWatch in environments with no external network access."
+---
+
+Some organizations require all software to run without any external network access — no outbound API calls, no container registry pulls, no telemetry. MergeWatch supports this by using a local LLM via Ollama as an embedded sidecar container.
+
+## Overview
+
+This guide covers preparing container images and model weights on a connected machine, transferring them to an air-gapped environment, and running MergeWatch with Ollama for fully offline code reviews.
+
+<Warning>
+Review quality with local models is lower than with external API providers like Anthropic or OpenAI. Local models (e.g. Qwen 2.5 Coder 7B) work well for straightforward code reviews but may miss subtle issues that larger models catch. Test thoroughly before relying on air-gapped reviews for critical repositories.
+</Warning>
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Connected machine (for preparation)">
+
+You need a machine with internet access to download container images and model weights before transferring them to the air-gapped environment.
+
+```bash
+docker --version   # 20.10+
+```
+
+</Step>
+
+<Step title="Air-gapped machine">
+
+The target machine needs Docker and Docker Compose installed (these can be installed from offline packages).
+
+```bash
+docker --version
+docker compose version
+```
+
+</Step>
+
+<Step title="Transfer medium">
+
+A USB drive, external disk, or internal file transfer mechanism with at least **15 GB** of free space (container images + model weights).
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+<Note>
+In an air-gapped environment, your GitHub Enterprise Server instance must be reachable from the MergeWatch host on the internal network. Configure `GITHUB_API_URL` to point to your GHE instance.
+</Note>
+
+</Step>
+
+</Steps>
+
+## Prepare images on a connected machine
+
+<Steps>
+
+<Step title="Pull the required container images">
+
+```bash
+docker pull ghcr.io/santthosh/mergewatch:latest
+docker pull ollama/ollama:latest
+docker pull postgres:15-alpine
+```
+
+</Step>
+
+<Step title="Pull the Ollama model">
+
+Download the model weights using the Ollama CLI or container:
+
+```bash
+docker run --rm -v ollama-models:/root/.ollama ollama/ollama pull qwen2.5-coder:7b
+```
+
+<Tip>
+`qwen2.5-coder:7b` provides a good balance of quality and resource usage for code review. For servers with more RAM and GPU, consider `qwen2.5-coder:14b` or `qwen2.5-coder:32b`.
+</Tip>
+
+</Step>
+
+<Step title="Save images to tar files">
+
+```bash
+docker save ghcr.io/santthosh/mergewatch:latest -o mergewatch.tar
+docker save ollama/ollama:latest -o ollama.tar
+docker save postgres:15-alpine -o postgres.tar
+```
+
+</Step>
+
+<Step title="Export the Ollama model volume">
+
+```bash
+docker run --rm -v ollama-models:/source -v $(pwd):/backup alpine \
+  tar czf /backup/ollama-models.tar.gz -C /source .
+```
+
+</Step>
+
+<Step title="Copy files to transfer medium">
+
+Copy these four files to your USB drive or transfer medium:
+
+- `mergewatch.tar`
+- `ollama.tar`
+- `postgres.tar`
+- `ollama-models.tar.gz`
+
+</Step>
+
+</Steps>
+
+## Deploy on the air-gapped machine
+
+<Steps>
+
+<Step title="Load the container images">
+
+```bash
+docker load -i mergewatch.tar
+docker load -i ollama.tar
+docker load -i postgres.tar
+```
+
+</Step>
+
+<Step title="Restore the Ollama model volume">
+
+```bash
+docker volume create ollama-models
+docker run --rm -v ollama-models:/dest -v $(pwd):/backup alpine \
+  tar xzf /backup/ollama-models.tar.gz -C /dest
+```
+
+</Step>
+
+<Step title="Create the docker-compose.yml">
+
+```yaml
+version: "3.8"
+
+services:
+  mergewatch:
+    image: ghcr.io/santthosh/mergewatch:latest
+    container_name: mergewatch
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GITHUB_APP_ID=${GITHUB_APP_ID}
+      - GITHUB_PRIVATE_KEY=${GITHUB_PRIVATE_KEY}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - GITHUB_API_URL=${GITHUB_API_URL:-https://api.github.com}
+      - LLM_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5-coder:7b
+      - DATABASE_URL=postgresql://mergewatch:${DB_PASSWORD}@postgres:5432/mergewatch
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: mergewatch-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Uncomment the following for GPU acceleration (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: mergewatch-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=mergewatch
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=mergewatch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mergewatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  ollama-models:
+    external: true
+```
+
+</Step>
+
+<Step title="Create the .env file">
+
+```bash
+cat > .env << 'EOF'
+GITHUB_APP_ID=your_app_id
+GITHUB_PRIVATE_KEY=your_private_key
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
+GITHUB_API_URL=https://github.your-company.com/api/v3
+DB_PASSWORD=a_strong_random_password
+EOF
+
+chmod 600 .env
+```
+
+</Step>
+
+<Step title="Start all services">
+
+```bash
+docker compose up -d
+```
+
+Verify all three containers are running:
+
+```bash
+docker compose ps
+```
+
+```text
+NAME                  STATUS          PORTS
+mergewatch            Up 10 seconds   0.0.0.0:3000->3000/tcp
+mergewatch-ollama     Up 12 seconds   11434/tcp
+mergewatch-postgres   Up 12 seconds   5432/tcp
+```
+
+</Step>
+
+<Step title="Verify Ollama is serving the model">
+
+```bash
+docker exec mergewatch-ollama ollama list
+```
+
+```text
+NAME                 ID           SIZE    MODIFIED
+qwen2.5-coder:7b    abcdef1234   4.7 GB  2 minutes ago
+```
+
+</Step>
+
+</Steps>
+
+## Set up Postgres
+
+Postgres runs as a container in the docker-compose stack above. Data is persisted to the `pgdata` Docker volume.
+
+<Note>
+If your air-gapped environment has an existing PostgreSQL instance, remove the `postgres` service from `docker-compose.yml` and set `DATABASE_URL` in your `.env` file to the existing database connection string.
+</Note>
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub Enterprise Server App to the MergeWatch host followed by `/webhook`:
+
+```text
+https://mergewatch.internal.example.com/webhook
+```
+
+<Warning>
+You still need a TLS-terminated reverse proxy (nginx or Caddy) in front of port 3000 if your GitHub Enterprise Server requires HTTPS webhooks. See the [VPS / Bare Metal](/self-hosting/platforms/vps-bare-metal) guide for reverse proxy configuration.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="VPS / Bare Metal guide" icon="server" href="/self-hosting/platforms/vps-bare-metal">
+  Reverse proxy and TLS setup for self-hosted servers.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+</CardGroup>

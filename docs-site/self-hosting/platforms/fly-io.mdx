@@ -1,0 +1,204 @@
+---
+title: "Fly.io"
+description: "Deploy MergeWatch to Fly.io — the closest experience to docker-compose for cloud."
+---
+
+Fly.io runs Docker containers on lightweight VMs at edge locations around the world. Its CLI-driven workflow feels like running `docker-compose` but with built-in TLS, global networking, and managed Postgres.
+
+## Overview
+
+This guide covers deploying MergeWatch to Fly.io, provisioning a managed Fly Postgres cluster, setting secrets, and configuring the GitHub App webhook.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Install the Fly CLI">
+
+```bash
+curl -L https://fly.io/install.sh | sh
+fly auth login
+```
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider. For the default Anthropic provider, you also need `ANTHROPIC_API_KEY`.
+
+</Step>
+
+</Steps>
+
+## Deploy to Fly.io
+
+<Steps>
+
+<Step title="Launch the app">
+
+From a directory containing a `Dockerfile` (or use the MergeWatch image directly), run:
+
+```bash
+fly launch --image ghcr.io/santthosh/mergewatch:latest \
+  --name mergewatch \
+  --region iad \
+  --no-deploy
+```
+
+This creates a `fly.toml` configuration file. The `--no-deploy` flag lets you configure secrets before the first deploy.
+
+<Tip>
+`fly launch` auto-detects Dockerfiles and suggests sensible defaults. You can accept the defaults and customize later.
+</Tip>
+
+</Step>
+
+<Step title="Set environment variables and secrets">
+
+Use `fly secrets set` for sensitive values. Fly encrypts these at rest and injects them as environment variables at runtime.
+
+```bash
+fly secrets set \
+  GITHUB_APP_ID="YOUR_APP_ID" \
+  GITHUB_PRIVATE_KEY="YOUR_PRIVATE_KEY" \
+  GITHUB_WEBHOOK_SECRET="YOUR_WEBHOOK_SECRET" \
+  LLM_PROVIDER="anthropic" \
+  ANTHROPIC_API_KEY="YOUR_ANTHROPIC_KEY" \
+  DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/mergewatch"
+```
+
+<Note>
+`fly secrets set` triggers a redeploy by default. Since we used `--no-deploy` above, the first deploy happens in the next step.
+</Note>
+
+</Step>
+
+<Step title="Configure the internal port">
+
+Edit `fly.toml` to set the internal port to 3000:
+
+```toml
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+```
+
+</Step>
+
+<Step title="Deploy">
+
+```bash
+fly deploy
+```
+
+Fly builds (or pulls) the image, starts the VM, and provisions a TLS certificate automatically.
+
+```text
+==> Monitoring deployment
+  1 desired, 1 placed, 1 healthy, 0 unhealthy
+--> v1 deployed successfully
+```
+
+</Step>
+
+<Step title="Verify the deployment">
+
+```bash
+fly status
+fly logs
+```
+
+</Step>
+
+</Steps>
+
+## Set up Postgres
+
+Fly.io offers a managed Postgres service that runs as a Fly app in the same private network as your MergeWatch instance.
+
+<Steps>
+
+<Step title="Create a Fly Postgres cluster">
+
+```bash
+fly postgres create --name mergewatch-db --region iad
+```
+
+Fly prints the connection string when the cluster is ready:
+
+```text
+Postgres cluster mergewatch-db created
+  Username:    postgres
+  Password:    xxxxxxxxxxxxx
+  Hostname:    mergewatch-db.internal
+  Proxy port:  5432
+  PG port:     5433
+
+Connection string: postgres://postgres:xxxxxxxxxxxxx@mergewatch-db.internal:5432
+```
+
+</Step>
+
+<Step title="Attach the database to MergeWatch">
+
+```bash
+fly postgres attach mergewatch-db --app mergewatch
+```
+
+This automatically sets the `DATABASE_URL` secret on your MergeWatch app with the correct internal connection string.
+
+</Step>
+
+</Steps>
+
+<Tip>
+Fly Postgres runs inside the same private network (6PN) as your app. No public internet exposure or firewall rules needed.
+</Tip>
+
+## Configure the webhook URL
+
+Your Fly.io app is available at `https://your-app.fly.dev`. Set the webhook URL on your GitHub App to:
+
+```text
+https://mergewatch.fly.dev/webhook
+```
+
+Replace `mergewatch` with whatever name you chose during `fly launch`.
+
+<Warning>
+Make sure `force_https = true` is set in your `fly.toml`. GitHub requires HTTPS for webhook delivery.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>
