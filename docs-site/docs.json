@@ -2,7 +2,18 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "MergeWatch",
+  "description": "Documentation for MergeWatch, the open-source AI code review GitHub App: self-hosting guides, .mergewatch.yml configuration, and LLM provider setup.",
   "appearance": { "default": "dark" },
+  "seo": {
+    "metatags": {
+      "og:site_name": "MergeWatch Documentation"
+    },
+    "organization": {
+      "name": "MergeWatch",
+      "url": "https://mergewatch.ai",
+      "sameAs": ["https://github.com/mergewatch"]
+    }
+  },
   "logo": {
     "dark": "/logo/wordmark-dark.svg",
     "light": "/logo/wordmark-light.svg",
