@@ -15,7 +15,7 @@ overrides:
   esbuild@<0.25.0: 0.25.0
   esbuild@>=0.27.3 <0.28.1: 0.28.1
   hono@<4.12.34: 4.12.34
-  '@hono/node-server@<2.0.5': 2.0.5
+  '@hono/node-server@<2.0.10': 2.0.10
   ip-address@<10.3.1: 10.3.1
   postcss@<8.5.23: 8.5.23
   shell-quote@<1.9.0: 1.9.0
@@ -907,8 +907,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@hono/node-server@2.0.5':
-    resolution: {integrity: sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==}
+  '@hono/node-server@2.0.10':
+    resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: 4.12.34
@@ -4004,7 +4004,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@hono/node-server@2.0.5(hono@4.12.34)':
+  '@hono/node-server@2.0.10(hono@4.12.34)':
     dependencies:
       hono: 4.12.34
 
@@ -4131,7 +4131,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 2.0.5(hono@4.12.34)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
