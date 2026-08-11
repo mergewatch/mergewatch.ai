@@ -5,6 +5,10 @@ description: "When reviews trigger, what they produce, and how to control the re
 
 MergeWatch listens to GitHub webhook events and automatically reviews pull requests based on a set of configurable rules. This page explains exactly when reviews run, what statuses they produce, and how to control the lifecycle.
 
+<Note>
+This page covers **when** reviews run. What happens to a finding *after* an agent produces it — grounding, dedup, consolidation, the convergence guard, linter deference — is covered in [How MergeWatch avoids false positives](/configuration/false-positives). If reviews feel noisy or repetitive, start there.
+</Note>
+
 ## When reviews trigger
 
 MergeWatch triggers a review when it receives any of the following GitHub webhook events:
@@ -30,6 +34,8 @@ MergeWatch triggers a review when it receives any of the following GitHub webhoo
   - `@mergewatch` (any other mention) — triggers a **conversational response**. MergeWatch reads the PR diff and its previous review findings, then replies directly to the user's comment using the LLM. No review pipeline runs — the response is posted as a regular PR comment. Use this to ask questions about findings, request clarification, or discuss specific parts of the code.
 
   All mentions are case-insensitive. This works even when `autoReview` is set to `false` in your configuration.
+
+  A fourth command, `/mergewatch reject`, records a finding as an explicit dispute rather than triggering a review — see [feedback signals](/configuration/feedback-signals).
 </Step>
 </Steps>
 
@@ -111,7 +117,9 @@ Each finding produced by MergeWatch includes a **confidence score** from 1 to 10
 | 50-74 | Lower confidence — suppressed by the orchestrator |
 | 1-49 | Low confidence — suppressed by the orchestrator |
 
-The orchestrator automatically drops all findings with confidence below **75** during the dedup and ranking phase. This threshold is not user-configurable — it is designed to minimize false positives while surfacing real issues.
+Findings with confidence below **75** are dropped. The orchestrator prompt asks for this, and a deterministic filter enforces it afterwards — a prompt instruction alone was not reliable enough to depend on, so the floor is applied in code regardless of what the orchestrator returns.
+
+The threshold is not user-configurable. It is set to minimize false positives while surfacing real issues; see [How MergeWatch avoids false positives](/configuration/false-positives) for the other guards that run alongside it.
 
 <Tip>
 If you notice a legitimate issue being suppressed, consider adding a [custom agent](/configuration/mergewatch-yml#custom-agents) with a targeted prompt. Custom agents with focused prompts tend to produce higher-confidence findings for domain-specific concerns.

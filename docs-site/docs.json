@@ -3,7 +3,9 @@
   "theme": "mint",
   "name": "MergeWatch",
   "description": "Documentation for MergeWatch, the open-source AI code review GitHub App: self-hosting guides, .mergewatch.yml configuration, and LLM provider setup.",
-  "appearance": { "default": "dark" },
+  "appearance": {
+    "default": "dark"
+  },
   "seo": {
     "metatags": {
       "og:site_name": "MergeWatch Documentation"
@@ -11,7 +13,9 @@
     "organization": {
       "name": "MergeWatch",
       "url": "https://mergewatch.ai",
-      "sameAs": ["https://github.com/mergewatch"]
+      "sameAs": [
+        "https://github.com/mergewatch"
+      ]
     }
   },
   "logo": {
@@ -92,9 +96,11 @@
             "pages": [
               "configuration/mergewatch-yml",
               "configuration/review-behavior",
+              "configuration/false-positives",
               "configuration/skip-rules",
               "configuration/custom-instructions",
-              "configuration/conventions"
+              "configuration/conventions",
+              "configuration/feedback-signals"
             ]
           },
           {
@@ -123,6 +129,9 @@
               "dashboard/reviews",
               "dashboard/repositories",
               "dashboard/settings",
+              "dashboard/api-keys",
+              "dashboard/custom-agents",
+              "dashboard/billing",
               "dashboard/profile"
             ]
           },
@@ -138,6 +147,7 @@
             "group": "Reference",
             "pages": [
               "reference/cli",
+              "reference/mcp-server",
               "reference/env-vars",
               "reference/changelog",
               "reference/faq",

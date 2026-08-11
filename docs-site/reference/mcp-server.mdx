@@ -1,0 +1,123 @@
+---
+title: "MCP Server"
+description: "Connect coding agents to MergeWatch over the Model Context Protocol — review a diff before you open a PR, and read repo conventions from your editor."
+---
+
+MergeWatch ships an [MCP](https://modelcontextprotocol.io) server so external coding agents — Claude Code, Cursor, and anything else that speaks MCP — can run the review pipeline directly, without opening a pull request first.
+
+The usual flow is inverted: instead of pushing a branch and waiting for a review comment, your agent reviews the diff it just wrote, fixes what comes back, and only then opens the PR.
+
+## Tools
+
+<AccordionGroup>
+
+<Accordion title="review_diff — run the full review pipeline on a diff">
+
+Runs the same multi-agent pipeline that reviews a pull request, on a diff you supply.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `diff` | string | Yes | The unified diff to review. |
+| `repo` | string | No | `owner/repo`. When set, MergeWatch loads that repository's `.mergewatch.yml` and [conventions file](/configuration/conventions), so the review respects the same rules a PR review would. |
+| `description` | string | No | Freeform description of what the change is meant to do. Surfaced to the agent prompts as intent. |
+| `sessionId` | string | No | Groups repeated calls for billing. See [Session billing](#session-billing). |
+
+<Note>
+Reviews run through `review_diff` are marked **agent-authored**, which flips them into the stricter review mode described in [`agentReview`](/configuration/mergewatch-yml). That is deliberate: a diff arriving from a coding agent gets the scrutiny an agent-authored PR gets.
+</Note>
+
+Passing `repo` is worth it whenever the repository has conventions checked in — without it the review falls back to generic best practices and will flag patterns your team has deliberately chosen.
+
+</Accordion>
+
+<Accordion title="get_review_status — read the latest review for a PR">
+
+Returns the most recent review record for a pull request.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `repo` | string | Yes | `owner/repo`. |
+| `prNumber` | integer | Yes | Pull request number. Must be 1 or greater. |
+
+Use it to let an agent poll for a review it triggered, or to pull findings into an editor session without leaving it.
+
+</Accordion>
+
+</AccordionGroup>
+
+## Resources
+
+| Resource | URI | Type |
+|---|---|---|
+| Repo conventions | `mergewatch://conventions/{owner}/{repo}` | `text/markdown` |
+
+Serves the repository's resolved conventions markdown — the same file the review agents receive, resolved through the [discovery order](/configuration/conventions) (`conventions:` in `.mergewatch.yml`, then `AGENTS.md`, `CONVENTIONS.md`, `.mergewatch/conventions.md`).
+
+This lets a coding agent read your house rules *before* writing code, rather than finding out about them in review.
+
+## Authentication
+
+Every request needs a MergeWatch API key as a Bearer token:
+
+```http
+Authorization: Bearer mw_sk_...
+```
+
+Create keys in the dashboard under [**Settings → API keys**](/dashboard/api-keys). Keys are stored hashed — the full value is shown exactly once, at creation.
+
+### Scopes
+
+A key is scoped either to **all repositories** in the installation, or to an explicit list of `owner/repo` strings. A scoped key calling `review_diff` with a `repo` outside its list is rejected.
+
+Scope keys to the narrowest set that works. A key that only ever reviews one service does not need access to the rest of the installation.
+
+## Transport
+
+<CardGroup cols={2}>
+
+<Card title="HTTP (SaaS)" icon="cloud">
+A Lambda Function URL speaking JSON-RPC 2.0 over HTTPS. This is what managed SaaS users connect to. CORS is deliberately open because MCP clients run locally, on origins MergeWatch cannot enumerate.
+</Card>
+
+<Card title="stdio (self-hosted)" icon="terminal">
+The `@mergewatch/mcp` package also runs as a local stdio server, for self-hosted deployments and for clients that prefer a subprocess to a network endpoint.
+</Card>
+
+</CardGroup>
+
+## Session billing
+
+Coding agents iterate. A single change might be reviewed five times as the agent fixes what the previous pass found — and charging full price for each pass would make the tool too expensive to use the way it is meant to be used.
+
+Passing a stable `sessionId` across those calls collapses them into one session:
+
+- A session covers a **30-minute** window.
+- Within it, each call is billed only the **positive delta** above the highest cost billed so far.
+- Repeated reviews of the same diff therefore cost close to nothing after the first.
+
+Use one `sessionId` per logical task — not per call, and not one global ID forever. A UUID generated when the agent picks up a task is the right shape.
+
+## Error codes
+
+The server returns standard JSON-RPC 2.0 errors, plus two MergeWatch-specific codes:
+
+| Code | Meaning |
+|---|---|
+| `-32602` | Invalid params — a required field is missing or malformed. |
+| `-32603` | Internal error. |
+| `-32001` | Unauthorized — missing, malformed, or unrecognized API key, or a repo outside the key's scope. |
+| `-32002` | Billing blocked — the installation has no remaining review quota. See [Billing](/saas/billing). |
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="API keys" icon="key" href="/dashboard/api-keys">
+Create and scope the keys this server authenticates with.
+</Card>
+
+<Card title="Repository conventions" icon="book" href="/configuration/conventions">
+What the conventions resource serves, and how it is resolved.
+</Card>
+
+</CardGroup>

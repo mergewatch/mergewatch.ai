@@ -1,69 +1,73 @@
 ---
 title: "Analytics"
-description: "Track review trends, severity breakdowns, and team metrics across your repositories."
+description: "The tabbed Analytics surface — review volume, LLM cost and cycle-time impact, findings, activity, and review accuracy, all under one route."
 ---
 
-The Analytics page provides aggregated metrics across all repositories in your installation. Use it to track review quality, identify patterns, and measure the impact of AI-assisted code review.
+Analytics is a single tabbed surface at `/dashboard/analytics`. Five tabs sit under one route, and the active tab syncs to the `?tab=` query parameter so any view can be linked or bookmarked directly.
 
-## Accessing analytics
-
-Navigate to **Dashboard > Analytics** from the sidebar. All data is scoped to your current installation.
-
-## Available metrics
-
-### Score trends
-
-A time-series chart showing the average merge-readiness score per day. Use this to track whether code quality is trending up or down over time.
-
-### Severity breakdown
-
-A breakdown of findings by severity level (critical, warning, info) across all reviews in the selected date range.
-
-### Duration stats
-
-Review timing statistics including average and p95 review duration. Useful for monitoring LLM performance and identifying slow reviews.
-
-### Repository breakdown
-
-A per-repository view showing review count, average score, and finding distribution. Helps identify which repositories generate the most findings.
-
-### Category breakdown
-
-Findings grouped by category (security, bug, style, error handling, test coverage, comment accuracy). Shows which types of issues are most common in your codebase.
-
-### Findings per review
-
-A trend line of the average number of findings per review over time. A decreasing trend suggests developers are incorporating review feedback.
-
-### Merge score distribution
-
-A histogram showing the distribution of merge-readiness scores (1-5) across all reviews. Healthy codebases should cluster around 4-5.
-
-## Filters
-
-| Filter | Description |
-|---|---|
-| **Repository** | Filter metrics to a specific repository |
-| **Date range** | Select a custom start and end date |
-
-## API endpoint
-
-The analytics data is served by `GET /api/analytics` with the following query parameters:
-
-| Parameter | Type | Description |
+| Tab | `?tab=` | What it answers |
 |---|---|---|
-| `installation_id` | `string` | Required. The GitHub App installation ID |
-| `repo` | `string` | Optional. Filter to a specific repository |
-| `start_date` | `string` | Optional. ISO 8601 start date |
-| `end_date` | `string` | Optional. ISO 8601 end date |
+| **Overview** | `overview` | How much is MergeWatch reviewing, and what is it finding? |
+| **Cost & Impact** | `cost` | What does this cost, and what is it buying? |
+| **Findings** | `findings` | What kinds of issues come up, and where? |
+| **Activity** | `activity` | Who is interacting with reviews, and how? |
+| **Accuracy** | `accuracy` | How often is MergeWatch right? |
 
----
+**Overview** is the default. An unknown or malformed `?tab=` value falls back to it rather than erroring.
+
+<Note>
+Older links still work. `/dashboard/accuracy` permanently redirects to `/dashboard/analytics?tab=accuracy`, and the even older `/dashboard/insights` redirects through it. The active installation (`?org=`) is preserved across both hops, so a bookmark keeps pointing at the same organization.
+</Note>
+
+## Cost & Impact
+
+Deliberately placed second — one click from the landing tab rather than buried under a wall of charts, because for most teams this is the tab that justifies the tool.
+
+**LLM cost** is tracked per review and aggregated here. Self-hosted deployments need to tell MergeWatch what their model costs before this reads anything useful — see [`LLM_MODEL_INPUT_PRICE_PER_1M`](/reference/env-vars), or the `pricing` block in [`.mergewatch.yml`](/configuration/mergewatch-yml). Without one of those, a model MergeWatch does not ship prices for shows as unpriced rather than as zero.
+
+**Cycle time** measures time-to-merge across the PR lifecycle, reported as percentiles rather than a mean — a mean is dominated by the one PR that sat open for three weeks, and tells you nothing about the typical case.
+
+Read the two together. Cost alone is a number without a denominator; cost against a movement in merge time is an argument.
+
+## Accuracy
+
+Where the [feedback signals](/configuration/feedback-signals) surface.
+
+- **The false-positive funnel** — how many findings were surfaced, how many were disputed, how many were silently dropped.
+- **Dispute rate by agent** — which agents are trusted in your repositories and which are not.
+- **Themes** — clusters of findings that keep recurring, which usually means a convention worth documenting rather than a bug worth fixing repeatedly.
+- **Per-repo heatmap** — where accuracy differs across the installation.
+
+A high dispute rate for one agent in one repository is the clearest signal available that the repository needs a [conventions file](/configuration/conventions). That is usually a faster fix than turning the agent off: conventions teach it your patterns, disabling it gives up the category entirely.
+
+<Note>
+Rates distinguish "no signal" from a real zero. A blank is *no data in this window*, not *nothing was useful*. Do not read a quiet week as a bad score.
+</Note>
+
+## Activity
+
+Developer engagement with reviews: reviews delivered, re-reviews requested, `/mergewatch reject` commands, helpful votes, and NPS responses.
+
+Engagement is the leading indicator. Accuracy tells you whether reviews are correct; activity tells you whether anyone is reading them. A high-accuracy review nobody engages with is still failing.
+
+## Rollup cadence
+
+Analytics is computed by a rollup job, not live per request. It runs **hourly** by default.
+
+Self-hosted deployments can change that with [`INSIGHTS_ROLLUP_INTERVAL_MINUTES`](/reference/env-vars) — raise it to reduce database load. A number that is unset, non-numeric, or non-positive falls back to hourly.
+
+Because the data is rolled up, a review that completed a few minutes ago may not have landed in these views yet. That is expected, not a bug.
+
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Reviews" icon="magnifying-glass" href="/dashboard/reviews">
-    View individual review details and findings.
-  </Card>
-  <Card title="Settings" icon="gear" href="/dashboard/settings">
-    Configure installation-level review settings.
-  </Card>
+
+<Card title="Feedback signals" icon="thumbs-up" href="/configuration/feedback-signals">
+The signals the Accuracy and Activity tabs are built from.
+</Card>
+
+<Card title="Reviews" icon="list-check" href="/dashboard/reviews">
+Per-review detail behind the aggregates.
+</Card>
+
 </CardGroup>
