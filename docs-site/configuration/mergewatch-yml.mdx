@@ -1,0 +1,430 @@
+---
+title: ".mergewatch.yml Reference"
+description: "Complete reference for the .mergewatch.yml configuration file — properties, defaults, agents, and rules."
+---
+
+The `.mergewatch.yml` file controls how MergeWatch reviews pull requests in a repository. Place it at the root of your repository's default branch (usually `main`).
+
+## Configuration priority
+
+MergeWatch resolves configuration in the following order. Each layer overrides the one before it:
+
+<Steps>
+<Step title="Built-in defaults">
+  Hardcoded in the MergeWatch Lambda. These apply when no other configuration is present.
+</Step>
+<Step title="Installation-level settings (DynamoDB)">
+  Set via the [dashboard](/dashboard/settings). Apply to all repositories in the installation.
+</Step>
+<Step title="Per-repo .mergewatch.yml">
+  Checked into the repository. Overrides both built-in defaults and installation-level settings.
+</Step>
+</Steps>
+
+<Info>
+A `.mergewatch.yml` in the repository always wins. If you set `maxFiles: 100` in the dashboard but `maxFiles: 20` in the YAML file, the repo uses `20`.
+</Info>
+
+## Validation
+
+MergeWatch validates the `.mergewatch.yml` file on the first webhook it receives for the repository. If the file contains errors — invalid YAML, unknown properties, or type mismatches — MergeWatch posts the validation errors as a comment on the pull request so they are immediately visible to the author.
+
+## Full annotated example
+
+```yaml .mergewatch.yml
+version: 1
+
+# Model used for all agents. Must be a valid Bedrock model ID.
+model: anthropic.claude-sonnet-4-20250514
+
+# Codebase awareness — enable agentic file fetching for cross-file context.
+codebaseAwareness: true
+maxFileRequestRounds: 1
+maxContextKB: 256
+
+# Agent configuration — toggle each built-in agent on or off.
+agents:
+  security: true
+  bugs: true
+  style: true
+  errorHandling: true
+  testCoverage: false
+  commentAccuracy: true
+  summary: true
+  diagram: true
+
+# Custom agents run alongside the built-in ones.
+customAgents:
+  - name: api-consistency
+    prompt: "Check that all new API endpoints follow our REST conventions: plural resource names, consistent error response format, and proper HTTP status codes."
+    severityDefault: warning
+    enabled: true
+
+# Review rules — control scope and trigger behavior.
+rules:
+  maxFiles: 50
+  autoReview: true
+  reviewOnMention: true
+  skipDrafts: true
+  ignoreLabels:
+    - "skip-review"
+
+# File patterns to exclude from the diff sent to agents.
+excludePatterns:
+  - "**/*.lock"
+  - "**/package-lock.json"
+  - "**/dist/**"
+  - "**/node_modules/**"
+
+# Force-include paths that would otherwise be PR-level skipped (e.g. docs-only PRs
+# under a critical directory). Operates at the PR-skip layer, not the diff filter.
+includePatterns:
+  - "SECURITY.md"
+  - "docs/policy/**"
+
+# Agent-authored PR detection — flips reviews into strict mode and tracks iterations
+# when commits look agent-generated.
+agentReview:
+  enabled: true
+  strictChecks: true
+  autoIterate: true
+  maxIterations: 3
+  passThreshold: noCritical          # noCritical | noFindings | scoreAtLeast4 | scoreAtLeast5
+  detection:
+    commitTrailers:
+      - "Co-authored-by: Claude"
+    branchPrefixes:
+      - "claude/"
+    labels:
+      - "ai-generated"
+
+# Minimum severity to report: info | warning | critical
+minSeverity: info
+
+# Maximum findings posted per review.
+maxFindings: 25
+
+# UX configuration for review comment formatting.
+ux:
+  tone: collaborative       # collaborative | direct | advisory
+  showWorkDone: true         # show the stats bar (files scanned, lines reviewed, agents ran)
+  showSuppressedCount: true  # show how many findings were suppressed
+  reviewerChecklist: true    # show a checklist derived from top findings
+  allClearMessage: true      # show a special message when no findings
+  commentHeader: ""          # custom Markdown header for the review comment
+```
+
+## Property reference
+
+### Top-level properties
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `version` | `number` | `1` | Schema version. Currently only `1` is supported. |
+| `model` | `string` | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Bedrock model ID used for all agents. Any model available in your Bedrock account can be specified. |
+| `lightModel` | `string` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Lighter model used for low-complexity tasks such as summary generation. |
+| `maxTokensPerAgent` | `number` | `4096` | Maximum output tokens per agent invocation. Increase for large PRs; decrease to reduce cost. |
+| `minSeverity` | `string` | `info` | Minimum severity level to report. One of `info`, `warning`, `critical`. Findings below this threshold are suppressed. |
+| `maxFindings` | `number` | `25` | Maximum number of findings posted per review. Prevents noisy reviews on large PRs. |
+| `postSummaryOnClean` | `boolean` | `true` | When `true`, MergeWatch posts a summary comment even when no findings are detected. Set to `false` to stay silent on clean PRs. |
+| `codebaseAwareness` | `boolean` | `true` | Enable agentic file fetching for cross-file context. When `true`, agents can request additional files from the repository. |
+| `maxFileRequestRounds` | `number` | `1` | Maximum rounds of file fetching per agent (1--2). Each round lets the agent request more files based on what it learned. |
+| `maxContextKB` | `number` | `256` | Maximum total context size in KB for fetched files per agent. Prevents runaway context expansion. |
+| `customStyleRules` | `string[]` | `[]` | Additional style rules applied to the style agent. Each entry is a rule string. |
+| `conventions` | `string` | auto-discovered | Path to a Markdown file documenting repo-specific conventions. Injected into every agent's prompt (16 KB cap). When unset, MergeWatch tries `AGENTS.md`, `CONVENTIONS.md`, and `.mergewatch/conventions.md` in that order. See [Repository Conventions](/configuration/conventions). |
+| `excludePatterns` | `string[]` | See [defaults](#path-filters) | Canonical file-pattern field. Filters individual files out of the diff sent to agents. Uses glob syntax. |
+| `includePatterns` | `string[]` | `[]` | Force PRs back into review when every changed file would otherwise match the built-in trivial patterns (lock files, docs, build artifacts). Operates at the PR-skip layer — useful for opting a critical-docs subdirectory or a top-level `SECURITY.md` back into review. |
+| `agents` | `object` | See [Agents](#agents) | Boolean map of built-in agent names to enabled/disabled state. |
+| `customAgents` | `CustomAgent[]` | `[]` | List of custom agent definitions. See [Custom agents](#custom-agents). |
+| `rules` | `object` | See [Rules](#rules) | Review scope and trigger rules. |
+| `ux` | `object` | See [UX](#ux) | UX configuration for review comment formatting. |
+| `agentReview` | `object` | See [Agent-authored PRs](#agent-authored-prs) | Detection rules and strict-mode behavior for agent-authored pull requests. |
+| `pricing` | `object` | provider defaults | Per-model price overrides for cost estimation. Map of model ID → `{ inputPer1M, outputPer1M }` in USD. Use this when a custom or self-hosted model is missing from MergeWatch's built-in price table. |
+
+### Agents
+
+The `agents` object is a boolean map that toggles each of the eight built-in review agents on or off. Set an agent to `false` to disable it entirely.
+
+```yaml
+agents:
+  security: true
+  bugs: true
+  style: false        # disable style agent
+  diagram: false      # disable diagram agent
+```
+
+<Tip>
+You do not need to list all agents. Omitted agents default to `true` (enabled). To disable a single agent, include only that agent with `false`.
+</Tip>
+
+<Note>
+To define entirely new agents with custom prompts, use the `customAgents` array. See [Custom agents](#custom-agents) below.
+</Note>
+
+**Built-in agents:**
+
+| Agent | Default | Purpose |
+|---|---|---|
+| `security` | Enabled | OWASP Top 10, secrets detection, injection flaws, unsafe deserialization |
+| `bugs` | Enabled | Logic errors, off-by-one, null dereferences, race conditions |
+| `style` | Enabled | Code style, naming conventions, project-specific patterns |
+| `errorHandling` | Enabled | Empty catch blocks, swallowed errors, unhandled promise rejections |
+| `testCoverage` | Enabled | Missing tests for new public functions, untested edge cases |
+| `commentAccuracy` | Enabled | Misleading or outdated code comments, incorrect JSDoc |
+| `summary` | Enabled | High-level PR summary with the merge readiness score (uses the light model) |
+| `diagram` | Enabled | Mermaid diagram of the changed control flow (uses the light model) |
+
+### Custom agents
+
+You can define custom agents using the `customAgents` array. Custom agents run in parallel alongside the built-in agents and follow the same output schema.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | — | A unique identifier for the custom agent. |
+| `prompt` | `string` | — | **(Required)** The system prompt for the agent. This defines what the agent looks for in the code. |
+| `severityDefault` | `string` | `"warning"` | Default severity for findings from this agent. One of: `"info"`, `"warning"`, `"critical"`. |
+| `enabled` | `boolean` | `true` | Set to `false` to disable the custom agent. |
+
+```yaml
+customAgents:
+  - name: api-consistency
+    prompt: "Check that all new API endpoints follow REST conventions: plural resource names, consistent error response format, and proper HTTP status codes."
+    severityDefault: warning
+    enabled: true
+
+  - name: i18n-compliance
+    prompt: "Flag any user-facing strings that are not wrapped in a translation function (t() or i18n()). All UI text must be translatable."
+    severityDefault: info
+    enabled: true
+```
+
+### Rules
+
+The `rules` object controls which files are reviewed and when reviews are triggered.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `maxFiles` | `number` | `50` | Maximum number of changed files to review. PRs exceeding this limit are skipped with a comment explaining why. |
+| `autoReview` | `boolean` | `true` | When `true`, MergeWatch reviews every PR automatically on open and synchronize events. When `false`, MergeWatch posts a neutral check run on each PR titled *"Auto-review is disabled for this repository"* instructing the author to comment `@mergewatch review` to trigger one — see [Auto-review off](/configuration/skip-rules#auto-review-off). |
+| `reviewOnMention` | `boolean` | `true` | When `true`, MergeWatch runs a review when mentioned in a PR comment (e.g., `@mergewatch review`). Works even if `autoReview` is `false`. |
+| `skipDrafts` | `boolean` | `true` | Skip draft pull requests. Set to `false` to review drafts automatically. |
+| `ignoreLabels` | `string[]` | `["skip-review"]` | Skip PRs with any of these GitHub labels. PRs matching these labels are not reviewed. |
+
+<Warning>
+`rules.ignorePatterns` is **deprecated**. Use top-level [`excludePatterns`](#path-filters) instead — it is the canonical field for filtering files out of the diff. Existing `.mergewatch.yml` files keep working: any entries under `rules.ignorePatterns` are folded into `excludePatterns` at parse time and a one-time deprecation warning is emitted.
+</Warning>
+
+### UX
+
+The `ux` object controls how the review comment is formatted and what sections are shown.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `tone` | `string` | `collaborative` | Tone of review findings. One of: `collaborative`, `direct`, `advisory`. |
+| `showWorkDone` | `boolean` | `true` | Show the "work done" stats bar (files scanned, lines reviewed, agents ran). |
+| `showSuppressedCount` | `boolean` | `true` | Show how many findings were suppressed by the orchestrator's dedup and quality filters. |
+| `reviewerChecklist` | `boolean` | `true` | Show a reviewer checklist derived from the top findings. |
+| `allClearMessage` | `boolean` | `true` | Show a special "all clear" message when there are no findings. |
+| `commentHeader` | `string` | `""` | Custom Markdown header for the review comment. Replaces the default MergeWatch logo. |
+
+**Tone directives:**
+
+| Tone | Behavior |
+|---|---|
+| `collaborative` | Frames findings as suggestions from a teammate. Uses phrases like "Consider...", "It might be worth...", "One approach would be...". Acknowledges the author's intent before suggesting alternatives. |
+| `direct` | States findings clearly and concisely without hedging. Leads with what needs to change and why. Skips pleasantries but remains respectful. |
+| `advisory` | Presents findings as expert observations. Uses phrases like "In my experience...", "A common pitfall here is...", "Best practice suggests...". Provides context for why the suggestion matters. |
+
+### Path filters
+
+MergeWatch has two top-level path-filter fields. They operate at different layers — see [Skip Rules](/configuration/skip-rules) for the full picture.
+
+| Field | Layer | Default | What it does |
+|---|---|---|---|
+| `excludePatterns` | Diff filter | lock files, `dist/**`, `build/**`, `node_modules/**`, minified files | Files matching these globs are stripped out of the diff sent to agents. The PR is still reviewed if any non-matching files remain. |
+| `includePatterns` | PR-skip override | `[]` | Forces a PR back into review even when every changed file would otherwise be classified as trivial (docs-only, lock-only). Files still flow through `excludePatterns` afterwards. |
+
+```yaml .mergewatch.yml
+excludePatterns:
+  - "**/*.generated.ts"
+  - "**/fixtures/**"
+
+includePatterns:
+  - "SECURITY.md"
+  - "docs/policy/**"
+```
+
+### Agent-authored PRs
+
+The `agentReview` object controls how MergeWatch handles pull requests authored by coding agents (Claude Code, Cursor, Codex, etc.). When detection matches, the review pipeline applies stricter prompts and tracks how many iterations the agent took to reach a passing state.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `boolean` | `true` | Master switch for agent-authored PR handling. Set to `false` to disable detection entirely. |
+| `strictChecks` | `boolean` | `true` | Inject the agent-mode prompt suffix when the PR is detected as agent-authored. The suffix warns reviewers about hallucinated APIs, no-op tests, and stale patterns. |
+| `autoIterate` | `boolean` | `true` | Track iteration count across re-reviews and surface a "reviewer whisper" when an agent has taken multiple rounds to converge. |
+| `maxIterations` | `number` | `3` | Iteration cap (1-20) used for the iteration-count metadata. |
+| `passThreshold` | `string` | `noCritical` | Threshold an agent-authored PR must clear to be considered passing. One of `noCritical`, `noFindings`, `scoreAtLeast4`, `scoreAtLeast5`. |
+| `detection.commitTrailers` | `string[]` | `["Co-authored-by: Claude"]` | Substrings searched in commit message trailers. A match flips the source to `agent`. |
+| `detection.branchPrefixes` | `string[]` | `["claude/"]` | Branch-name prefixes that mark a PR as agent-authored. |
+| `detection.labels` | `string[]` | `["ai-generated"]` | GitHub labels that mark a PR as agent-authored. |
+
+```yaml .mergewatch.yml
+agentReview:
+  enabled: true
+  strictChecks: true
+  passThreshold: scoreAtLeast4
+  detection:
+    commitTrailers:
+      - "Co-authored-by: Claude"
+      - "Co-authored-by: Cursor"
+    branchPrefixes:
+      - "claude/"
+      - "cursor/"
+    labels:
+      - "ai-generated"
+```
+
+### Pricing overrides
+
+The `pricing` field maps a model ID to its per-token price (USD per 1M tokens) and is used by the cost-estimation pipeline. Set it when you run a model that is not in MergeWatch's built-in price table — for example, a self-hosted Llama on Ollama or a custom Bedrock provisioned-throughput endpoint.
+
+```yaml .mergewatch.yml
+pricing:
+  "custom-llama-3-70b":
+    inputPer1M: 0.50
+    outputPer1M: 0.75
+```
+
+## Minimal configuration
+
+If the defaults work for you, the smallest valid configuration is:
+
+```yaml .mergewatch.yml
+version: 1
+```
+
+This enables all eight built-in agents with their default prompts, uses Claude Sonnet via Bedrock, and reviews PRs automatically.
+
+## Common patterns
+
+<AccordionGroup>
+
+<Accordion title="Security-focused pipeline (e.g., payments service)">
+```yaml .mergewatch.yml
+version: 1
+model: us.anthropic.claude-sonnet-4-20250514-v1:0
+agents:
+  style: false
+  diagram: false
+customAgents:
+  - name: security-pci
+    prompt: "This is a PCI-DSS scoped payments service. Focus on: SQL injection via raw queries, XSS in template rendering, hardcoded credentials, insecure cryptographic operations, and unvalidated redirects. Flag any use of eval() or exec()."
+    severityDefault: critical
+    enabled: true
+```
+Disables style and diagram agents. A custom agent adds domain-specific security checks for payments services.
+</Accordion>
+
+<Accordion title="Lightweight pipeline for high-volume repos">
+```yaml .mergewatch.yml
+version: 1
+model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+maxTokensPerAgent: 2048
+maxFindings: 10
+minSeverity: warning
+agents:
+  bugs: false
+  style: false
+  diagram: false
+```
+Uses the cheaper Haiku model, disables low-priority agents, and suppresses info-level findings. Good for repos with frequent small PRs where speed and cost matter more than comprehensive review.
+</Accordion>
+
+<Accordion title="Style-heavy pipeline for a frontend repo">
+```yaml .mergewatch.yml
+version: 1
+customAgents:
+  - name: react-style
+    prompt: "This is a React + TypeScript project. Flag any use of `any` type. Require explicit return types on exported functions. Flag inline styles — use Tailwind classes. Flag console.log() calls. Prefer named exports over default exports."
+    severityDefault: warning
+    enabled: true
+  - name: frontend-security
+    prompt: "Focus on XSS via dangerouslySetInnerHTML, unsanitized user input in URLs, and exposed API keys in client-side code."
+    severityDefault: critical
+    enabled: true
+```
+Custom agents add React/TypeScript conventions and frontend-specific security checks alongside the built-in agents.
+</Accordion>
+
+<Accordion title="Monorepo with service boundaries">
+```yaml .mergewatch.yml
+version: 1
+customAgents:
+  - name: service-boundaries
+    prompt: "This repo contains three services: payments/, orders/, notifications/. Flag any direct imports across service boundaries — each service must be independent. Flag shared mutable state."
+    severityDefault: warning
+    enabled: true
+  - name: monorepo-style
+    prompt: "Each service has its own tsconfig.json. Flag path aliases that reference other services."
+    severityDefault: info
+    enabled: true
+```
+Custom agents enforce architectural boundaries. All built-in agents remain enabled.
+</Accordion>
+
+<Accordion title="Review only on mention">
+```yaml .mergewatch.yml
+version: 1
+rules:
+  autoReview: false
+  reviewOnMention: true
+```
+MergeWatch stays silent until someone comments `@mergewatch review` on the PR.
+</Accordion>
+
+<Accordion title="Ignore generated code and vendored dependencies">
+```yaml .mergewatch.yml
+version: 1
+rules:
+  ignorePatterns:
+    - "*.lock"
+    - "vendor/**"
+    - "dist/**"
+    - "generated/**"
+    - "*.pb.go"
+    - "*.gen.ts"
+```
+</Accordion>
+
+<Accordion title="Django/Python backend">
+```yaml .mergewatch.yml
+version: 1
+customAgents:
+  - name: django-security
+    prompt: "This is a Django 5 project. Focus on SQL injection via raw querysets, CSRF token issues, unvalidated redirects, and mass assignment via ModelForm. Check for DEBUG=True in settings."
+    severityDefault: critical
+    enabled: true
+  - name: django-style
+    prompt: "Enforce PEP 8. Flag any print() calls — use logging instead. Flag bare except clauses. Require type hints on public function signatures."
+    severityDefault: warning
+    enabled: true
+  - name: django-bugs
+    prompt: "Watch for N+1 query patterns in Django ORM, missing database migrations for model changes, and unclosed file handles."
+    severityDefault: warning
+    enabled: true
+```
+Three custom agents with Django-specific prompts alongside the built-in agents.
+</Accordion>
+
+</AccordionGroup>
+
+## Where the file lives
+
+The `.mergewatch.yml` file must be placed at the **root** of the repository's **default branch** (the branch GitHub shows when you visit the repo — usually `main` or `master`).
+
+MergeWatch reads the file from the default branch, not from the PR's head branch. This means configuration changes in a PR do not take effect until they are merged.
+
+<Warning>
+If you rename your default branch, MergeWatch automatically detects the new default on the next webhook. No action is required.
+</Warning>

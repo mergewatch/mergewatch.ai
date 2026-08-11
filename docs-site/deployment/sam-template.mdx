@@ -1,0 +1,156 @@
+---
+title: "SAM Template Reference"
+description: "AWS SAM template parameters, resources, and outputs for the MergeWatch stack."
+---
+
+<Warning>
+This page is for the **MergeWatch SaaS deployment only**. If you are self-hosting, you do not need SAM. The self-hosted deployment uses Docker and does not involve AWS Lambda or CloudFormation. See [Self-Hosting Install](/self-hosting/install) instead.
+</Warning>
+
+The MergeWatch SAM template (`infra/template.yaml`) defines all AWS resources required to run the pipeline. It deploys with a single command:
+
+```bash
+sam build && sam deploy
+```
+
+<Note>
+The project uses a `scripts/deploy.sh` wrapper around `sam build && sam deploy` — invoke it with `pnpm run deploy:dev` / `deploy:staging` / `deploy` from the [mergewatch.ai repo](https://github.com/mergewatch/mergewatch.ai). You only need to invoke SAM directly if you are customizing deployment flags.
+</Note>
+
+## Parameters
+
+The template accepts four parameters that control the deployment:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `Stage` | String | `prod` | Deployment stage (`dev`, `staging`, `prod`). Scopes all resource names so multiple environments can coexist in the same AWS account. |
+| `DefaultBedrockModelId` | String | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Default Bedrock model used by all agents. Can be overridden per-repo via `.mergewatch.yml`. |
+| `DeploymentMode` | String | `self-hosted` | Deployment mode. Set to `saas` to enable Stripe billing enforcement in the ReviewAgent and deploy the BillingHandler Lambda. `self-hosted` skips all billing checks. |
+| `DashboardBaseUrl` | String | `https://mergewatch.ai` | Base URL used in PR comment links that point back to the MergeWatch dashboard. |
+
+<Tip>
+For self-hosted deployments, set `DashboardBaseUrl` to your own domain if you are running the dashboard separately, or leave the default if you only use GitHub for viewing results.
+</Tip>
+
+## Resources created
+
+The template creates the following AWS resources:
+
+| Resource | Type | Details |
+|---|---|---|
+| WebhookApi | `AWS::ApiGateway::RestApi` | REST API endpoint that receives GitHub webhook POST requests |
+| WebhookHandlerFunction | `AWS::Lambda::Function` | Node.js 20, ARM64, 512 MB, 30s timeout. Validates HMAC signature and invokes ReviewAgent asynchronously. |
+| ReviewAgentFunction | `AWS::Lambda::Function` | Node.js 20, ARM64, 1024 MB, 300s timeout. Runs the multi-agent review pipeline. |
+| InstallationsTable | `AWS::DynamoDB::Table` | On-demand table for GitHub App installation records. GSI on `accountId`. |
+| ReviewsTable | `AWS::DynamoDB::Table` | On-demand table for review history. 90-day TTL. GSI on `createdAt`. |
+| LambdaExecutionRole | `AWS::IAM::Role` | Shared execution role for both Lambda functions with least-privilege permissions. |
+| SSM Parameters | `AWS::SSM::Parameter` | Three SecureString parameters under `/mergewatch/{stage}/` for GitHub App credentials. |
+
+## Outputs
+
+After deployment, the stack exports these values:
+
+| Output | Description |
+|---|---|
+| `WebhookUrl` | The URL to set as your GitHub App webhook endpoint (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com/prod`) |
+| `WebhookHandlerArn` | ARN of the WebhookHandler Lambda function |
+| `ReviewAgentArn` | ARN of the ReviewAgent Lambda function |
+| `InstallationsTableName` | Name of the DynamoDB installations table |
+| `ReviewsTableName` | Name of the DynamoDB reviews table |
+
+You can retrieve outputs at any time with:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name mergewatch-prod \
+  --query "Stacks[0].Outputs" \
+  --output table
+```
+
+## IAM permissions
+
+The Lambda execution role follows least-privilege principles. It includes the following permissions:
+
+<AccordionGroup>
+  <Accordion title="CloudWatch Logs">
+    `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents`
+
+    Allows both Lambda functions to write execution logs to CloudWatch.
+  </Accordion>
+
+  <Accordion title="DynamoDB">
+    `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:Query`
+
+    Scoped to the two MergeWatch tables only. No `Scan` or `DeleteItem` permissions are granted.
+  </Accordion>
+
+  <Accordion title="Amazon Bedrock">
+    `bedrock:InvokeModel`
+
+    Scoped to the model ID specified in the `DefaultBedrockModelId` parameter. The ReviewAgent uses this to call the multi-agent pipeline.
+  </Accordion>
+
+  <Accordion title="SSM Parameter Store">
+    `ssm:GetParameter`
+
+    Scoped to `/mergewatch/{stage}/*`. Allows Lambda to decrypt and read GitHub App credentials at runtime.
+  </Accordion>
+
+  <Accordion title="Lambda Invoke">
+    `lambda:InvokeFunction`
+
+    Scoped to the ReviewAgent function ARN. WebhookHandler uses this to invoke ReviewAgent asynchronously (`InvocationType.Event`).
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Do not attach broader permissions (e.g. `bedrock:*` or `dynamodb:*`) to the execution role. The template is scoped intentionally — widening permissions increases your blast radius if the role is ever compromised.
+</Warning>
+
+## Customization
+
+You can override template parameters in two ways:
+
+<CodeGroup>
+
+```toml samconfig.toml
+version = 0.1
+
+[prod.deploy.parameters]
+stack_name = "mergewatch-prod"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Stage=prod",
+  "DefaultBedrockModelId=us.anthropic.claude-sonnet-4-20250514-v1:0",
+  "DeploymentMode=saas",
+  "DashboardBaseUrl=https://mergewatch.example.com"
+]
+```
+
+```bash CLI flags
+sam deploy \
+  --stack-name mergewatch-staging \
+  --parameter-overrides \
+    Stage=staging \
+    DefaultBedrockModelId=us.anthropic.claude-sonnet-4-20250514-v1:0 \
+    DeploymentMode=self-hosted \
+    DashboardBaseUrl=https://staging.mergewatch.example.com
+```
+
+</CodeGroup>
+
+<Note>
+For the full list of `sam deploy` options, see the [AWS SAM CLI reference](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-deploy.html).
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="sitemap" href="/deployment/architecture">
+    Understand how the components connect end-to-end.
+  </Card>
+  <Card title="Self-Hosted Install" icon="server" href="/self-hosting/install">
+    Deploy MergeWatch on your own infrastructure with Docker.
+  </Card>
+</CardGroup>

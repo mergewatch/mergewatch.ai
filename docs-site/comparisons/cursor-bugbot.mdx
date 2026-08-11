@@ -1,0 +1,54 @@
+---
+title: MergeWatch vs Cursor BugBot
+description: Open-source multi-agent PR review vs a bug-focused pre-merge check from the Cursor editor team.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [cursor.com/bugbot](https://cursor.com/bugbot), [cursor.com/docs/bugbot](https://cursor.com/docs/bugbot), and [cursor.com/pricing](https://cursor.com/pricing). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | Cursor BugBot |
+|---|---|---|
+| License | AGPL-3.0 | Closed |
+| Self-host | Docker + Postgres, any cloud | No |
+| BYO LLM | Bedrock, Anthropic, LiteLLM, Ollama | No — Cursor-managed (frontier + in-house models) |
+| Focus | General PR review (6 categories + utilities) | Logic bug detection with low false-positive target |
+| Trigger | PR webhook, `@mergewatch`, Checks re-run | Auto on every PR update (default), or manual `cursor review` |
+| Fix path | Inline comments + merge score | Autofix via Cursor editor or Background Agent |
+| Pricing | Usage-based via Stripe balance | $40/user/month Pro (200 PRs) or Teams; 14-day trial |
+
+## Cursor BugBot
+
+- **What it is.** "An AI-powered code review tool that detects logic bugs with low false positive rates," operating as a mandatory pre-merge check on GitHub. ([cursor.com/bugbot](https://cursor.com/bugbot))
+- **Trigger model.** Automatic on every PR update by default. Also manual via comment (`cursor review` or `bugbot run`). Configurable to run only when mentioned or only once per PR. ([cursor.com/docs/bugbot](https://cursor.com/docs/bugbot))
+- **Where it runs.** SaaS, integrated directly into GitHub (including GitHub Enterprise Server) and GitLab (including GitLab Self-Hosted) PR workflows. Fixes can be pushed through the Cursor editor or Background Agent.
+- **LLM flexibility.** Uses "a combination of frontier and in-house models" — specific models not disclosed. Bugbot Autofix uses "your Default agent model from Settings → Models."
+- **Open source.** Closed source.
+- **Agent architecture.** Not publicly documented as multi-agent; described as a bug-detection reviewer that analyzes PR diffs and uses existing PR comments as context.
+- **Key claims.** "Over 50% of flagged issues get fixed before merge," customizable Bugbot Rules, analyzes interactions with existing components beyond the diff. ([cursor.com/bugbot](https://cursor.com/bugbot))
+- **Pricing.** Bugbot Pro $40/user/month (200 PRs/month); Bugbot Teams $40/user/month (code reviews on all PRs, analytics, advanced rules); Enterprise custom. 14-day free trial. ([cursor.com/pricing](https://cursor.com/pricing))
+- **Data handling.** "Follows the same privacy compliance as Cursor and processes data identically to other Cursor requests"; "privacy-mode compliant."
+
+## Where MergeWatch differs
+
+- **General-purpose review, not bug-only.** MergeWatch covers security, bug, style, error handling, test coverage, comment accuracy, summary, and diagram. BugBot concentrates on logic bugs by design.
+- **Self-hostable and open source.** MergeWatch is AGPL-3.0 with a single-Docker-image self-host. BugBot is a hosted SaaS only.
+- **Multi-model choice.** MergeWatch lets you pick the provider and model per install. BugBot uses Cursor's managed model selection (disclosed only as "frontier + in-house").
+- **Merge-readiness score.** A 1–5 composite signal isn't documented on BugBot.
+- **Agent-authored PR detection.** MergeWatch classifies PRs from coding agents and applies a stricter prompt. BugBot doesn't publicly document this.
+- **Conventions auto-discovery.** `AGENTS.md` / `CONVENTIONS.md` / `.mergewatch/conventions.md` are picked up from the repo root. BugBot uses "Bugbot Rules" configured in Cursor.
+
+## When Cursor BugBot might be the better fit
+
+- Your team lives in the Cursor editor and wants one-click "accept fix" pushed back through the Cursor Background Agent — MergeWatch doesn't ship an editor-native autofix path.
+- You want a narrow, logic-bug-focused pre-merge check and explicitly *don't* want style/test/comment agents adding noise.
+- You already standardized on Cursor org-wide and want bundled billing with the editor.
+- You're on GitLab Self-Hosted and want a vendor whose review product is documented to support it natively.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [Review behavior config](/configuration/review-behavior) — MergeWatch's equivalent of Bugbot Rules.

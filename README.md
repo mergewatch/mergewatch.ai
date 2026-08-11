@@ -235,7 +235,24 @@ packages/
   dashboard/         # Next.js 15 dashboard
 infra/               # AWS SAM template
 scripts/             # Setup & deploy scripts
+docs-site/           # Mintlify source for docs.mergewatch.ai (not a workspace package)
+docs/                # Internal engineering notes & plans (not published)
 ```
+
+## Documentation
+
+User-facing documentation lives in [`docs-site/`](./docs-site) and publishes to
+[docs.mergewatch.ai](https://docs.mergewatch.ai) via Mintlify on every push to
+`main`. To preview locally:
+
+```bash
+npm i -g mint
+cd docs-site && mint dev
+```
+
+See [`docs-site/README.md`](./docs-site/README.md) for the style guide and
+contribution workflow. Changes that alter documented behavior should update the
+relevant page in the same PR.
 
 ## Development
 

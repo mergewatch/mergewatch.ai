@@ -1,0 +1,184 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "MergeWatch",
+  "appearance": { "default": "dark" },
+  "logo": {
+    "dark": "/logo/wordmark-dark.svg",
+    "light": "/logo/wordmark-light.svg",
+    "href": "https://mergewatch.ai"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#00ff88",
+    "light": "#00ff88",
+    "dark": "#00cc66"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Compare",
+        "href": "https://docs.mergewatch.ai/comparisons/overview"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/mergewatch/mergewatch.ai"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "https://mergewatch.ai"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "overview/introduction",
+              "overview/how-it-works",
+              "overview/quickstart"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/overview",
+              "self-hosting/prerequisites",
+              "self-hosting/install",
+              "self-hosting/manual-install",
+              "self-hosting/upgrading",
+              "self-hosting/uninstalling"
+            ]
+          },
+          {
+            "group": "LLM Providers",
+            "pages": [
+              "self-hosting/llm-providers/anthropic",
+              "self-hosting/llm-providers/litellm",
+              "self-hosting/llm-providers/bedrock",
+              "self-hosting/llm-providers/ollama"
+            ]
+          },
+          {
+            "group": "Platform Guides",
+            "pages": [
+              "self-hosting/platforms/google-cloud-run",
+              "self-hosting/platforms/aws-ecs-fargate",
+              "self-hosting/platforms/azure-container-apps",
+              "self-hosting/platforms/fly-io",
+              "self-hosting/platforms/railway-render",
+              "self-hosting/platforms/vps-bare-metal",
+              "self-hosting/platforms/air-gapped"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/mergewatch-yml",
+              "configuration/review-behavior",
+              "configuration/skip-rules",
+              "configuration/custom-instructions",
+              "configuration/conventions"
+            ]
+          },
+          {
+            "group": "GitHub App",
+            "pages": [
+              "github-app/permissions",
+              "github-app/org-install",
+              "github-app/personal-install",
+              "github-app/webhook-events"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/architecture",
+              "deployment/deployment-models",
+              "deployment/sam-template"
+            ]
+          },
+          {
+            "group": "Dashboard",
+            "pages": [
+              "dashboard/overview",
+              "dashboard/analytics",
+              "dashboard/deployment",
+              "dashboard/reviews",
+              "dashboard/repositories",
+              "dashboard/settings",
+              "dashboard/profile"
+            ]
+          },
+          {
+            "group": "Managed SaaS",
+            "pages": [
+              "saas/getting-started",
+              "saas/billing",
+              "saas/data-residency"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/cli",
+              "reference/env-vars",
+              "reference/changelog",
+              "reference/faq",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Comparisons",
+        "groups": [
+          {
+            "group": "Compare",
+            "pages": [
+              "comparisons/overview",
+              "comparisons/feature-matrix"
+            ]
+          },
+          {
+            "group": "Tool by tool",
+            "pages": [
+              "comparisons/coderabbit",
+              "comparisons/greptile",
+              "comparisons/github-copilot",
+              "comparisons/claude-code",
+              "comparisons/openai-codex",
+              "comparisons/cursor-bugbot",
+              "comparisons/qodo",
+              "comparisons/other-tools"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/mergewatch/mergewatch.ai",
+          "icon": "github"
+        },
+        {
+          "anchor": "Changelog",
+          "href": "https://docs.mergewatch.ai/reference/changelog",
+          "icon": "list"
+        }
+      ]
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/mergewatch/mergewatch.ai"
+    }
+  }
+}

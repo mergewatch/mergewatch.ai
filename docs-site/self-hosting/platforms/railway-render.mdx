@@ -1,0 +1,196 @@
+---
+title: "Railway / Render"
+description: "Deploy MergeWatch to Railway or Render — no CLI required."
+---
+
+Railway and Render are platform-as-a-service providers that deploy containers directly from a GitHub repository. Both offer managed Postgres add-ons, automatic TLS, and dashboard-driven configuration — making them the simplest cloud deployment option for MergeWatch.
+
+## Overview
+
+This guide covers deploying MergeWatch on either Railway or Render. Both platforms follow the same pattern: connect your GitHub repo, configure environment variables, add a Postgres database, and point your GitHub App webhook at the provided URL.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Create an account">
+
+Sign up for a free account on [Railway](https://railway.app) or [Render](https://render.com).
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider. For the default Anthropic provider, you also need `ANTHROPIC_API_KEY`.
+
+</Step>
+
+</Steps>
+
+## Deploy on Railway
+
+<Steps>
+
+<Step title="Create a new project">
+
+1. Go to [railway.app/new](https://railway.app/new)
+2. Select **Deploy from Docker Image**
+3. Enter the image: `ghcr.io/santthosh/mergewatch:latest`
+
+</Step>
+
+<Step title="Add a PostgreSQL plugin">
+
+1. In your project, click **+ New** and select **Database > PostgreSQL**
+2. Railway provisions a Postgres instance and exposes the `DATABASE_URL` variable automatically
+
+<Tip>
+Railway injects `DATABASE_URL` into your service environment automatically when you link the PostgreSQL plugin. No manual configuration needed.
+</Tip>
+
+</Step>
+
+<Step title="Set environment variables">
+
+Go to your service's **Variables** tab and add:
+
+| Variable | Value |
+|---|---|
+| `GITHUB_APP_ID` | Your App ID |
+| `GITHUB_PRIVATE_KEY` | Your PEM private key |
+| `GITHUB_WEBHOOK_SECRET` | Your webhook secret |
+| `LLM_PROVIDER` | `anthropic` |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `PORT` | `3000` |
+
+<Note>
+Railway sets `DATABASE_URL` automatically from the PostgreSQL plugin. Do not set it manually unless you are using an external database.
+</Note>
+
+</Step>
+
+<Step title="Deploy and get the URL">
+
+Railway deploys automatically when variables are saved. Find your public URL under **Settings > Networking > Public Networking**. Generate a domain if one is not assigned.
+
+```text
+https://mergewatch-production-abc1.up.railway.app
+```
+
+</Step>
+
+</Steps>
+
+## Deploy on Render
+
+<Steps>
+
+<Step title="Create a new Web Service">
+
+1. Go to [dashboard.render.com](https://dashboard.render.com)
+2. Click **New > Web Service**
+3. Select **Deploy an existing image from a registry**
+4. Enter: `ghcr.io/santthosh/mergewatch:latest`
+
+</Step>
+
+<Step title="Add a PostgreSQL service">
+
+1. Click **New > PostgreSQL**
+2. Choose a name and plan (the free tier works for evaluation)
+3. Copy the **Internal Database URL** from the PostgreSQL service dashboard
+
+</Step>
+
+<Step title="Set environment variables">
+
+In the Web Service settings, go to **Environment** and add:
+
+| Variable | Value |
+|---|---|
+| `GITHUB_APP_ID` | Your App ID |
+| `GITHUB_PRIVATE_KEY` | Your PEM private key |
+| `GITHUB_WEBHOOK_SECRET` | Your webhook secret |
+| `LLM_PROVIDER` | `anthropic` |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `DATABASE_URL` | The Internal Database URL from the PostgreSQL service |
+| `PORT` | `3000` |
+
+</Step>
+
+<Step title="Deploy and get the URL">
+
+Render deploys automatically. Your service URL is shown at the top of the dashboard:
+
+```text
+https://mergewatch.onrender.com
+```
+
+</Step>
+
+</Steps>
+
+<Warning>
+On Render's free tier, services spin down after 15 minutes of inactivity. The first webhook after a spin-down may time out. Use a paid plan for production workloads.
+</Warning>
+
+## Set up Postgres
+
+Both platforms provide managed PostgreSQL as a first-party add-on.
+
+| Platform | Postgres option | How `DATABASE_URL` is set |
+|---|---|---|
+| **Railway** | PostgreSQL plugin | Injected automatically when linked |
+| **Render** | PostgreSQL service | Copy the Internal Database URL manually |
+
+<Tip>
+Both platforms handle backups, connection pooling, and TLS for their managed Postgres offerings. No additional database configuration is needed for MergeWatch.
+</Tip>
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub App to your platform URL followed by `/webhook`:
+
+<CodeGroup>
+
+```text Railway
+https://mergewatch-production-abc1.up.railway.app/webhook
+```
+
+```text Render
+https://mergewatch.onrender.com/webhook
+```
+
+</CodeGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Mergewatch">
+  <style>
+    :root { color: #0D1117; }
+    @media (prefers-color-scheme: dark) { :root { color: #F4F2EA; } }
+  </style>
+  <path d="M 207 579.4 Q 512 274.4 817 579.4" fill="none" stroke="currentColor" stroke-width="82" stroke-linecap="round" />
+  <circle cx="512" cy="644.4" r="108" fill="currentColor" />
+</svg>

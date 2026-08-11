@@ -1,0 +1,118 @@
+---
+title: What is MergeWatch?
+description: Open-source AI code review. Self-host on any cloud or use our managed SaaS.
+---
+
+MergeWatch is an open-source GitHub App that reviews pull requests using a multi-agent AI pipeline. Self-host it anywhere with Docker and Postgres, or let MergeWatch run it for you as a managed SaaS. You choose the LLM. There is no per-seat pricing. The project is licensed under AGPL v3.
+
+## How it compares
+
+| | **MergeWatch** | **Greptile** | **CodeRabbit** |
+|---|---|---|---|
+| **Source** | Open source (AGPL v3) | Closed source | Closed source |
+| **Hosting** | Self-hosted (Docker, any cloud) or SaaS | Enterprise self-host in AWS | Enterprise self-host only (500-seat minimum) |
+| **Pricing** | No per-seat pricing — pay your LLM provider | $30/seat/month + $1 per review over 50 | $24/seat/month Pro, $48/seat/month Pro Plus (annual) |
+| **Review approach** | Multi-agent parallel pipeline | Full-codebase graph + multi-hop analysis | AI review + 40+ linter integrations |
+| **Model control** | You choose the LLM provider and model | Bring-your-own-LLM (self-hosted) | Vendor-controlled (SaaS); configurable on self-hosted |
+| **Minimum commitment** | None | None stated | 500 seats for self-hosting |
+
+<Note>
+Competitor pricing and features were last verified in April 2026. Visit each vendor's website for current information. For a full breakdown across eight tools, see [Comparisons](/comparisons/overview).
+</Note>
+
+## Key differentiators
+
+<CardGroup cols={2}>
+  <Card title="No per-seat pricing" icon="users">
+    Install on your entire org. Costs scale with LLM usage, not headcount. A 200-person team pays the same platform cost as a 5-person team.
+  </Card>
+  <Card title="Your infrastructure, your data" icon="shield-halved">
+    Self-host MergeWatch with Docker on any cloud or bare metal. Your code stays on your servers. You see every log. MergeWatch (the company) never sees your code.
+  </Card>
+  <Card title="AGPL v3 — genuinely open source" icon="code-branch">
+    Read the source, audit it, fork it, contribute back. No open-core bait-and-switch. The AGPL v3 license means improvements must be shared, which keeps the project honest.
+  </Card>
+  <Card title="Multi-agent parallel review pipeline" icon="diagram-project">
+    Eight specialized agents — security, bugs, style, error handling, test coverage, comment accuracy, summary, and diagram — run in parallel. An orchestrator agent deduplicates overlapping findings and ranks them by severity before posting to GitHub.
+  </Card>
+</CardGroup>
+
+## The review pipeline at a glance
+
+<Note>
+Each agent is a separate LLM invocation running in parallel via `Promise.all()`. The orchestrator runs after all agents complete.
+</Note>
+
+```mermaid
+flowchart LR
+    PR["PR opened"] --> WH["WebhookHandler"]
+    WH -->|async invoke| RA["ReviewAgent"]
+    RA --> SEC["Security"]
+    RA --> BUG["Bug detection"]
+    RA --> STY["Style"]
+    RA --> ERR["Error handling"]
+    RA --> TST["Test coverage"]
+    RA --> CMT["Comment accuracy"]
+    RA --> SUM["Summary"]
+    RA --> DIA["Diagram"]
+    SEC --> ORC["Orchestrator"]
+    BUG --> ORC
+    STY --> ORC
+    ERR --> ORC
+    TST --> ORC
+    CMT --> ORC
+    SUM --> ORC
+    DIA --> ORC
+    ORC --> GH["GitHub comments"]
+```
+
+## Deployment models
+
+| Model | Who runs it? | Data stays where? | Setup |
+|---|---|---|---|
+| **Self-Hosted** | You | Your infrastructure | `docker-compose up` |
+| **Managed SaaS** | MergeWatch | MergeWatch AWS + your GitHub | GitHub App install |
+
+## Infrastructure
+
+### Self-Hosted Stack
+
+MergeWatch self-hosted runs as three Docker containers from a single `docker-compose.yml`:
+
+- **Express server** — port **3000**, receives GitHub webhooks and runs the review pipeline
+- **Next.js dashboard** — port **3001**, browser UI for reviews, repos, and settings
+- **PostgreSQL 16** — review state, repo config, installation data
+- **Your LLM provider** — Anthropic (default), LiteLLM (100+ providers), Amazon Bedrock, or Ollama
+
+No AWS account required (unless you choose Bedrock as your LLM provider).
+
+### SaaS Stack
+
+The managed SaaS runs on a serverless stack in MergeWatch's AWS account:
+
+- **AWS Lambda** — WebhookHandler (512 MB / 30 s) and ReviewAgent (1024 MB / 300 s)
+- **Amazon DynamoDB** — review state, repo config, user data
+- **API Gateway** — GitHub webhook receiver
+- **Amazon Bedrock** — Claude Sonnet (`us.anthropic.claude-sonnet-4-20250514-v1:0`)
+
+Configuration lives in a `.mergewatch.yml` file at the root of each repository. The [dashboard](/dashboard/overview) provides a UI for monitoring reviews, managing repos, and adjusting settings.
+
+<CardGroup cols={2}>
+  <Card title="Full comparisons" icon="scale-balanced" href="/comparisons/overview">
+    Side-by-side breakdown of MergeWatch against CodeRabbit, Greptile, GitHub Copilot code review, OpenAI Codex, Claude Code, Cursor BugBot, and Qodo Merge — sourced from each vendor's own docs.
+  </Card>
+  <Card title="Feature matrix" icon="list-check" href="/comparisons/feature-matrix">
+    Checkmark grid across ~25 features — licensing, deployment, LLM flexibility, review pipeline, triggers, and pricing.
+  </Card>
+</CardGroup>
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/overview/quickstart">
+    Install MergeWatch and get your first review in under 10 minutes.
+  </Card>
+  <Card title="How it works" icon="gears" href="/overview/how-it-works">
+    Detailed walkthrough of the review pipeline, agent architecture, and orchestration.
+  </Card>
+</CardGroup>

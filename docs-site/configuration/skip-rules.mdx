@@ -1,0 +1,163 @@
+---
+title: "Skip Rules"
+description: "Control which pull requests MergeWatch skips and why."
+---
+
+MergeWatch can deliberately skip pull requests that do not need review. Skipped PRs are logged with a reason and visible in the dashboard, but no review comments are posted to GitHub.
+
+## What "Skipped" means
+
+When a PR is skipped:
+
+- MergeWatch receives the webhook but **does not run any agents** against the diff.
+- The PR appears in the [dashboard Reviews table](/dashboard/reviews) with a status of **Skipped** and a reason explaining why.
+- **Skipped reviews do not count toward billing.** You are only billed for reviews that run agents against a diff.
+
+<Note>
+Skipping is not the same as ignoring files. When individual files match `ignorePatterns` but other files in the PR do not, the PR is still reviewed — the matching files are simply excluded from the diff sent to agents.
+</Note>
+
+## Auto-skip rules
+
+The following conditions cause MergeWatch to skip a pull request automatically:
+
+| Condition | Default behavior | Override |
+|---|---|---|
+| Draft PR | Skip | Set `rules.skipDrafts: false` |
+| PR exceeds `rules.maxFiles` (default 50) | Skip | Raise `rules.maxFiles` |
+| `rules.autoReview: false` and review not @mergewatch-triggered | Skip with a user-actionable check run (see [Auto-review off](#auto-review-off)) | Set `rules.autoReview: true` or mention `@mergewatch` |
+| PR has a label in `rules.ignoreLabels` (default: `skip-review`) | Skip | Remove the label or adjust `ignoreLabels` |
+| All changed files match built-in trivial patterns (lock files, `*.md`, `dist/**`, `build/**`, `node_modules/**`, minified files, CI/editor config) | Skip | Pass the PR through by changing a non-trivial file too |
+
+<Note>
+Bot comment loops are prevented at the webhook layer: `@mergewatch` mentions from senders of type `Bot` are ignored outright. This is orthogonal to skip rules — it applies to comment-triggered reviews regardless of your config.
+</Note>
+
+## Path-based exclusion
+
+MergeWatch has two path-filtering mechanisms, and it's important to understand they do different things:
+
+### Built-in PR-level skip (not configurable)
+
+If **every** changed file in a PR matches one of the built-in trivial patterns, the PR is skipped entirely with a reason like *"Only docs changed"* or *"Only lock files + config changed"*. This list is baked in — you can't add to it or remove from it.
+
+Built-in patterns include: lock files (`*.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Gemfile.lock`, `Pipfile.lock`, `poetry.lock`, `composer.lock`, `go.sum`), docs (`*.md`, `*.mdx`, `*.txt`, `*.rst`, `docs/**`, `CHANGELOG*`, `LICENSE*`), build artifacts (`*.min.js`, `*.min.css`, `*.map`, `dist/**`, `build/**`, `node_modules/**`), and editor/CI config (`.github/**`, `.vscode/**`, `tsconfig.json`, `renovate.json`, `.eslintrc*`, `.prettierrc*`, etc.).
+
+### File-level diff exclusion (configurable)
+
+`excludePatterns` (top-level) filters **individual files out of the diff** sent to agents. It does **not** cause PR-level skipping — the PR is still reviewed as long as at least one non-built-in-skipped file is present.
+
+```yaml .mergewatch.yml
+version: 1
+excludePatterns:
+  - "**/*.generated.ts"
+  - "**/fixtures/**"
+  - "vendor/**"
+  - "third_party/**"
+```
+
+<Note>
+`rules.ignorePatterns` is deprecated. New configurations should use top-level `excludePatterns` only — entries under `rules.ignorePatterns` are folded into `excludePatterns` at parse time and a one-time deprecation warning is emitted.
+</Note>
+
+Patterns use standard glob syntax relative to the repository root:
+
+| Pattern | Matches |
+|---|---|
+| `*.lock` | Any file ending in `.lock` at any depth |
+| `dist/**` | All files under the `dist/` directory |
+| `docs/*.md` | Markdown files directly in the `docs/` directory |
+| `**/*.generated.ts` | Generated TypeScript files at any depth |
+
+### Force-include with `includePatterns`
+
+Use `includePatterns` to opt PRs back into review when every changed file would otherwise be classified as built-in trivial. This operates at the PR-skip layer, **not** the diff-filter layer — it doesn't change what gets sent to agents on a PR that's already being reviewed.
+
+Common uses: review docs changes inside a security-sensitive directory, force review of a top-level `SECURITY.md`, or treat a critical config path as non-trivial.
+
+```yaml .mergewatch.yml
+version: 1
+includePatterns:
+  - "SECURITY.md"
+  - "docs/policy/**"
+  - ".github/workflows/deploy.yml"
+```
+
+A PR that touches only files matching `includePatterns` is reviewed even though it would otherwise be PR-skipped as docs-only or config-only.
+
+## Auto-review off
+
+When `rules.autoReview: false` is set, MergeWatch does not run the review pipeline on PR open or synchronize events — but it does post a **user-actionable check run** to the PR's merge box so the author knows reviews are intentionally off and how to trigger one:
+
+```text
+✓ Auto-review is disabled for this repository
+   Comment @mergewatch review on this PR to run a review.
+```
+
+The check run uses the `neutral` conclusion so it does not block branch protection. Mention-triggered reviews (`@mergewatch review`, `@mergewatch summary`) bypass the gate and post a normal review comment as usual.
+
+<Note>
+This user-actionable copy is specific to the `autoReviewOff` skip kind. Other rule-based skips (drafts, label-ignored, `maxFiles` exceeded, `reviewOnMention: false`) post a generic "Review skipped" check run with the detailed reason as summary — those are intentional skips that don't need user-facing instructions.
+</Note>
+
+## Label-based skip
+
+Use `ignoreLabels` to skip PRs that carry specific GitHub labels:
+
+```yaml .mergewatch.yml
+version: 1
+rules:
+  ignoreLabels:
+    - "skip-review"
+    - "dependencies"
+    - "automated"
+```
+
+When a PR has **any** label in the `ignoreLabels` list, it is skipped. This is useful for bot-generated PRs (such as Dependabot or Renovate) that you label consistently.
+
+## Skip log
+
+Every skipped PR is logged to DynamoDB with the following information:
+
+- **Repository** and **PR number**
+- **Skip reason** (e.g., "All files matched ignorePatterns", "Draft PR", "Label: skip-review")
+- **Timestamp**
+
+You can view the full skip log in the [dashboard](/dashboard/reviews):
+
+<Steps>
+<Step title="Open the Reviews table">
+  Navigate to **Dashboard > Reviews** and filter by status **Skipped**.
+</Step>
+<Step title="View the skip reason">
+  Click on any skipped review to open the detail drawer. The **Reason** field explains why the PR was skipped.
+</Step>
+</Steps>
+
+## Disabling configurable auto-skip
+
+If you want MergeWatch to review every PR regardless of draft status, labels, or file patterns, relax the configurable rules:
+
+```yaml .mergewatch.yml
+version: 1
+rules:
+  skipDrafts: false
+  ignoreLabels: []
+  maxFiles: 10000
+excludePatterns: []
+```
+
+<Warning>
+These settings relax the **configurable** rules. The built-in PR-level skip (lock-only, docs-only, build-artifacts-only) is not configurable — if every file in a PR is trivial, it is always skipped. Use `@mergewatch review` in a PR comment to force a review of a would-otherwise-be-skipped PR.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Review Behavior" icon="rotate" href="/configuration/review-behavior">
+    Understand when reviews trigger, status values, and re-triggering.
+  </Card>
+  <Card title="Custom Instructions" icon="pencil" href="/configuration/custom-instructions">
+    Inject project-specific guidance into agent prompts.
+  </Card>
+</CardGroup>

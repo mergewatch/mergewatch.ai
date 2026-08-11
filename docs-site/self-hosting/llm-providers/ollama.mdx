@@ -1,0 +1,128 @@
+---
+title: "Ollama"
+description: "Run models locally with Ollama — experimental, for air-gapped environments."
+---
+
+<Warning>
+**Ollama is experimental.** Review quality is significantly lower than Claude or GPT-4o. Use only if your environment cannot make external API calls.
+</Warning>
+
+[Ollama](https://ollama.com) lets you run open-source models locally. This provider is designed for **air-gapped environments** where no external API access is possible.
+
+## When to use Ollama
+
+- Your network has no outbound internet access
+- Security policy prohibits sending code to external LLM APIs
+- You want to evaluate MergeWatch without any API keys
+
+## Configuration
+
+Set these environment variables in your `.env` file or container environment:
+
+| Variable | Required | Value |
+| --- | --- | --- |
+| `LLM_PROVIDER` | Yes | `ollama` |
+| `LLM_MODEL` | Yes | Ollama model tag (e.g., `qwen2.5-coder:7b`, `llama3`). The Ollama provider has no built-in default — you must pick a model that you've pulled into the Ollama server. |
+| `OLLAMA_BASE_URL` | No | Ollama API endpoint (default: `http://localhost:11434`) |
+
+## Picking a model
+
+You must set `LLM_MODEL` to a model tag that you've pulled into your Ollama server. There is no built-in default. Suggested starting points:
+
+| Model | Best for | Approx VRAM |
+| --- | --- | --- |
+| `qwen2.5-coder:7b` | Code-focused reviews on an 8 GB GPU | ~6–8 GB |
+| `qwen2.5-coder:14b` | Better review quality if you have 16 GB VRAM | ~12–16 GB |
+| `llama3` | General-purpose baseline for quick smoke tests | ~4–8 GB |
+
+## Setup
+
+Pull the model before starting MergeWatch — MergeWatch will not pull it for you:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Verify the model is available:
+
+```bash
+ollama list
+```
+
+## Docker Compose setup
+
+Run Ollama as a sidecar alongside MergeWatch:
+
+```yaml docker-compose.yml
+services:
+  mergewatch:
+    image: ghcr.io/santthosh/mergewatch:latest
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen2.5-coder:7b
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  ollama-data:
+```
+
+<Note>
+After starting the stack for the first time, exec into the Ollama container to pull the model:
+
+```bash
+docker compose exec ollama ollama pull qwen2.5-coder:7b
+```
+</Note>
+
+## Hardware requirements
+
+| Component | Minimum | Recommended |
+| --- | --- | --- |
+| GPU VRAM | 8 GB | 16 GB |
+| System RAM | 16 GB | 32 GB |
+| Disk | 10 GB free | 20 GB free |
+
+<Tip>
+Larger models like `qwen2.5-coder:14b` produce better reviews but require 16 GB VRAM. If you have the hardware, set `LLM_MODEL=qwen2.5-coder:14b` for improved quality.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Air-gapped deployment" icon="lock" href="/self-hosting/platforms/air-gapped">
+  Full guide for deploying MergeWatch without internet access.
+</Card>
+
+<Card title="Anthropic (direct)" icon="bolt" href="/self-hosting/llm-providers/anthropic">
+  The recommended provider for the best review quality.
+</Card>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="gear" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+</CardGroup>

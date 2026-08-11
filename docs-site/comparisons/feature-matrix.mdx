@@ -1,0 +1,91 @@
+---
+title: Feature Matrix
+description: Side-by-side feature checklist for MergeWatch vs CodeRabbit, Greptile, GitHub Copilot code review, OpenAI Codex, Claude Code, Cursor BugBot, and Qodo Merge.
+---
+
+<Note>
+**Verified April 2026.** Cells cite each vendor's own docs. For narrative context, see the [comparisons overview](/comparisons/overview). For a single tool's detail page, click its header below.
+</Note>
+
+## Legend
+
+| Symbol | Meaning |
+|---|---|
+| ✓ | Yes, supported and publicly documented |
+| ✗ | No, not supported |
+| ◐ | Partial / conditional (see footnote) |
+| — | Not publicly documented by the vendor |
+
+## Matrix
+
+| Feature | [MergeWatch](/overview/introduction) | [CodeRabbit](/comparisons/coderabbit) | [Greptile](/comparisons/greptile) | [Copilot](/comparisons/github-copilot) | [Codex](/comparisons/openai-codex) | [Claude Code](/comparisons/claude-code) | [BugBot](/comparisons/cursor-bugbot) | [Qodo](/comparisons/qodo) |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| **Source & licensing** | | | | | | | | |
+| Open-source review logic | ✓ | ✗ | ✗ | ✗ | ◐<sup>1</sup> | ◐<sup>2</sup> | ✗ | ◐<sup>3</sup> |
+| AGPL / copyleft license | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓<sup>3</sup> |
+| Free program for OSS projects | ✓ | ✓ | ◐<sup>4</sup> | ✗ | ◐<sup>5</sup> | ✗ | ✗ | ◐<sup>6</sup> |
+| **Deployment** | | | | | | | | |
+| Self-host available | ✓ | ◐<sup>7</sup> | ◐<sup>8</sup> | ✗ | ✗ | ◐<sup>9</sup> | ✗ | ✓ |
+| No seat minimum to self-host | ✓ | ✗<sup>7</sup> | ◐<sup>8</sup> | — | — | ✓ | — | ✓ |
+| Air-gapped deployment | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **LLM flexibility** | | | | | | | | |
+| BYO LLM | ✓ | ◐<sup>7</sup> | ◐<sup>8</sup> | ✗ | ✗ | ✗ | ✗ | ◐<sup>3</sup> |
+| Anthropic (direct API) | ✓ | ✓<sup>7</sup> | — | — | ✗ | ✓ | — | ✓ |
+| AWS Bedrock | ✓ | ✓<sup>7</sup> | — | — | ✗ | ✓ | — | — |
+| Local / Ollama | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | — |
+| LiteLLM (100+ providers) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | — |
+| **Review pipeline** | | | | | | | | |
+| Multi-agent (publicly documented) | ✓ | ✓ | ✓ | — | ✓ | ✗<sup>10</sup> | — | ✓ |
+| Parallel agent execution | ✓ | — | ✓ | — | ✓ | ✗ | — | — |
+| Merge-readiness score (1–5) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | — |
+| Agent-authored PR detection | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| MCP server (outbound) | ✓ | — | ✓ | ✗ | ✗ | ✗ | ✗ | — |
+| Conventions auto-discovery | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
+| **Triggers & platforms** | | | | | | | | |
+| GitHub Checks re-run | ✓ | — | — | ✓ | — | — | — | — |
+| IDE integration | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| GitLab | ✗ | — | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Bitbucket / Azure DevOps | ✗ | — | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **Pricing** | | | | | | | | |
+| Free tier for private repos | ✓ | ✗<sup>11</sup> | ✗ | ✗ | ✗ | ✗ | ✗<sup>11</sup> | ✓<sup>6</sup> |
+| Per-seat pricing | ✗ | ✓ | ✓ | ✓ | ◐<sup>12</sup> | ✓ | ✓ | ✓ |
+| Usage-based pricing | ✓ | ✗ | ✓<sup>13</sup> | ◐<sup>14</sup> | ◐<sup>12</sup> | ◐<sup>15</sup> | ✗ | ◐<sup>16</sup> |
+
+## Footnotes
+
+1. **Codex** — the [Codex CLI is open source](https://developers.openai.com/codex/); the hosted Codex product is closed.
+2. **Claude Code** — the [`anthropics/claude-code-action`](https://code.claude.com/docs/en/github-actions) GitHub Action is open source; the Claude Code CLI/platform is a commercial Anthropic product.
+3. **Qodo** — the [PR-Agent core](https://github.com/qodo-ai/pr-agent) is AGPL-3.0 and supports OpenAI GPT, Claude, DeepSeek, and more. The hosted Qodo Merge product is a closed commercial layer on top.
+4. **Greptile** — OSS and startup discounts are available but not a free tier. ([greptile.com/pricing](https://www.greptile.com/pricing))
+5. **Codex** — "Codex for Open Source" program offers free API credits and ChatGPT Pro access by application.
+6. **Qodo** — Developer tier is $0/month with 30 free PRs/month promo and 75 credits. ([qodo.ai/pricing](https://www.qodo.ai/pricing/))
+7. **CodeRabbit** — self-host is available only to Enterprise customers with 500+ seats; on the self-hosted build, customers plug in OpenAI, Azure OpenAI, AWS Bedrock, or Anthropic directly. ([docs.coderabbit.ai/self-hosted/github](https://docs.coderabbit.ai/self-hosted/github))
+8. **Greptile** — self-hosting in AWS is available only on the Enterprise plan, which also unlocks BYO LLM. ([greptile.com/pricing](https://www.greptile.com/pricing))
+9. **Claude Code** — reviews run on GitHub-hosted runners via the Action; the Claude Code CLI itself runs locally. No "self-hosted control plane" in the MergeWatch sense.
+10. **Claude Code** — built as a single-agent loop with tool use and a configurable `--max-turns`; not a pre-built multi-agent review pipeline.
+11. **CodeRabbit / Cursor BugBot** — 14-day free Pro trials rather than a free tier.
+12. **Codex** — bundled with ChatGPT Plus/Pro/Business/Edu/Enterprise plans; API access is pay-as-you-go at standard OpenAI rates.
+13. **Greptile** — Cloud is $30/seat/month with 50 reviews included + $1 per additional review.
+14. **Copilot code review** — non-licensed org members access it through "premium requests" that bill separately.
+15. **Claude Code** — Action runs cost GitHub Actions minutes + Anthropic API tokens; subscription plans are per-seat.
+16. **Qodo Teams** — $30/user/month annual with 2,500 credits/user/month.
+
+## How to use this matrix
+
+- **If self-hosting is a requirement**, only MergeWatch and Qodo offer it without seat gates; CodeRabbit and Greptile have enterprise-only paths.
+- **If you need local/air-gapped inference**, MergeWatch (via Ollama) and Qodo (via on-prem/air-gapped deployments) are the only options listed.
+- **If you want a fully open-source review pipeline you can audit line-by-line**, only MergeWatch offers this under AGPL-3.0 across the full pipeline (Qodo's PR-Agent is AGPL but the hosted product is closed).
+- **If you already pay for Copilot, ChatGPT, or Claude**, the bundled review features are the cheapest marginal cost — but you lose multi-model choice and most have no self-host option.
+
+See the [comparisons overview](/comparisons/overview) for narrative context and caveats, or jump into a tool-by-tool page:
+
+<CardGroup cols={2}>
+  <Card title="vs CodeRabbit" href="/comparisons/coderabbit" />
+  <Card title="vs Greptile" href="/comparisons/greptile" />
+  <Card title="vs GitHub Copilot" href="/comparisons/github-copilot" />
+  <Card title="vs Claude Code" href="/comparisons/claude-code" />
+  <Card title="vs OpenAI Codex" href="/comparisons/openai-codex" />
+  <Card title="vs Cursor BugBot" href="/comparisons/cursor-bugbot" />
+  <Card title="vs Qodo Merge" href="/comparisons/qodo" />
+  <Card title="Other tools" href="/comparisons/other-tools" />
+</CardGroup>

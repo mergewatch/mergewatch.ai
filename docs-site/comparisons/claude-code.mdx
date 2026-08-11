@@ -1,0 +1,53 @@
+---
+title: MergeWatch vs Claude Code
+description: A pre-built multi-agent PR-review pipeline vs a single-agent CLI/Action you compose into a reviewer.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [claude.com/product/claude-code](https://claude.com/product/claude-code) and [code.claude.com/docs/en/github-actions](https://code.claude.com/docs/en/github-actions). Verify current details against those pages before purchasing.
+</Note>
+
+## At a glance
+
+| | MergeWatch | Claude Code |
+|---|---|---|
+| License | AGPL-3.0 (full pipeline) | Closed (CLI); `anthropics/claude-code-action` is open source |
+| Self-host | Docker + Postgres, any cloud | GitHub Actions runner (CLI runs locally) |
+| LLM | Bedrock, Anthropic, LiteLLM, Ollama | Anthropic only (direct, Bedrock, or Vertex) |
+| Agent architecture | 6 review + 2 utility agents, parallel | Single-agent loop with tool use; `--max-turns` configurable |
+| Pre-built review pipeline | Yes | No — you compose it via prompt + skills |
+| Merge-readiness score | Yes (1–5) | No |
+| Pricing | Usage-based via Stripe balance | Bundled in Claude Pro ($17/mo annual or $20/mo), Max 5x $100, Max 20x $200, Team $20/seat (5–150), Enterprise custom |
+
+## Claude Code
+
+- **What it is.** Anthropic's official CLI coding assistant. Ships a GitHub Action that enables Claude to respond to `@claude` mentions in PR/issue comments, implement features, fix bugs, and run automated PR reviews.
+- **Trigger model.** Terminal CLI; IDE extensions for VS Code, Cursor, Windsurf, JetBrains; desktop app for macOS/Linux/Windows; web and iOS; Slack; and the GitHub Action triggered by `@claude` mentions or any GitHub event (e.g. `pull_request: opened, synchronize`) with a custom `prompt`. Separate "GitHub Code Review" docs cover automatic per-PR reviews without a trigger.
+- **Where it runs.** The GitHub Action runs on GitHub-hosted runners. The Claude Code CLI "runs locally in your terminal and talks directly to model APIs without requiring a backend server or remote code index." ([claude.com/product/claude-code](https://claude.com/product/claude-code))
+- **LLM flexibility.** Locked to Anthropic's Claude models — defaults to Sonnet; Opus configurable via `--model`. Can call Claude via direct API, AWS Bedrock, or Google Vertex AI.
+- **Open source.** The `anthropics/claude-code-action` GitHub Action is open source. The Claude Code CLI/platform itself is a commercial Anthropic product.
+- **Agent architecture.** Built on the Claude Agent SDK; a single-agent loop with tool use (file edits, test running, etc.) and a configurable `--max-turns`. Not a pre-built multi-agent review pipeline — the user composes the review flow via prompt and skills.
+- **Pricing.** Claude Pro $17/month annual (or $20/month), Max 5x $100/month, Max 20x $200/month, Team $20/seat/month (5–150 seats), Enterprise custom, API pay-as-you-go. Action runs cost GitHub Actions minutes + Anthropic API tokens.
+- **Data handling.** "Talks directly to model APIs without requiring a backend server or remote code index." Retention/training terms governed by Anthropic's commercial terms.
+
+## Where MergeWatch differs
+
+- **Pre-built review pipeline, not a coding agent.** MergeWatch arrives opinionated: six specialized review agents (security, bug, style, error handling, test coverage, comment accuracy) plus two utility agents (summary, diagram), an orchestrator that deduplicates and ranks findings, and a merge-readiness score. Claude Code is an agent loop — you write the prompt that defines what review means.
+- **Parallel multi-agent execution.** MergeWatch runs agents concurrently (capped at 3 to stay within Bedrock TPM quotas) and merges their output. Claude Code runs a single loop with tool use.
+- **LLM flexibility.** MergeWatch isn't locked to Anthropic. Bedrock, Anthropic direct, LiteLLM (100+), and Ollama are all first-party.
+- **Merge-readiness score + agent-authored PR detection.** Both are native to MergeWatch. Claude Code has neither out of the box.
+- **Self-hostable control plane.** MergeWatch is a GitHub App + service you deploy. Claude Code's review runs on GitHub-hosted runners via the open-source Action, which is light but not a self-hosted platform.
+- **Conventions auto-discovery.** `AGENTS.md` / `CONVENTIONS.md` / `.mergewatch/conventions.md` are injected automatically. Claude Code relies on a `CLAUDE.md` convention file that you reference in prompts.
+
+## When Claude Code might be the better fit
+
+- You want Claude itself to *implement* fixes in PRs, not just review — the CLI + Action open up issue-to-PR automation that MergeWatch does not do.
+- You're an Anthropic-only shop and want the most direct integration with Claude's model family and roadmap.
+- You prefer a composable agent loop you can shape per repo via prompt + skills rather than an opinionated review pipeline.
+- You're already on a Claude Pro / Max / Team plan and want bundled review cost.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [How it works](/overview/how-it-works) — MergeWatch's agent pipeline in detail.

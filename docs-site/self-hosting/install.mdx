@@ -1,0 +1,188 @@
+---
+title: "Install"
+description: "Deploy MergeWatch on your infrastructure with Docker Compose."
+---
+
+MergeWatch self-hosted runs as a Docker container with a PostgreSQL sidecar. The entire setup takes about 10 minutes.
+
+<Note>
+Make sure you have completed the [Prerequisites](/self-hosting/prerequisites) before continuing.
+</Note>
+
+## Installation
+
+<Steps>
+
+<Step title="Clone the repository">
+
+```bash
+git clone https://github.com/mergewatch/mergewatch.ai.git
+cd mergewatch.ai
+```
+
+</Step>
+
+<Step title="Configure environment variables">
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required variables:
+
+```bash
+# ── GitHub App (required) ──────────────────────────────────────────────
+GITHUB_APP_ID=123456
+GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+GITHUB_WEBHOOK_SECRET=your-webhook-secret
+
+# ── GitHub OAuth (required for dashboard) ──────────────────────────────
+# Found under: GitHub App Settings → OAuth Credentials (same App, not a separate OAuth App)
+GITHUB_CLIENT_ID=Iv23ab...
+GITHUB_CLIENT_SECRET=your-oauth-client-secret
+
+# ── Dashboard auth (required for dashboard) ────────────────────────────
+# Generate with: openssl rand -base64 32
+NEXTAUTH_SECRET=random-32-byte-secret
+
+# ── LLM Provider (pick one — Anthropic is the default) ─────────────────
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+LLM_MODEL=claude-sonnet-4-20250514
+
+# Handled by docker-compose — no changes needed
+# DATABASE_URL=postgres://postgres:postgres@db:5432/mergewatch
+# PORT=3000
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_APP_ID` | Yes | The numeric ID of your GitHub App |
+| `GITHUB_PRIVATE_KEY` | Yes | RSA private key for authenticating as the GitHub App (or use `GITHUB_PRIVATE_KEY_FILE` to point to a `.pem` file) |
+| `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for validating webhook payloads |
+| `GITHUB_CLIENT_ID` | Yes | OAuth client ID from your GitHub App (used by the dashboard for sign-in) |
+| `GITHUB_CLIENT_SECRET` | Yes | OAuth client secret from your GitHub App |
+| `NEXTAUTH_SECRET` | Yes | Random 32-byte secret for signing dashboard sessions (generate with `openssl rand -base64 32`) |
+| `ANTHROPIC_API_KEY` | If `LLM_PROVIDER=anthropic` | API key from [console.anthropic.com](https://console.anthropic.com) |
+| `LLM_PROVIDER` | No | Default: `anthropic`. Options: `anthropic`, `litellm`, `bedrock`, `ollama` |
+| `LLM_MODEL` | Yes for `anthropic` / `litellm` / `ollama` | Model ID. For Anthropic, use a native model ID like `claude-sonnet-4-20250514` — the built-in defaults are Bedrock inference profile IDs and only work for `LLM_PROVIDER=bedrock`. |
+| `DASHBOARD_URL` | No | Public URL of the dashboard (e.g., `https://dashboard.example.com`). Used as the `NEXTAUTH_URL` for session callbacks. Defaults to `http://localhost:3001`. |
+| `DATABASE_URL` | No | Set automatically by docker-compose (Postgres sidecar) |
+| `PORT` | No | Default: `3000` |
+
+<Tip>
+To use a different LLM provider, set `LLM_PROVIDER` and the provider-specific variables. See [LLM Providers](/self-hosting/llm-providers/anthropic).
+</Tip>
+
+</Step>
+
+<Step title="Start MergeWatch">
+
+```bash
+docker compose up -d
+```
+
+This starts three containers:
+- **mergewatch** — the Express server on port **3000** (handles GitHub webhooks)
+- **dashboard** — the Next.js dashboard on port **3001** (browser UI)
+- **db** — PostgreSQL 16 database
+
+Database migrations run automatically on first startup.
+
+</Step>
+
+<Step title="Verify the deployment">
+
+Check that the server is running:
+
+```bash
+docker compose logs mergewatch
+```
+
+Look for this line in the output:
+
+```
+Server listening on port 3000
+```
+
+<Warning>
+If the server fails to start, check that your `.env` file has all required variables set correctly (`GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `NEXTAUTH_SECRET`, and your LLM provider key). See [Troubleshooting](/reference/troubleshooting) for common issues.
+</Warning>
+
+</Step>
+
+<Step title="Register your webhook URL">
+
+MergeWatch listens for GitHub webhooks at `/webhook` on port 3000. Configure your GitHub App's webhook URL to:
+
+```
+https://your-domain.com/webhook
+```
+
+Set the webhook URL in **GitHub Settings > Developer settings > GitHub Apps > Your App > Webhook URL**.
+
+<Note>
+**Running locally?** Use [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose port 3000 to the internet so GitHub can deliver webhooks.
+
+```bash
+ngrok http 3000
+```
+
+Use the generated `https://...ngrok-free.app/webhook` URL as your webhook URL.
+</Note>
+
+</Step>
+
+<Step title="Install the GitHub App on your repositories">
+
+1. Go to **GitHub Settings > Developer settings > GitHub Apps**
+2. Find your MergeWatch app and click **Install App**
+3. Choose **All repositories** or select specific ones
+4. Click **Install**
+
+<Tip>
+Start with a single test repository. You can add more repos at any time from **GitHub Settings > Applications > MergeWatch > Configure**.
+</Tip>
+
+For detailed guidance, see [Organization install](/github-app/org-install) or [Personal install](/github-app/personal-install).
+
+</Step>
+
+</Steps>
+
+## Your first pull request
+
+Open a pull request against any installed repository. MergeWatch picks it up automatically.
+
+**What to expect:**
+
+- The Express server receives the `pull_request.opened` webhook event
+- The review pipeline fetches the diff and sends it to your LLM provider
+- A review comment appears on the pull request within **15--50 seconds** (typical range; larger diffs and cold starts take longer)
+
+The review includes:
+- A summary of the changes
+- File-by-file findings posted as inline review comments on changed lines
+- A **1–5 merge readiness score** indicating how safe the PR is to merge
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="LLM Providers" icon="brain" href="/self-hosting/llm-providers/anthropic">
+  Switch from Anthropic to LiteLLM, Bedrock, or Ollama.
+</Card>
+
+<Card title="Platform Guides" icon="cloud" href="/self-hosting/platforms/google-cloud-run">
+  Deploy to Google Cloud Run, AWS ECS, Azure, Fly.io, Railway, or bare metal.
+</Card>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  Keep MergeWatch up to date with the latest features and fixes.
+</Card>
+
+</CardGroup>

@@ -1,0 +1,209 @@
+---
+title: "Google Cloud Run"
+description: "Deploy MergeWatch to Google Cloud Run with Cloud SQL for Postgres."
+---
+
+Google Cloud Run is a fully managed container platform that scales to zero when idle. This makes it a cost-effective choice for teams with sporadic pull request activity.
+
+## Overview
+
+This guide walks you through deploying the MergeWatch container image to Cloud Run, connecting it to a Cloud SQL PostgreSQL instance, and configuring your GitHub App webhook to point at the Cloud Run service URL.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Install the Google Cloud CLI">
+
+Install and authenticate the `gcloud` CLI.
+
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+```
+
+</Step>
+
+<Step title="Enable required APIs">
+
+```bash
+gcloud services enable run.googleapis.com sqladmin.googleapis.com
+```
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+You need the following values from your GitHub App settings:
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider (e.g. `anthropic`, `openai`, `bedrock`). For the default Anthropic provider, you also need `ANTHROPIC_API_KEY`.
+
+</Step>
+
+</Steps>
+
+## Deploy to Cloud Run
+
+<Steps>
+
+<Step title="Create the Cloud Run service">
+
+Deploy the MergeWatch container image with all required environment variables.
+
+<CodeGroup>
+
+```bash Single command
+gcloud run deploy mergewatch \
+  --image ghcr.io/santthosh/mergewatch:latest \
+  --region us-central1 \
+  --port 3000 \
+  --allow-unauthenticated \
+  --set-env-vars "GITHUB_APP_ID=YOUR_APP_ID" \
+  --set-env-vars "GITHUB_PRIVATE_KEY=YOUR_PRIVATE_KEY" \
+  --set-env-vars "GITHUB_WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET" \
+  --set-env-vars "LLM_PROVIDER=anthropic" \
+  --set-env-vars "ANTHROPIC_API_KEY=YOUR_ANTHROPIC_KEY" \
+  --set-env-vars "DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/mergewatch"
+```
+
+```bash Using Secret Manager (recommended)
+# Store secrets first
+echo -n "YOUR_PRIVATE_KEY" | gcloud secrets create mergewatch-github-pk --data-file=-
+echo -n "YOUR_WEBHOOK_SECRET" | gcloud secrets create mergewatch-webhook-secret --data-file=-
+echo -n "YOUR_ANTHROPIC_KEY" | gcloud secrets create mergewatch-anthropic-key --data-file=-
+
+# Deploy with secret references
+gcloud run deploy mergewatch \
+  --image ghcr.io/santthosh/mergewatch:latest \
+  --region us-central1 \
+  --port 3000 \
+  --allow-unauthenticated \
+  --set-env-vars "GITHUB_APP_ID=YOUR_APP_ID" \
+  --set-env-vars "LLM_PROVIDER=anthropic" \
+  --set-secrets "GITHUB_PRIVATE_KEY=mergewatch-github-pk:latest" \
+  --set-secrets "GITHUB_WEBHOOK_SECRET=mergewatch-webhook-secret:latest" \
+  --set-secrets "ANTHROPIC_API_KEY=mergewatch-anthropic-key:latest" \
+  --set-env-vars "DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/mergewatch"
+```
+
+</CodeGroup>
+
+<Tip>
+Cloud Run scales to zero when there are no incoming requests. You only pay for the time MergeWatch is actively processing webhooks — ideal for teams with sporadic PR activity.
+</Tip>
+
+</Step>
+
+<Step title="Note the service URL">
+
+After deployment, `gcloud` prints the service URL:
+
+```text
+Service URL: https://mergewatch-abc123-uc.a.run.app
+```
+
+Save this URL — you will need it to configure the webhook.
+
+</Step>
+
+</Steps>
+
+## Set up Postgres
+
+MergeWatch requires a PostgreSQL database to store installation and review data.
+
+<CardGroup cols={2}>
+
+<Card title="Cloud SQL (recommended)" icon="database">
+  Fully managed PostgreSQL with automatic backups, high availability, and private networking to Cloud Run.
+</Card>
+
+<Card title="AlloyDB" icon="layer-group">
+  PostgreSQL-compatible managed database for high-throughput workloads. Use if you need advanced analytics or larger scale.
+</Card>
+
+</CardGroup>
+
+<Steps>
+
+<Step title="Create a Cloud SQL instance">
+
+```bash
+gcloud sql instances create mergewatch-db \
+  --database-version=POSTGRES_15 \
+  --tier=db-f1-micro \
+  --region=us-central1
+
+gcloud sql databases create mergewatch \
+  --instance=mergewatch-db
+
+gcloud sql users create mergewatch \
+  --instance=mergewatch-db \
+  --password=YOUR_DB_PASSWORD
+```
+
+</Step>
+
+<Step title="Connect Cloud Run to Cloud SQL">
+
+Add the Cloud SQL connection to your Cloud Run service:
+
+```bash
+gcloud run services update mergewatch \
+  --add-cloudsql-instances YOUR_PROJECT:us-central1:mergewatch-db \
+  --update-env-vars "DATABASE_URL=postgresql://mergewatch:YOUR_DB_PASSWORD@/mergewatch?host=/cloudsql/YOUR_PROJECT:us-central1:mergewatch-db"
+```
+
+<Note>
+Cloud Run connects to Cloud SQL over a Unix socket, so the `DATABASE_URL` uses the `/cloudsql/` prefix instead of a TCP host.
+</Note>
+
+</Step>
+
+</Steps>
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub App to point at your Cloud Run service.
+
+```text
+https://mergewatch-abc123-uc.a.run.app/webhook
+```
+
+The webhook URL is your **Cloud Run service URL** followed by `/webhook`.
+
+<Warning>
+The service must be configured with `--allow-unauthenticated` so GitHub can deliver webhook payloads. MergeWatch validates every payload using `GITHUB_WEBHOOK_SECRET` — unauthenticated requests without a valid signature are rejected.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>

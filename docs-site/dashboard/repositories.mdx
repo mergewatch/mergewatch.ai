@@ -1,0 +1,67 @@
+---
+title: "Repositories"
+description: "Manage which repositories MergeWatch actively reviews."
+---
+
+The Repositories page shows every repository in the current GitHub App installation. Use it to enable or pause reviews without changing the GitHub App's scope.
+
+## Two-layer model
+
+Repository access in MergeWatch works in two layers:
+
+<Steps>
+<Step title="GitHub App scope">
+  Which repositories the GitHub App can access. Managed on GitHub under **Settings > Applications > MergeWatch > Configure**. This controls whether MergeWatch receives webhook events for a repo.
+</Step>
+<Step title="MergeWatch enabled/disabled">
+  Whether MergeWatch actively reviews PRs in a repo. Managed on this page. A repo can be in scope on GitHub but paused in MergeWatch — webhooks arrive but are silently ignored.
+</Step>
+</Steps>
+
+<Tip>
+Use the MergeWatch toggle to pause reviews temporarily without removing the repo from the GitHub App. This is useful during large migrations, hackathons, or periods of high churn where AI review noise is not helpful.
+</Tip>
+
+## Summary strip
+
+Above the card grid, a summary strip shows:
+
+**X connected** / **Y active** / **Z paused**
+
+These counts update in real time as you toggle repositories.
+
+## Card states
+
+Each repository is displayed as a card with one of three states:
+
+| State | Indicator | Meaning |
+|---|---|---|
+| **Active** | Green dot | Receiving webhooks and actively reviewing PRs |
+| **Paused** | Gray dot | In GitHub App scope but reviews are disabled — webhooks are silently ignored |
+| **No reviews yet** | Empty state | Active but no pull requests have been opened since installation |
+
+## Toggling a repo
+
+Click the toggle on any repository card to switch between Active and Paused. The change updates the enabled state in DynamoDB immediately. The UI uses optimistic updates with automatic rollback if the API call fails.
+
+<Warning>
+Only GitHub org owners can toggle repositories. Non-admin users see the toggles in a disabled state.
+</Warning>
+
+## Configure on GitHub
+
+The **Configure on GitHub** button opens the GitHub App installation settings page where you can add or remove repositories from the App's scope. This controls the first layer — which repos MergeWatch can access at all.
+
+<Note>
+Only GitHub org admins can modify the App's repository scope on GitHub. This is a GitHub-level permission, not a MergeWatch restriction.
+</Note>
+
+## .mergewatch.yml badge
+
+Repository cards display a badge when a `.mergewatch.yml` configuration file is detected at the root of the repo's default branch. The file is detected on the first pull request webhook after installation.
+
+Click the badge to navigate to the [.mergewatch.yml reference](/configuration/mergewatch-yml) documentation.
+
+<Tip>
+If you add a `.mergewatch.yml` file to a repo that already has reviews, the badge appears after the next PR is opened. MergeWatch does not scan repos proactively — detection happens during webhook processing.
+</Tip>

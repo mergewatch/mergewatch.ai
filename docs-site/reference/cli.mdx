@@ -1,0 +1,91 @@
+---
+title: "Commands Reference"
+description: "Commands for managing MergeWatch: Docker Compose for self-hosted, pnpm and SAM CLI for SaaS stack deployments."
+---
+
+<Info>
+There is no standalone `mergewatch` CLI (`npx mergewatch@latest`). MergeWatch is managed with Docker Compose for self-hosted deployments and with `pnpm` + `sam` scripts for deploying the SaaS stack from the [mergewatch.ai repo](https://github.com/mergewatch/mergewatch.ai).
+</Info>
+
+## Self-Hosted: Docker Commands
+
+Self-hosted MergeWatch runs from a single `docker-compose.yml` that starts the server, Postgres, and the dashboard.
+
+| Command | Description |
+| --- | --- |
+| `docker compose up -d` | Start MergeWatch, Postgres, and the dashboard in the background |
+| `docker compose down` | Stop and remove all containers |
+| `docker compose pull` | Pull the latest container images |
+| `docker compose logs -f mergewatch` | Tail the MergeWatch server logs |
+| `docker compose logs -f dashboard` | Tail the dashboard logs |
+| `docker compose logs -f postgres` | Tail the Postgres logs |
+| `docker compose ps` | Show running container status |
+| `docker compose restart mergewatch` | Restart the MergeWatch server |
+
+<Tip>
+Use `docker compose pull && docker compose up -d` to upgrade to the latest version. Docker recreates only containers whose images have changed.
+</Tip>
+
+---
+
+## SaaS / AWS: Repository Scripts
+
+Deploying the AWS stack (API Gateway + Lambda + DynamoDB + Bedrock) is done by cloning [mergewatch.ai](https://github.com/mergewatch/mergewatch.ai) and running the scripts defined in `package.json`.
+
+```bash
+git clone https://github.com/mergewatch/mergewatch.ai.git
+cd mergewatch.ai
+pnpm install
+```
+
+### Deploy scripts
+
+| Script | What it does |
+| --- | --- |
+| `pnpm run deploy` | Build and deploy the stack (defaults to `prod` stage) via `scripts/deploy.sh` |
+| `pnpm run deploy:dev` | Deploy to the `dev` stage |
+| `pnpm run deploy:staging` | Deploy to the `staging` stage |
+| `pnpm run deploy:guided` | Run `sam deploy --guided` for first-time setup |
+| `pnpm run setup-ssm` | Seed SSM parameters for GitHub App credentials and webhook secret |
+| `pnpm run setup-web` | Seed SSM parameters consumed by the dashboard |
+
+### Log tailing (SaaS)
+
+| Script | What it does |
+| --- | --- |
+| `pnpm run logs:webhook` | Tail the Webhook Lambda logs via `sam logs` |
+| `pnpm run logs:agent` | Tail the ReviewAgent Lambda logs via `sam logs` |
+
+For ad-hoc filtering, use the AWS SAM CLI directly:
+
+```bash
+sam logs --name mergewatch-review-agent-prod --stack-name mergewatch --tail --filter "ERROR"
+sam logs --name mergewatch-webhook-prod --stack-name mergewatch --tail --start-time "5min ago"
+```
+
+### Development scripts
+
+| Script | What it does |
+| --- | --- |
+| `pnpm dev` | Run all packages in watch mode (turbo) |
+| `pnpm build` | Build all packages |
+| `pnpm typecheck` | Typecheck all packages |
+| `pnpm test` | Run the full test suite |
+| `pnpm web:dev` | Start the dashboard locally (Next.js) |
+
+<Tip>
+The repository requires **Node.js ≥ 20** and **pnpm 10.23.0** (pinned via `packageManager` in `package.json`).
+</Tip>
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosted Install" icon="download" href="/self-hosting/install">
+    Set up MergeWatch with Docker Compose.
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/reference/env-vars">
+    See all environment variables for both deployment modes.
+  </Card>
+</CardGroup>

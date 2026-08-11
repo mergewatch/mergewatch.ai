@@ -1,0 +1,63 @@
+---
+title: "Data Residency"
+description: "Where your data goes when using MergeWatch SaaS."
+---
+
+This page explains what data MergeWatch SaaS processes, where it is stored, and what it never sees. If your compliance requirements demand full data isolation, consider [self-hosting](/self-hosting/overview).
+
+## How PR data flows
+
+When a pull request triggers a review, the PR diff is fetched by the **ReviewAgent** Lambda function running in MergeWatch's AWS account (`us-east-1`). The diff is held in-memory for the duration of the review and is **not persisted** to disk, S3, or any database after the review completes.
+
+## Bedrock model calls
+
+All LLM inference runs on Amazon Bedrock within MergeWatch's AWS account. The primary model is `us.anthropic.claude-sonnet-4-20250514-v1:0` for review agents. Lighter tasks such as summary generation and diagram creation use `us.anthropic.claude-haiku-4-5-20251001-v1:0` for cost efficiency. Model inputs (diff content, agent prompts) and outputs (review findings) exist only for the duration of the API call and are not logged or stored by MergeWatch beyond the review lifecycle.
+
+## What is stored
+
+**Review metadata** is written to DynamoDB in MergeWatch's AWS account. This includes:
+
+- Timestamps (review started, completed)
+- Repository name and PR number
+- Merge-readiness score
+- Per-agent latency data
+- Settings snapshot (configuration used for the review)
+- GitHub reactions data
+- User feedback (thumbs up/down)
+- Review status (success, error, skipped)
+
+Review metadata has a **90-day TTL** and is automatically deleted after expiration.
+
+## Credential storage
+
+GitHub App credentials (private key, webhook secret, app ID) are stored as **SecureString** parameters in AWS SSM Parameter Store within MergeWatch's AWS account, encrypted with AWS KMS.
+
+## Configuration file
+
+Your `.mergewatch.yml` configuration file stays in your GitHub repository. MergeWatch reads it at review time via the GitHub API but never copies or stores it.
+
+## What MergeWatch sees vs. does not see
+
+| Data | MergeWatch sees? | Details |
+|---|---|---|
+| **PR diff** | Temporarily | In-memory during review only. Not persisted. |
+| **Source code (full repo)** | No | Only the diff for the PR under review is fetched. |
+| **Review metadata** | Yes | Stored in DynamoDB with 90-day TTL. |
+| **GitHub credentials** | Yes | Stored encrypted in SSM Parameter Store. |
+| **Your `.mergewatch.yml`** | Temporarily | Read at review time via GitHub API. Not copied. |
+| **Secrets in your code** | No | MergeWatch does not scan or store secrets. If a secret appears in a diff, it is processed in-memory like any other diff content and not persisted. |
+| **Review feedback** | Yes | Thumbs up/down feedback stored with the review record. |
+| **Other repos / branches** | No | Only the PR's head and base branches are diffed. |
+
+## Maximum data isolation
+
+For environments where no code may leave your infrastructure — even transiently — use the **self-hosted** deployment. In self-hosted mode, all processing happens on your own infrastructure with your own LLM provider. No data is sent to MergeWatch.
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosting Overview" icon="server" href="/self-hosting/overview">
+    Deploy MergeWatch on your own infrastructure for full data isolation.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/deployment/architecture">
+    See how SaaS and self-hosted architectures compare side by side.
+  </Card>
+</CardGroup>

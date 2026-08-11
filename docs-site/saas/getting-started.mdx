@@ -1,0 +1,58 @@
+---
+title: "Getting Started with MergeWatch SaaS"
+description: "Install the MergeWatch GitHub App and get AI code reviews in minutes — no infrastructure required."
+---
+
+MergeWatch SaaS is the fastest way to add AI code reviews to your pull requests. No AWS account, no Docker, no configuration files. Install the GitHub App and your next PR gets reviewed automatically.
+
+## Setup in four steps
+
+<Steps>
+  <Step title="Go to mergewatch.ai">
+    Visit [mergewatch.ai](https://mergewatch.ai) and click **Get Started**. Sign in with your GitHub account.
+  </Step>
+  <Step title="Install the GitHub App">
+    Authorize the MergeWatch GitHub App for your account or organization. You can choose **All repositories** or select specific ones.
+  </Step>
+  <Step title="Select repositories">
+    In the MergeWatch dashboard, confirm which repositories should receive AI reviews. You can change this at any time.
+  </Step>
+  <Step title="Open a pull request">
+    Your first review fires automatically on the next PR. MergeWatch posts inline comments, a summary, and a merge-readiness score directly on the pull request.
+  </Step>
+</Steps>
+
+## Free tier
+
+Your first **5 PR reviews** are free (lifetime, per installation) — no credit card required. After that, MergeWatch uses a prepaid credits model: add a card, top up a balance, and each review deducts its actual cost. See [Billing & Pricing](/saas/billing) for the cost formula and auto-reload options.
+
+## What happens when a PR is opened
+
+When you open or update a pull request, the following happens in seconds:
+
+1. GitHub sends a `pull_request` webhook to MergeWatch's API Gateway.
+2. The **WebhookHandler** Lambda (512 MB, 30s timeout) validates the HMAC signature and invokes the **ReviewAgent** asynchronously.
+3. The **ReviewAgent** Lambda (1024 MB, 300s timeout) fetches the diff via the GitHub API.
+4. Eight specialized agents — **security**, **bugs**, **style**, **error handling**, **test coverage**, **comment accuracy**, **summary**, and **diagram** — run in parallel via `Promise.all()`, each calling Amazon Bedrock (`us.anthropic.claude-sonnet-4-20250514-v1:0`).
+5. Results are deduplicated, ranked by severity, and posted as inline review comments and a summary check run on your PR.
+
+<Note>
+PR diffs are processed in-memory and are **not persisted** after the review completes. See [Data Residency](/saas/data-residency) for details.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Billing & Pricing" icon="credit-card" href="/saas/billing">
+    Free tier details, per-PR pricing, and spend caps.
+  </Card>
+  <Card title="Data Residency" icon="shield-halved" href="/saas/data-residency">
+    Where your data goes and what MergeWatch can and cannot see.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/mergewatch-yml">
+    Customize review behavior with a `.mergewatch.yml` file in your repo.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/deployment/architecture">
+    Detailed architecture diagrams for both SaaS and self-hosted modes.
+  </Card>
+</CardGroup>

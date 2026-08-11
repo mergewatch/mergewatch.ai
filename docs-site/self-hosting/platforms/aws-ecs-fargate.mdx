@@ -1,0 +1,268 @@
+---
+title: "AWS ECS / Fargate"
+description: "Deploy MergeWatch to AWS ECS with Fargate for serverless containers."
+---
+
+AWS ECS with Fargate runs MergeWatch as a serverless container task — no EC2 instances to manage. Choose this option when you want MergeWatch on AWS but need VPC networking, private subnets, or predictable billing instead of the Lambda-based deployment.
+
+## Overview
+
+This guide covers creating an ECS service running the MergeWatch container on Fargate, connecting it to an RDS PostgreSQL instance, and exposing the webhook endpoint through an Application Load Balancer (ALB) or API Gateway.
+
+## Prerequisites
+
+<Steps>
+
+<Step title="Install the AWS CLI">
+
+```bash
+aws --version   # requires 2.0.0+
+aws sts get-caller-identity   # confirm credentials
+```
+
+</Step>
+
+<Step title="Set up networking">
+
+You need a VPC with at least two subnets (public for the ALB, private for the Fargate tasks). If you do not have one, use the default VPC or create one with:
+
+```bash
+aws ec2 create-default-vpc
+```
+
+</Step>
+
+<Step title="Gather your GitHub App credentials">
+
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID from the GitHub App settings page |
+| `GITHUB_PRIVATE_KEY` | PEM-formatted private key generated for the App |
+| `GITHUB_WEBHOOK_SECRET` | Secret used to validate incoming webhook payloads |
+
+</Step>
+
+<Step title="Choose an LLM provider">
+
+Set `LLM_PROVIDER` to your preferred provider. If using `bedrock`, no static API key is needed — attach Bedrock permissions to the ECS task role instead.
+
+</Step>
+
+</Steps>
+
+## Deploy to ECS / Fargate
+
+<Steps>
+
+<Step title="Create an ECS cluster">
+
+```bash
+aws ecs create-cluster --cluster-name mergewatch
+```
+
+</Step>
+
+<Step title="Store secrets in AWS Secrets Manager">
+
+```bash
+aws secretsmanager create-secret \
+  --name mergewatch/github-private-key \
+  --secret-string "YOUR_PRIVATE_KEY"
+
+aws secretsmanager create-secret \
+  --name mergewatch/github-webhook-secret \
+  --secret-string "YOUR_WEBHOOK_SECRET"
+
+aws secretsmanager create-secret \
+  --name mergewatch/anthropic-api-key \
+  --secret-string "YOUR_ANTHROPIC_KEY"
+```
+
+</Step>
+
+<Step title="Create the task definition">
+
+Create a file called `task-definition.json`:
+
+```json
+{
+  "family": "mergewatch",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT:role/mergewatchTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "mergewatch",
+      "image": "ghcr.io/santthosh/mergewatch:latest",
+      "portMappings": [
+        { "containerPort": 3000, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "GITHUB_APP_ID", "value": "YOUR_APP_ID" },
+        { "name": "LLM_PROVIDER", "value": "anthropic" },
+        { "name": "DATABASE_URL", "value": "postgresql://USER:PASSWORD@rds-host:5432/mergewatch" }
+      ],
+      "secrets": [
+        { "name": "GITHUB_PRIVATE_KEY", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:mergewatch/github-private-key" },
+        { "name": "GITHUB_WEBHOOK_SECRET", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:mergewatch/github-webhook-secret" },
+        { "name": "ANTHROPIC_API_KEY", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:mergewatch/anthropic-api-key" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mergewatch",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+Register the task definition:
+
+```bash
+aws ecs register-task-definition --cli-input-json file://task-definition.json
+```
+
+</Step>
+
+<Step title="Create the ECS service">
+
+```bash
+aws ecs create-service \
+  --cluster mergewatch \
+  --service-name mergewatch \
+  --task-definition mergewatch \
+  --desired-count 1 \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx],assignPublicIp=ENABLED}"
+```
+
+</Step>
+
+<Step title="Set up an Application Load Balancer">
+
+Create an ALB in your public subnets and add a target group pointing to the ECS service on port 3000. The ALB provides a stable HTTPS endpoint for GitHub webhooks.
+
+```bash
+# Create the ALB
+aws elbv2 create-load-balancer \
+  --name mergewatch-alb \
+  --subnets subnet-aaa subnet-bbb \
+  --security-groups sg-xxx
+
+# Create a target group
+aws elbv2 create-target-group \
+  --name mergewatch-tg \
+  --protocol HTTP \
+  --port 3000 \
+  --vpc-id vpc-xxx \
+  --target-type ip \
+  --health-check-path /webhook
+
+# Create an HTTPS listener (requires an ACM certificate)
+aws elbv2 create-listener \
+  --load-balancer-arn ALB_ARN \
+  --protocol HTTPS \
+  --port 443 \
+  --certificates CertificateArn=ACM_CERT_ARN \
+  --default-actions Type=forward,TargetGroupArn=TG_ARN
+```
+
+</Step>
+
+</Steps>
+
+<Note>
+If using `LLM_PROVIDER=bedrock`, you do not need an `ANTHROPIC_API_KEY`. Instead, attach an IAM policy with `bedrock:InvokeModel` permission to the ECS task role (`mergewatchTaskRole`). The SDK uses the task role credentials automatically — no static keys required.
+</Note>
+
+## Set up Postgres
+
+<CardGroup cols={2}>
+
+<Card title="Amazon RDS (recommended)" icon="database">
+  Managed PostgreSQL with automated backups, Multi-AZ failover, and Performance Insights.
+</Card>
+
+<Card title="Aurora Serverless v2" icon="bolt">
+  Auto-scaling PostgreSQL-compatible database. Scales down to 0.5 ACU during idle periods.
+</Card>
+
+</CardGroup>
+
+<Steps>
+
+<Step title="Create an RDS instance">
+
+```bash
+aws rds create-db-instance \
+  --db-instance-identifier mergewatch-db \
+  --db-instance-class db.t4g.micro \
+  --engine postgres \
+  --engine-version 15 \
+  --master-username mergewatch \
+  --master-user-password YOUR_DB_PASSWORD \
+  --allocated-storage 20 \
+  --vpc-security-group-ids sg-xxx
+```
+
+</Step>
+
+<Step title="Create the database">
+
+```bash
+psql -h mergewatch-db.xxx.us-east-1.rds.amazonaws.com \
+  -U mergewatch -c "CREATE DATABASE mergewatch;"
+```
+
+Update the `DATABASE_URL` in your task definition to point to the RDS endpoint.
+
+</Step>
+
+</Steps>
+
+<Warning>
+Place the RDS instance in the same VPC and security group as the Fargate tasks. Do not expose the database to the public internet.
+</Warning>
+
+## Configure the webhook URL
+
+Set the webhook URL on your GitHub App to the ALB DNS name (or your custom domain) followed by `/webhook`:
+
+```text
+https://mergewatch-alb-123456.us-east-1.elb.amazonaws.com/webhook
+```
+
+If you use API Gateway instead of an ALB, the URL will look like:
+
+```text
+https://abc123.execute-api.us-east-1.amazonaws.com/webhook
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Configure review behavior" icon="sliders" href="/configuration/review-behavior">
+  Tune sensitivity, ignored paths, and review focus areas.
+</Card>
+
+<Card title="Environment variables" icon="key" href="/reference/env-vars">
+  Full list of supported environment variables.
+</Card>
+
+<Card title="Troubleshooting" icon="bug" href="/reference/troubleshooting">
+  Common issues and how to fix them.
+</Card>
+
+<Card title="Upgrading" icon="arrow-up" href="/self-hosting/upgrading">
+  How to update MergeWatch to the latest version.
+</Card>
+
+</CardGroup>

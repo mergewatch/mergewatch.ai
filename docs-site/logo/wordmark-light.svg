@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="130 40 790 100" width="790" height="100" role="img" aria-label="Mergewatch">
+  <defs>
+    <style type="text/css">
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@800&amp;display=swap');
+      .wm { font-family: 'Nunito', system-ui, -apple-system, sans-serif; font-weight: 800; letter-spacing: -0.02em; fill: #0D1117; }
+      .wm-dim { opacity: 0.55; }
+    </style>
+  </defs>
+  <g transform="translate(120 21.599999999999994) scale(0.13359375)">
+    <path d="M 207 579.4 Q 512 274.4 817 579.4" fill="none" stroke="#0D1117" stroke-width="82" stroke-linecap="round" />
+    <circle cx="512" cy="644.4" r="108" fill="#0D1117" />
+  </g>
+  <text x="289.2" y="119.376" class="wm" font-size="86.39999999999999">mergewatch<tspan class="wm-dim">.ai</tspan></text>
+</svg>

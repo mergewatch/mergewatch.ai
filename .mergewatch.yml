@@ -37,6 +37,14 @@ rules:
   ignoreLabels:
     - skip-review
 
+# Force-include paths that would otherwise be PR-level skipped. The published
+# docs under docs-site/ are all *.mdx, so docs-only PRs would hit the built-in
+# trivial-paths skip. This opts them back into review so doc accuracy gets the
+# same checks as code. Operates at the PR-skip layer, not the diff filter, and
+# deliberately does not cover docs/ — those are internal planning notes.
+includePatterns:
+  - "docs-site/**"
+
 # File patterns to exclude from the diff sent to agents.
 excludePatterns:
   - "**/*.lock"

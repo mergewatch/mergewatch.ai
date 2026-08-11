@@ -1,0 +1,69 @@
+---
+title: "Prerequisites"
+description: "Everything you need before self-hosting MergeWatch."
+---
+
+Complete every item below before running the install. The [preflight check](#preflight-check) at the bottom can verify the essentials in one shot.
+
+## Required tools
+
+You only need Docker. No cloud CLIs, no Node.js, no build tools.
+
+| Tool | Minimum version | Install |
+|---|---|---|
+| **Docker** | 24.0.0 | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
+| **Docker Compose** | 2.20.0 | Included with Docker Desktop. For Linux, see [docs.docker.com/compose/install](https://docs.docker.com/compose/install/) |
+
+<Tip>
+Docker Compose v2 is a plugin built into Docker CLI. Run `docker compose version` to confirm it is available.
+</Tip>
+
+## GitHub requirements
+
+Requirements depend on the install type.
+
+### Organization install
+
+- You are an **Owner** or **Admin** of the GitHub organization where you want to install MergeWatch.
+- You have permission to create a GitHub App under the organization.
+
+### Personal install
+
+- You are signed in to the **personal GitHub account** where you want to install MergeWatch. No special role is needed.
+
+<Note>
+Not sure which install type to pick? Organization installs cover every repo in the org. Personal installs cover repos owned by your user account. You can always add the other later.
+</Note>
+
+## LLM provider
+
+By default, MergeWatch uses the Anthropic API. You need an API key from [console.anthropic.com](https://console.anthropic.com).
+
+<Tip>
+If you want to use a different LLM provider (LiteLLM, Amazon Bedrock, or Ollama), see [LLM Providers](/self-hosting/llm-providers/anthropic) for provider-specific requirements.
+</Tip>
+
+<Note>
+If you want Amazon Bedrock as your LLM provider, you also need an AWS account with Bedrock model access enabled. See [LLM Providers > Amazon Bedrock](/self-hosting/llm-providers/bedrock).
+</Note>
+
+## Preflight check
+
+Run these commands to verify Docker is installed and running:
+
+```bash
+docker compose version && docker info
+```
+
+You should see the Docker Compose version (2.20.0 or later) and Docker engine information. If either command fails, install or start Docker before proceeding.
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Install" icon="download" href="/self-hosting/install">
+    Ready? Deploy MergeWatch with Docker Compose.
+  </Card>
+  <Card title="Self-Hosting Overview" icon="server" href="/self-hosting/overview">
+    Go back to the self-hosting overview.
+  </Card>
+</CardGroup>

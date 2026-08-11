@@ -1,0 +1,229 @@
+---
+title: "Troubleshooting"
+description: "Common MergeWatch problems with causes and fixes."
+---
+
+## Docker and container issues
+
+<Accordion title="Container exits immediately">
+  The MergeWatch container will exit on startup if required environment variables are missing or malformed.
+
+  **Fix:** Check the container logs for the specific error:
+
+  ```bash
+  docker compose logs mergewatch
+  ```
+
+  Common causes:
+  - Missing `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, or `DATABASE_URL`
+  - Malformed `GITHUB_PRIVATE_KEY` (must be the full PEM content, including `-----BEGIN RSA PRIVATE KEY-----` headers)
+  - Invalid `DATABASE_URL` format
+
+  Verify your `.env` file contains all required variables listed in the [environment variables reference](/reference/env-vars).
+</Accordion>
+
+<Accordion title="Port conflict on startup">
+  If port 3000 or 3001 is already in use, Docker Compose will fail to bind.
+
+  **Fix:** Either stop the conflicting process or change the port mapping in `docker-compose.yml`:
+
+  ```yaml
+  ports:
+    - "8080:3000"  # Map to a different host port
+  ```
+
+  You can also set the `PORT` environment variable to change the port inside the container.
+</Accordion>
+
+<Accordion title="Database connection refused">
+  The MergeWatch server cannot connect to Postgres. This typically happens when Postgres has not finished starting before MergeWatch tries to connect.
+
+  **Fix:**
+  1. Confirm the Postgres container is running: `docker compose ps`
+  2. Check that `DATABASE_URL` matches your Postgres container's hostname, port, user, and password
+  3. If using the default `docker-compose.yml`, the Postgres service is named `postgres` — the connection string should use `postgres` as the hostname (e.g. `postgresql://mergewatch:password@postgres:5432/mergewatch`)
+  4. Restart the stack: `docker compose down && docker compose up -d`
+</Accordion>
+
+<Accordion title="Cannot pull Docker images">
+  The images `ghcr.io/santthosh/mergewatch:latest` and `ghcr.io/santthosh/mergewatch-dashboard:latest` are hosted on GitHub Container Registry.
+
+  **Fix:** Authenticate with GHCR if pulling from a private registry:
+
+  ```bash
+  echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+  docker compose pull
+  ```
+
+  If the images are public, a `docker compose pull` without authentication should work.
+</Accordion>
+
+---
+
+## Webhook not receiving events
+
+<Accordion title="GitHub App webhook URL does not match your server URL">
+  The webhook URL configured on your GitHub App must point to your MergeWatch server's publicly accessible URL.
+
+  **Fix:** Go to **GitHub Settings > Developer settings > GitHub Apps > your app > Webhook URL** and verify it points to your server (e.g. `https://mergewatch.example.com/webhook`). For local development, use a tunnel like ngrok.
+</Accordion>
+
+<Accordion title="Webhook secret mismatch">
+  The `GITHUB_WEBHOOK_SECRET` environment variable must match the secret configured on the GitHub App. A mismatch causes every delivery to fail signature validation.
+
+  **Fix:** Compare the value in your `.env` file with the value in **GitHub App settings > Webhook > Secret**. They must be identical.
+</Accordion>
+
+---
+
+## Review not posting comments
+
+<Accordion title="Missing pull_requests: write permission">
+  The GitHub App needs write access to pull requests to post review comments.
+
+  **Fix:** Go to **GitHub App settings > Permissions & events > Repository permissions** and confirm **Pull requests** is set to **Read & write**.
+</Accordion>
+
+<Accordion title="LLM provider issues">
+  Reviews fail if MergeWatch cannot reach the configured LLM provider. Check the logs for specific error messages:
+
+  ```bash
+  docker compose logs mergewatch
+  ```
+
+  <AccordionGroup>
+    <Accordion title="Anthropic: invalid API key or rate limit">
+      Verify `ANTHROPIC_API_KEY` is correct and your account has sufficient credits. Check your usage at [console.anthropic.com](https://console.anthropic.com).
+    </Accordion>
+
+    <Accordion title="Bedrock: model access not enabled or throttling">
+      Amazon Bedrock requires you to explicitly enable model access before invoking a model.
+
+      - Open **AWS Console > Amazon Bedrock > Model access** and enable the model your deployment uses
+      - For throttling, request a quota increase in **AWS Console > Service Quotas > Amazon Bedrock**
+      - For higher throughput, use a cross-region inference profile:
+
+      ```yaml
+      # .mergewatch.yml
+      model: us.anthropic.claude-sonnet-4-20250514-v1:0
+      ```
+
+      <Tip>
+      The `us.` prefix enables cross-region inference across US regions, increasing effective throughput for production deployments.
+      </Tip>
+    </Accordion>
+
+    <Accordion title="LiteLLM: connection refused or auth error">
+      Verify `LITELLM_BASE_URL` is reachable from the MergeWatch container. If both run in Docker, they must be on the same Docker network. Check that `LITELLM_API_KEY` is set if your proxy requires authentication.
+    </Accordion>
+
+    <Accordion title="Ollama: model not found or connection refused">
+      Verify `OLLAMA_BASE_URL` is reachable from the MergeWatch container. Confirm the model is pulled:
+
+      ```bash
+      curl http://localhost:11434/api/tags
+      ```
+
+      If Ollama runs as a sidecar container, use its Docker network hostname, not `localhost`.
+    </Accordion>
+  </AccordionGroup>
+</Accordion>
+
+---
+
+## "Skipped" on every PR
+
+<Accordion title="Skip rules in .mergewatch.yml are too broad">
+  The `ignorePatterns` configuration may be matching all files in the diff.
+
+  **Fix:** Review your `.mergewatch.yml` file:
+
+  ```yaml
+  # Example — this skips everything under docs/ and all lock files
+  rules:
+    ignorePatterns:
+      - "docs/**"
+      - "*.lock"
+  ```
+
+  Narrow the patterns or remove entries that are too aggressive.
+</Accordion>
+
+<Accordion title="PR is a draft">
+  Draft pull requests are skipped by default.
+
+  **Fix:** Either mark the PR as **Ready for review** or set `skipDrafts: false` in your `.mergewatch.yml`:
+
+  ```yaml
+  rules:
+    skipDrafts: false
+  ```
+</Accordion>
+
+<Accordion title="All changed files match excluded paths">
+  MergeWatch auto-skips a PR when **every** changed file matches an excluded pattern (lock files, generated code, documentation, etc.).
+
+  **Fix:** Confirm the PR includes at least one source file that is not in an excluded path. Check the skip reason in the server logs:
+
+  ```bash
+  docker compose logs mergewatch
+  ```
+</Accordion>
+
+---
+
+## Dashboard 401 / auth failing
+
+<Accordion title="NextAuth secret not set">
+  The dashboard uses NextAuth for session management. A missing `NEXTAUTH_SECRET` causes all authentication to fail with a 401.
+
+  **Fix:** Generate and set the secret:
+
+  ```bash
+  openssl rand -base64 32
+  ```
+
+  Add the output as `NEXTAUTH_SECRET` in your dashboard environment configuration.
+</Accordion>
+
+<Accordion title="GitHub OAuth callback URL mismatch">
+  The callback URL configured on the GitHub OAuth App must match the dashboard's URL exactly.
+
+  **Fix:** Go to **GitHub Settings > Developer settings > OAuth Apps > your app** and set the **Authorization callback URL** to:
+
+  ```text
+  https://your-dashboard-url.com/api/auth/callback/github
+  ```
+</Accordion>
+
+<Accordion title="NEXTAUTH_URL not set or incorrect">
+  NextAuth needs the `NEXTAUTH_URL` variable to construct callback URLs. If it is missing or wrong, redirects break.
+
+  **Fix:** Set `NEXTAUTH_URL` to the canonical URL of your dashboard (e.g. `https://dashboard.mergewatch.dev` for SaaS, or `http://localhost:3001` for self-hosted). Do not include a trailing slash.
+</Accordion>
+
+---
+
+## Review taking too long (>5 minutes)
+
+<Accordion title="Large diffs with many files">
+  PRs with more than 50 changed files take significantly longer to review.
+
+  **Fix:** Set a file limit in your `.mergewatch.yml`:
+
+  ```yaml
+  rules:
+    maxFiles: 50
+  ```
+
+  Files beyond the limit are summarized rather than reviewed line-by-line.
+</Accordion>
+
+<Accordion title="Slow LLM responses">
+  Response time depends on your LLM provider and the model you are using.
+
+  **Fix:**
+  - **Anthropic / Bedrock:** Check provider status pages for outages. Consider switching to a faster model via `LLM_MODEL`.
+  - **LiteLLM:** Check your proxy's latency metrics and upstream provider status.
+  - **Ollama:** Ensure sufficient CPU/GPU resources. Smaller models (e.g. `llama3.1:8b`) respond faster but may produce lower-quality reviews.
+</Accordion>

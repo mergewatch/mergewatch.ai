@@ -1,0 +1,52 @@
+---
+title: MergeWatch vs OpenAI Codex
+description: A PR-review product with a dedicated multi-agent pipeline vs OpenAI's general-purpose agentic coding product.
+---
+
+<Note>
+**Verified April 2026.** Sourced from [developers.openai.com/codex](https://developers.openai.com/codex/) and model announcements for GPT-5-Codex, GPT-5.2-Codex, and GPT-5.3-Codex. The main `openai.com/codex/` landing pages returned 403 to automated fetching; facts below are drawn from the developer docs.
+</Note>
+
+## At a glance
+
+| | MergeWatch | OpenAI Codex |
+|---|---|---|
+| License | AGPL-3.0 (full pipeline) | Mixed — CLI is open source, hosted Codex is closed |
+| Self-host | Docker + Postgres, any cloud | CLI runs locally but calls OpenAI APIs; hosted product is not self-hostable |
+| LLM | Bedrock, Anthropic, LiteLLM, Ollama | OpenAI only (GPT-5-Codex, GPT-5.2-Codex, GPT-5.3-Codex) |
+| Primary surface | GitHub App (PR reviews) | CLI, IDE, desktop app, web/cloud |
+| Agent architecture | 6 review + 2 utility agents, parallel, orchestrator | Agentic, long-horizon; "Skills" + "Automations" |
+| Pricing | Usage-based via Stripe balance | Bundled in ChatGPT Plus/Pro/Business/Edu/Enterprise; API pay-as-you-go |
+
+## OpenAI Codex
+
+- **What it is.** "OpenAI's coding agent for software development" — an agentic coding product that writes, reviews, debugs, and automates code tasks; re-launched in 2025 as an agentic successor to the original Codex. ([developers.openai.com](https://developers.openai.com/codex/))
+- **Trigger model.** Multiple surfaces — desktop app, CLI (open source), IDE extension, and a web/cloud interface. The Codex app includes "built-in worktrees and cloud environments" where agents work in parallel.
+- **Where it runs.** Both local (via CLI) and in OpenAI cloud environments. Not self-hostable in the full sense — the CLI runs locally but still calls OpenAI APIs.
+- **LLM flexibility.** Locked to OpenAI models. Codex-specific releases: GPT-5-Codex (Sept 2025), GPT-5.2-Codex, GPT-5.3-Codex.
+- **Open source.** The Codex CLI is open source; the hosted Codex product is not.
+- **Agent architecture.** Agentic, long-horizon reasoning; supports "Skills" (code understanding, prototyping, documentation) and "Automations" (issue triage, alert monitoring, CI/CD). ([developers.openai.com/codex/skills](https://developers.openai.com/codex/skills))
+- **Pricing.** Included with ChatGPT Plus, Pro, Business, Edu, and Enterprise plans. API access is billed separately at standard OpenAI rates. A "Codex for Open Source" program offers free API credits and ChatGPT Pro access by application.
+- **Data handling.** Referenced via OpenAI's standard "Your data" policy. Specific retention numbers not surfaced on the docs page checked.
+
+## Where MergeWatch differs
+
+- **Purpose-built for PR review.** MergeWatch is a GitHub App with review-specific agents, triggers, and outputs (inline comments, summary, merge-readiness score, Checks re-run). Codex is general-purpose coding agent surface; "PR review" is one task among many you'd orchestrate yourself.
+- **Multi-agent review pipeline out of the box.** Six review agents + orchestrator run in parallel and post deduplicated findings. Codex is agentic but not a pre-composed review pipeline.
+- **LLM independence.** MergeWatch lets you stay off OpenAI entirely — run on Bedrock, Anthropic, Ollama, or route through LiteLLM. Codex only uses OpenAI's own models.
+- **Self-hostable control plane.** MergeWatch runs in your VPC; Codex's hosted environment does not.
+- **AGPL-3.0 review logic.** Read every agent prompt and the orchestrator. Codex's hosted product is closed.
+- **GitHub-native trigger surface.** `@mergewatch` comments, Checks re-run, webhook-driven. Codex's primary triggers are CLI / IDE / desktop / web — a different product shape.
+
+## When OpenAI Codex might be the better fit
+
+- You want an agent that executes long-horizon tasks (implement a feature, investigate a bug across hours) across CLI, IDE, and cloud, not just reviews.
+- You're an OpenAI-committed shop (API credits, GPT-5-Codex access) and want bundled ChatGPT-plan pricing.
+- You want parallel cloud worktrees where multiple agent runs work on different branches simultaneously.
+- You actively use OpenAI's Skills and Automations as part of a broader coding workflow.
+
+## Cross-links
+
+- [Full quick matrix](/comparisons/overview)
+- [Feature matrix](/comparisons/feature-matrix)
+- [MergeWatch agent architecture](/overview/how-it-works)

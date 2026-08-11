@@ -1,0 +1,69 @@
+---
+title: "Analytics"
+description: "Track review trends, severity breakdowns, and team metrics across your repositories."
+---
+
+The Analytics page provides aggregated metrics across all repositories in your installation. Use it to track review quality, identify patterns, and measure the impact of AI-assisted code review.
+
+## Accessing analytics
+
+Navigate to **Dashboard > Analytics** from the sidebar. All data is scoped to your current installation.
+
+## Available metrics
+
+### Score trends
+
+A time-series chart showing the average merge-readiness score per day. Use this to track whether code quality is trending up or down over time.
+
+### Severity breakdown
+
+A breakdown of findings by severity level (critical, warning, info) across all reviews in the selected date range.
+
+### Duration stats
+
+Review timing statistics including average and p95 review duration. Useful for monitoring LLM performance and identifying slow reviews.
+
+### Repository breakdown
+
+A per-repository view showing review count, average score, and finding distribution. Helps identify which repositories generate the most findings.
+
+### Category breakdown
+
+Findings grouped by category (security, bug, style, error handling, test coverage, comment accuracy). Shows which types of issues are most common in your codebase.
+
+### Findings per review
+
+A trend line of the average number of findings per review over time. A decreasing trend suggests developers are incorporating review feedback.
+
+### Merge score distribution
+
+A histogram showing the distribution of merge-readiness scores (1-5) across all reviews. Healthy codebases should cluster around 4-5.
+
+## Filters
+
+| Filter | Description |
+|---|---|
+| **Repository** | Filter metrics to a specific repository |
+| **Date range** | Select a custom start and end date |
+
+## API endpoint
+
+The analytics data is served by `GET /api/analytics` with the following query parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `installation_id` | `string` | Required. The GitHub App installation ID |
+| `repo` | `string` | Optional. Filter to a specific repository |
+| `start_date` | `string` | Optional. ISO 8601 start date |
+| `end_date` | `string` | Optional. ISO 8601 end date |
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Reviews" icon="magnifying-glass" href="/dashboard/reviews">
+    View individual review details and findings.
+  </Card>
+  <Card title="Settings" icon="gear" href="/dashboard/settings">
+    Configure installation-level review settings.
+  </Card>
+</CardGroup>

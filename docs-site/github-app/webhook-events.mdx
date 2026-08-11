@@ -1,0 +1,60 @@
+---
+title: "Webhook Events"
+description: "GitHub webhook events MergeWatch subscribes to and how each is handled."
+---
+
+## Subscribed events
+
+MergeWatch subscribes to the following GitHub webhook events:
+
+| Event | Action | What MergeWatch does |
+|---|---|---|
+| `pull_request` | `opened` | Triggers a full review |
+| `pull_request` | `synchronize` | Triggers a re-review for the new commits. Looks up the existing MergeWatch comment to update in place. |
+| `pull_request` | `reopened` | Triggers a full review. Looks up the existing MergeWatch comment to update in place. |
+| `pull_request` | `ready_for_review` | Triggers a full review when a draft PR is marked as ready. Looks up the existing MergeWatch comment to update in place. |
+| `issue_comment` | `created` | Checks for `@mergewatch` mention. Runs `review`, `summary`, or free-form `respond` depending on the comment body. Ignores bot senders to prevent reply loops. |
+| `pull_request_review_comment` | `created` | When a human replies inside a review-comment thread with `in_reply_to_id` set, MergeWatch queues an `inline_reply` job. Used for in-thread Q&A on MergeWatch findings. |
+| `check_run` | `rerequested` | A reviewer clicked the **Re-run** button on the MergeWatch check in GitHub's Checks UI. MergeWatch re-runs the review pipeline against the current head SHA. |
+| `installation` | `created`, `added` | Upserts the installation and its repository records in the database. |
+| `installation` | `deleted`, `removed` | Logged, then acknowledged with `200 OK`. Installation rows remain so historical reviews stay queryable. |
+
+<Note>
+Only the events and actions listed above trigger processing. All other webhook deliveries are acknowledged but ignored.
+</Note>
+
+MergeWatch recognizes three mention commands: `@mergewatch review` (full review), `@mergewatch summary` (summary only), and `@mergewatch` with any other text (conversational response — the LLM replies directly to the user's comment using the PR diff and previous review findings as context; no review pipeline runs). All mentions are case-insensitive.
+
+## Webhook security
+
+All incoming webhooks are signed by GitHub using **HMAC-SHA256**. The WebhookHandler Lambda validates the `X-Hub-Signature-256` header against the stored webhook secret before processing any event.
+
+<Warning>
+Invalid signatures are rejected with a `401 Unauthorized` response. If you see 401 errors in your GitHub App webhook delivery log, verify that the webhook secret in AWS SSM Parameter Store matches the value in your GitHub App settings.
+</Warning>
+
+## Retry behavior
+
+GitHub automatically retries webhook deliveries that receive non-2xx responses. To prevent duplicate processing, MergeWatch always returns a `200 OK` response to GitHub, even when an internal error occurs. Errors are captured and handled asynchronously:
+
+- Failed reviews are logged to CloudWatch.
+- The original webhook payload is preserved for debugging.
+- No duplicate review is triggered by a GitHub retry.
+
+## Payload size
+
+GitHub webhook payloads do **not** include the full diff of a pull request. After receiving a `pull_request` webhook event, MergeWatch fetches the diff separately via the GitHub REST API using the installation access token. This ensures MergeWatch always works with the complete diff regardless of payload size limits.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Permissions reference" icon="shield-check" href="/github-app/permissions">
+  Review the GitHub permissions MergeWatch requests and why each is needed.
+</Card>
+
+<Card title="Architecture" icon="sitemap" href="/deployment/architecture">
+  Understand how webhooks flow through the MergeWatch deployment stack.
+</Card>
+
+</CardGroup>
