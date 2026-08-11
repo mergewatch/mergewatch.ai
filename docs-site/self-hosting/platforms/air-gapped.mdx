@@ -1,6 +1,6 @@
 ---
 title: "Air-Gapped Deployment"
-description: "Deploy MergeWatch in environments with no external network access."
+description: "Deploy MergeWatch with no external network access — pre-pull and transfer images, run Postgres locally, and point webhooks at an internal URL."
 ---
 
 Some organizations require all software to run without any external network access — no outbound API calls, no container registry pulls, no telemetry. MergeWatch supports this by using a local LLM via Ollama as an embedded sidecar container.
