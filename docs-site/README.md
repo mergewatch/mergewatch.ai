@@ -84,4 +84,4 @@ Works with Claude Code, Cursor, Windsurf, and other AI tools that support [skill
 
 ## License
 
-Documentation content in this directory is licensed under [MIT](./LICENSE). The MergeWatch product itself is licensed under [AGPL v3](https://github.com/mergewatch/mergewatch.ai/blob/main/LICENSE).
+Documentation in this directory is licensed under [AGPL v3](https://github.com/mergewatch/mergewatch.ai/blob/main/LICENSE), the same license as the rest of the repository. It was previously MIT as a standalone repo; the relocation relicensed it to match.

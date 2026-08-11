@@ -22,7 +22,7 @@
       },
       {
         "label": "GitHub",
-        "href": "https://github.com/santthosh/mergewatch.ai"
+        "href": "https://github.com/mergewatch/mergewatch.ai"
       }
     ],
     "primary": {
@@ -165,7 +165,7 @@
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/santthosh/mergewatch.ai",
+          "href": "https://github.com/mergewatch/mergewatch.ai",
           "icon": "github"
         },
         {
@@ -178,7 +178,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/santthosh/mergewatch.ai"
+      "github": "https://github.com/mergewatch/mergewatch.ai"
     }
   }
 }

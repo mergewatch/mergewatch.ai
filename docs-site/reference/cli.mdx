@@ -4,7 +4,7 @@ description: "Commands for managing MergeWatch: Docker Compose for self-hosted, 
 ---
 
 <Info>
-There is no standalone `mergewatch` CLI (`npx mergewatch@latest`). MergeWatch is managed with Docker Compose for self-hosted deployments and with `pnpm` + `sam` scripts for deploying the SaaS stack from the [mergewatch.ai repo](https://github.com/santthosh/mergewatch.ai).
+There is no standalone `mergewatch` CLI (`npx mergewatch@latest`). MergeWatch is managed with Docker Compose for self-hosted deployments and with `pnpm` + `sam` scripts for deploying the SaaS stack from the [mergewatch.ai repo](https://github.com/mergewatch/mergewatch.ai).
 </Info>
 
 ## Self-Hosted: Docker Commands
@@ -30,10 +30,10 @@ Use `docker compose pull && docker compose up -d` to upgrade to the latest versi
 
 ## SaaS / AWS: Repository Scripts
 
-Deploying the AWS stack (API Gateway + Lambda + DynamoDB + Bedrock) is done by cloning [mergewatch.ai](https://github.com/santthosh/mergewatch.ai) and running the scripts defined in `package.json`.
+Deploying the AWS stack (API Gateway + Lambda + DynamoDB + Bedrock) is done by cloning [mergewatch.ai](https://github.com/mergewatch/mergewatch.ai) and running the scripts defined in `package.json`.
 
 ```bash
-git clone https://github.com/santthosh/mergewatch.ai.git
+git clone https://github.com/mergewatch/mergewatch.ai.git
 cd mergewatch.ai
 pnpm install
 ```
