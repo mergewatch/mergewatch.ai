@@ -1,0 +1,67 @@
+---
+title: "API Keys"
+description: "Create, scope, and revoke the API keys that authenticate coding agents to the MergeWatch MCP server."
+---
+
+API keys authenticate external coding agents to the [MergeWatch MCP server](/reference/mcp-server). They are the only credential that server accepts.
+
+Find them under **Settings → API keys** in the dashboard.
+
+## Who can manage keys
+
+Only **installation admins** can create or revoke keys. A user with dashboard access but no admin rights on the GitHub App installation gets a `403` — viewing the page is not enough.
+
+## Creating a key
+
+Each key needs two things:
+
+**A label** (1–100 characters). This is how you identify the key later; the key itself is never shown again. Name it after what uses it — `claude-code-laptop`, `ci-review-bot` — not after who created it.
+
+**A scope**, which is either:
+
+- **All repositories** in the installation, or
+- **An explicit list** of repositories. At least one must be selected.
+
+<Warning>
+The full key is returned **once**, in the response to the create call, and never again. MergeWatch stores only a hash — there is no recovery flow and no "show key" button. If it is lost, revoke it and create another.
+</Warning>
+
+Keys look like `mw_sk_…`. In the key list you see only a display prefix derived from the hash, which is enough to tell keys apart and reveals no secret material.
+
+## Scoping
+
+A scoped key that calls [`review_diff`](/reference/mcp-server) with a repository outside its list is rejected with a `-32001` unauthorized error.
+
+Prefer narrow scopes. A key that only ever reviews one service does not need to reach the rest of the installation, and a narrowly-scoped key that leaks is a much smaller problem than a broad one. Use one key per agent or machine rather than sharing a single key — that way revoking one does not interrupt everything else.
+
+## What the list shows
+
+| Column | Notes |
+|---|---|
+| Label | What you named it at creation. |
+| Prefix | Derived from the hash — identifies the key without exposing it. |
+| Scope | `all`, or the repositories it can reach. |
+| Created | When it was issued, and by which GitHub user. |
+| Last used | Updated on each authenticated MCP request. |
+
+**Last used** is the field worth watching. A key with no recent activity is a key you can probably revoke, and unexplained activity on a key you thought was idle is worth investigating immediately.
+
+## Revoking
+
+Revoking takes effect on the next request — there is no grace period and no expiry to wait out. Revoke a key when the machine holding it is decommissioned, when someone with access to it leaves, or whenever you cannot account for its recent use.
+
+Revocation is not reversible. Issue a new key rather than expecting to restore an old one.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="MCP server" icon="plug" href="/reference/mcp-server">
+What these keys authenticate against — tools, resources, and error codes.
+</Card>
+
+<Card title="Settings" icon="gear" href="/dashboard/settings">
+Installation-level review settings alongside key management.
+</Card>
+
+</CardGroup>

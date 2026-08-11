@@ -1,0 +1,92 @@
+---
+title: "Org Custom Agents"
+description: "Define review agents once at the organization level, scope them to repositories, target them at paths or languages, and optionally make their findings block a merge."
+---
+
+Per-repo [`customAgents`](/configuration/mergewatch-yml) let each repository add its own review agents. **Org custom agents** invert that: an organization admin defines an agent once in the dashboard, and it runs across the org's repositories whether or not each repo asks for it.
+
+Use them for standards that are not a per-repo choice — a compliance rule, a security requirement, a house pattern every service must follow.
+
+Find them under **Settings → Custom agents**. Available on both managed SaaS and self-hosted.
+
+## Who can edit
+
+Only **organization admins** can create or edit org agents. Other members see a read-only view — they can tell what is enforced and why a finding appeared, without being able to change it.
+
+## Defining an agent
+
+| Field | Notes |
+|---|---|
+| **Name** | Display name, and the category findings are filed under. |
+| **Prompt** | The system prompt — what this agent looks for. |
+| **Default severity** | `info`, `warning`, or `critical`. |
+| **Enforcement** | `advisory` or `blocking`. See below. |
+| **Scope** | All repositories, or a selected allowlist. |
+| **Targeting** | Optional path globs and/or languages. See below. |
+| **Enabled** | Whether it runs at all. |
+
+Each agent also records **who last edited it and when**, so an unexpected finding can be traced to a change rather than argued about.
+
+## Enforcement: advisory vs blocking
+
+This is the field to think hardest about.
+
+<CardGroup cols={2}>
+
+<Card title="Advisory" icon="circle-info">
+Findings appear in the review like any other. They feed the merge-readiness score but do not independently gate anything.
+</Card>
+
+<Card title="Blocking" icon="shield-halved">
+A **critical** finding from this agent fails the check run **and** requests changes — **regardless of the overall merge score**.
+</Card>
+
+</CardGroup>
+
+<Warning>
+Blocking enforcement bypasses the normal scoring path. A PR that MergeWatch would otherwise consider ready to merge is still blocked by a single critical finding from a blocking agent. That is the point — but it also means a poorly-worded blocking prompt can stop every PR in the organization.
+
+Start new agents as **advisory**, watch what they actually flag for a week, then promote to blocking once the finding rate looks right.
+</Warning>
+
+## Scoping and targeting
+
+**Scope** decides which repositories the agent applies to: all, or an explicit allowlist.
+
+**Targeting** narrows further, within those repositories — the agent runs only when the PR actually touches relevant code:
+
+- **Path globs** — run only when a changed file matches one of these patterns.
+- **Languages** — run only when the PR touches one of these languages.
+
+Targeting is what keeps an org-wide agent cheap. A Terraform security agent scoped to all repositories but targeted at `**/*.tf` costs nothing on the PRs that do not touch Terraform, and there is no reason to pay for an LLM call that has nothing to examine.
+
+## How org agents combine with repo agents
+
+Org agents run **in addition to** each repository's own `.mergewatch.yml` `customAgents` — the two sets are unioned.
+
+**On a name collision, the org agent wins.** A repository cannot disable or override an org agent by defining one with the same name. Repositories can *add* agents; they cannot *remove* org ones. That asymmetry is deliberate: an org standard that any repo could opt out of by naming a local agent the same thing would not be a standard.
+
+## Cost
+
+**Each enabled agent adds one LLM call per review it runs on.** Ten org agents scoped to all repositories means up to ten extra calls on every pull request across the organization.
+
+The dashboard warns past **10 active agents**. It is a soft cap — nothing is blocked — but treat the warning as real: past that point, targeting is no longer optional if you care about review cost and latency.
+
+Two levers keep this under control:
+
+1. **Target aggressively.** Most org concerns apply to a subset of files, not every PR.
+2. **Consolidate prompts.** Three narrow agents that always run together are usually better as one agent with a broader prompt.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Per-repo custom agents" icon="file-code" href="/configuration/mergewatch-yml">
+The `customAgents` block org agents union with.
+</Card>
+
+<Card title="Review behavior" icon="sliders" href="/configuration/review-behavior">
+How findings become a merge-readiness score.
+</Card>
+
+</CardGroup>
