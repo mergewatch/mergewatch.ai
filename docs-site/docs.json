@@ -131,6 +131,7 @@
               "dashboard/settings",
               "dashboard/api-keys",
               "dashboard/custom-agents",
+              "dashboard/billing",
               "dashboard/profile"
             ]
           },
