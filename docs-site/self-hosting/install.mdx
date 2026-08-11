@@ -48,7 +48,7 @@ NEXTAUTH_SECRET=random-32-byte-secret
 # ── LLM Provider (pick one — Anthropic is the default) ─────────────────
 LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-20250514
+LLM_MODEL=claude-opus-4-6
 
 # Handled by docker-compose — no changes needed
 # DATABASE_URL=postgres://postgres:postgres@db:5432/mergewatch
@@ -65,7 +65,7 @@ LLM_MODEL=claude-sonnet-4-20250514
 | `NEXTAUTH_SECRET` | Yes | Random 32-byte secret for signing dashboard sessions (generate with `openssl rand -base64 32`) |
 | `ANTHROPIC_API_KEY` | If `LLM_PROVIDER=anthropic` | API key from [console.anthropic.com](https://console.anthropic.com) |
 | `LLM_PROVIDER` | No | Default: `anthropic`. Options: `anthropic`, `litellm`, `bedrock`, `ollama` |
-| `LLM_MODEL` | Yes for `anthropic` / `litellm` / `ollama` | Model ID. For Anthropic, use a native model ID like `claude-sonnet-4-20250514` — the built-in defaults are Bedrock inference profile IDs and only work for `LLM_PROVIDER=bedrock`. |
+| `LLM_MODEL` | Yes for `anthropic` / `litellm` / `ollama` | Model ID. For Anthropic, use a native model ID like `claude-opus-4-6` — the built-in defaults are Bedrock inference profile IDs and only work for `LLM_PROVIDER=bedrock`. |
 | `DASHBOARD_URL` | No | Public URL of the dashboard (e.g., `https://dashboard.example.com`). Used as the `NEXTAUTH_URL` for session callbacks. Defaults to `http://localhost:3001`. |
 | `DATABASE_URL` | No | Set automatically by docker-compose (Postgres sidecar) |
 | `PORT` | No | Default: `3000` |

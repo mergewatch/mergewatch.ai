@@ -1,0 +1,69 @@
+---
+title: "Feedback Signals"
+description: "Every way you can tell MergeWatch a finding was wrong or useful — comment commands, inline replies, reactions — and what each one feeds."
+---
+
+MergeWatch treats disagreement as data. Every signal below is recorded against the finding it concerns and rolled up into the [Accuracy](/dashboard/analytics) view, so a reviewer telling the bot it was wrong is not just a comment thread — it is the input that stops the same false positive recurring.
+
+## Comment commands
+
+| Comment | What happens |
+|---|---|
+| `@mergewatch review` | Re-run a full review on the current commit. |
+| `@mergewatch summary` | Post a summary without detailed findings. |
+| `@mergewatch <question>` | Ask a question about the PR. Answered conversationally, using the review context. |
+| `/mergewatch reject` | Reject a finding as incorrect. Recorded as an explicit dispute. |
+
+`/mergewatch reject` is the strongest negative signal available. Unlike the disposition counters below — which are inferred from what happened to a finding — a reject is timestamped at the moment you issue it, and is windowed by that timestamp rather than by when the finding was last seen. It says *this was wrong*, not *this went away*.
+
+## Inline replies
+
+Replying to an inline finding is a conversation, not just a comment. MergeWatch reads the reply, responds in the thread, and where the reply resolves the concern, resolves the review thread.
+
+Resolutions are persisted, which matters more than it sounds: a finding you have already argued down stays down. The [convergence guard](/configuration/review-behavior) uses those resolutions so a later review does not re-raise a point that was already rebutted — the whack-a-mole problem where fixing one thing makes an old finding reappear.
+
+## Reactions
+
+👍 / 👎 on the review summary comment feed the satisfaction signal in the engagement rollup.
+
+This is the lowest-friction feedback in the system — no command to remember, no thread to write. It measures whether the review as a whole was worth reading, which is a different question from whether any individual finding was correct.
+
+## What each signal feeds
+
+Signals aggregate into two rollup blocks:
+
+**Finding dispositions** — per-finding outcomes, counted as:
+
+| Disposition | Meaning |
+|---|---|
+| Agreement | The finding was acted on. |
+| Dispute | The finding was rejected or argued down. |
+| Silent drop | The finding disappeared without an explicit outcome. |
+| Resolve | The inline thread was resolved. |
+| Surface | The finding was shown at all. |
+
+**Engagement** — whether humans interacted with the review: reviews delivered, re-reviews requested, `/mergewatch reject` commands, helpful votes, and NPS responses.
+
+<Note>
+Rates distinguish "no signal" from a real zero. A rate is null — not `0` — when nothing landed in the window, so a quiet week reads as *no data* rather than as *nothing was useful*. Do not treat a blank as a bad score.
+</Note>
+
+## Why it is worth using
+
+Feedback is not a courtesy to the tool. Dispute rates by agent and by category feed directly back into review behavior: an agent whose findings are consistently rejected in your repository gets down-weighted there. Teams that reject bad findings instead of ignoring them get measurably quieter reviews over time; teams that silently close them keep seeing the same thing.
+
+If a finding is wrong, say so — `/mergewatch reject` costs a few seconds and changes future reviews.
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Accuracy" icon="chart-line" href="/dashboard/analytics">
+Where these signals surface — dispute rates, the false-positive funnel, themes.
+</Card>
+
+<Card title="Review behavior" icon="sliders" href="/configuration/review-behavior">
+How disputes change what later reviews report.
+</Card>
+
+</CardGroup>

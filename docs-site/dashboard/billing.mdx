@@ -1,0 +1,50 @@
+---
+title: "Billing"
+description: "The dashboard surface for managed SaaS billing — balance, payment method, top-ups, and auto-reload."
+---
+
+The **Billing** page manages the prepaid credit balance for a managed SaaS installation. For how pricing works — the free tier, the per-review cost formula, what counts as billable — see [SaaS billing](/saas/billing). This page covers the dashboard surface itself.
+
+<Note>
+Billing applies to **managed SaaS only**. Self-hosted deployments have no balance and no payment method; you pay your LLM provider directly. See [Self-hosted is always free](/saas/billing#self-hosted-is-always-free).
+</Note>
+
+## What the page shows
+
+**Current balance**, in credits. Reviews deduct their actual cost as they complete, so the balance moves continuously rather than in monthly steps.
+
+**Free reviews used** — the lifetime counter against the 5-review free tier, tracked per GitHub App installation.
+
+**Payment method**, managed through Stripe. MergeWatch never stores card details.
+
+## Topping up
+
+Add credits manually at any time. A top-up is a one-off charge against the payment method on file — there is no subscription and no recurring billing to cancel.
+
+## Auto-reload
+
+Auto-reload tops the balance up automatically when it falls below a threshold, so reviews do not stop mid-sprint because a balance ran down on a Friday afternoon.
+
+Enable it if MergeWatch is on your critical path. Leave it off if you would rather have reviews stop than have charges happen without you initiating them — a blocked review is visible and recoverable in a minute; a surprise charge is neither.
+
+Auto-reload is guarded against double-charging: a concurrent top-up cannot fire twice for the same drop below the threshold, even if several reviews complete simultaneously.
+
+## When the balance runs out
+
+Reviews are blocked rather than run-and-billed, and the MCP server returns a billing-blocked error (`-32002`). Nothing is silently deferred or queued — you find out immediately, on the PR.
+
+Top up or enable auto-reload to resume. See [what happens when your balance runs out](/saas/billing#what-happens-when-your-balance-runs-out).
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="SaaS billing" icon="credit-card" href="/saas/billing">
+Pricing model, free tier, and the per-review cost formula.
+</Card>
+
+<Card title="Analytics" icon="chart-line" href="/dashboard/analytics">
+The Cost & Impact tab, for what that spend is buying.
+</Card>
+
+</CardGroup>

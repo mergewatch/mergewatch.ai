@@ -26,6 +26,9 @@ Self-hosted deployments use a `.env` file alongside `docker-compose.yml`. See th
 | `GITHUB_PRIVATE_KEY_FILE` | No | — | Path to PEM file — alternative to inline `GITHUB_PRIVATE_KEY` |
 | `DASHBOARD_BASE_URL` | No | — | Public base URL of the dashboard (e.g., `https://dashboard.example.com`). Read by the server to generate deep links in PR comments. |
 | `DASHBOARD_URL` | No | `http://localhost:3001` | Consumed by `docker-compose.yml` to set `NEXTAUTH_URL` on the dashboard container. Set when serving the dashboard on a public domain. |
+| `LLM_MODEL_INPUT_PRICE_PER_1M` | No | — | USD per 1M **input** tokens for whatever `LLM_MODEL` is set to. Lets a self-hosted deployment show real per-PR and dashboard cost instead of "unpriced" — including for an opaque Bedrock inference-profile ARN. Must be set together with the output price. |
+| `LLM_MODEL_OUTPUT_PRICE_PER_1M` | No | — | USD per 1M **output** tokens for `LLM_MODEL`. Both prices must be finite and non-negative, and both must be present — if either is missing or invalid, neither is applied. `0` / `0` is valid and records a real $0 for a local model. |
+| `INSIGHTS_ROLLUP_INTERVAL_MINUTES` | No | `60` | How often the insights rollup runs, in minutes. Raise it to reduce database load. Unset, non-numeric, or non-positive values fall back to the hourly default. |
 
 ### Provider-specific: Anthropic
 
@@ -89,6 +92,7 @@ The SaaS deployment runs on AWS Lambda and does not use `LLM_PROVIDER`, `DATABAS
 | `REVIEWS_TABLE` | DynamoDB table name for review records |
 | `REVIEW_AGENT_FUNCTION_NAME` | Name of the ReviewAgent Lambda (the WebhookHandler invokes it async) |
 | `DEFAULT_BEDROCK_MODEL_ID` | Bedrock model used by the review agents (SAM parameter) |
+| `DEFAULT_LIGHT_MODEL_ID` | Bedrock model used for low-complexity tasks such as summary generation. Defaults to `us.anthropic.claude-haiku-4-5-20251001-v1:0` when unset. Overridden per-repo by `lightModel` in `.mergewatch.yml`. |
 
 ### Billing Lambda (Stripe)
 
@@ -96,8 +100,8 @@ Configured when `DeploymentMode=saas`. Credentials are pulled from SSM at deploy
 
 | Variable | Description |
 | --- | --- |
-| `STRIPE_SECRET_KEY` | Stripe API secret key (from `/mergewatch/{stage}/stripe-secret-key`) |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (from `/mergewatch/{stage}/stripe-webhook-secret`) |
+| `STRIPE_SECRET_KEY` | Stripe API secret key. Read from SSM (`/mergewatch/{stage}/stripe-secret-key`), with an environment-variable override honoured for local development and tests. |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret. **Read from SSM only** (`/mergewatch/{stage}/stripe-webhook-secret`) — unlike the two below, there is no environment-variable override, so setting this in the environment has no effect. |
 | `BILLING_API_SECRET` | Shared secret for dashboard → BillingHandler auth (from `/mergewatch/{stage}/billing-api-secret`) |
 
 ### Dashboard (Amplify) env vars for SaaS mode
