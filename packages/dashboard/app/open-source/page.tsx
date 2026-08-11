@@ -13,18 +13,18 @@ import {
 import { ossFaqs } from "./faqs";
 
 /**
- * Application form for MergeWatch for Open Source.
+ * The live MergeWatch OSS Free SaaS Access Application (a Google Form).
+ * Maintainers apply here for free hosted access.
  *
- * TODO(oss-program): replace the placeholder with the real Tally form URL
- * once it exists (decision Q6 — new Tally form, matching the design-partner
- * banner pattern). Until a real URL is set, the apply CTAs render as a
- * disabled "opening soon" state via `APPLICATIONS_OPEN` below, so the page
- * never ships a broken link to production.
+ * If this is ever reset to a placeholder URL, the `APPLICATIONS_OPEN` guard
+ * below degrades the apply CTAs to a disabled "opening soon" state so the
+ * page never ships a broken link to production.
  */
-const OSS_APPLY_URL = "https://tally.so/r/PLACEHOLDER";
+const OSS_APPLY_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSfiIx-0o5GJ8dwbhj_Fs1FfoCmvWpVS8ImlUR4L9gWQfh_msA/viewform";
 
 /**
- * The apply flow only goes live once a real Tally form URL is wired in.
+ * The apply flow only goes live once a real application form URL is wired in.
  * While the constant is still a placeholder, the CTAs degrade to a disabled
  * "Applications opening soon" button instead of a broken link.
  */
@@ -289,9 +289,10 @@ export default function OpenSourcePage() {
 /* ─── Inline sub-components ──────────────────────────────────────────────── */
 
 /**
- * Primary "Apply for free OSS access" CTA. Renders a live link to the Tally
- * form once a real URL is configured; until then it degrades to a disabled
- * "Applications opening soon" button so the page never ships a broken link.
+ * Primary "Apply for free OSS access" CTA. Renders a live link to the
+ * application form (Google Form) when a real URL is configured; until then it
+ * degrades to a disabled "Applications opening soon" button so the page never
+ * ships a broken link.
  * `full` makes it full-width on mobile (used in the hero button row).
  */
 function ApplyButton({ full = false }: { full?: boolean }) {

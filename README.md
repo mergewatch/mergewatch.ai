@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <strong>We&rsquo;re onboarding our first design partners</strong> &mdash; free through GA, direct line to the founder. <a href="https://tally.so/r/GxolrQ"><strong>Join &rarr;</strong></a>
+  <strong>Maintain an open-source project?</strong> &mdash; get free frontier-model PR review. <a href="https://docs.google.com/forms/d/e/1FAIpQLSfiIx-0o5GJ8dwbhj_Fs1FfoCmvWpVS8ImlUR4L9gWQfh_msA/viewform"><strong>Apply &rarr;</strong></a>
 </p>
 
 ---
