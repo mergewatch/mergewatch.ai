@@ -96,6 +96,7 @@
             "pages": [
               "configuration/mergewatch-yml",
               "configuration/review-behavior",
+              "configuration/false-positives",
               "configuration/skip-rules",
               "configuration/custom-instructions",
               "configuration/conventions",
@@ -130,6 +131,7 @@
               "dashboard/settings",
               "dashboard/api-keys",
               "dashboard/custom-agents",
+              "dashboard/billing",
               "dashboard/profile"
             ]
           },
