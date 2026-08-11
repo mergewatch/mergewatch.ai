@@ -27,7 +27,9 @@ If MergeWatch runs on EC2, ECS, or Fargate, you can use an **IAM instance profil
 
 ## Default model
 
-MergeWatch uses **`us.anthropic.claude-3-5-haiku-20241022-v1:0`** by default. This is a **cross-region inference profile** that routes requests to the nearest available region.
+MergeWatch uses **`us.anthropic.claude-opus-4-6-v1`** for review agents by default, and **`us.anthropic.claude-haiku-4-5-20251001-v1:0`** as the `lightModel` for low-complexity tasks such as summary generation. Both are **cross-region inference profiles** that route requests to the nearest available region.
+
+Override either with `model:` / `lightModel:` in `.mergewatch.yml` — see the [configuration reference](/configuration/mergewatch-yml).
 
 ## Bedrock model access
 
@@ -63,22 +65,26 @@ Bedrock supports **cross-region inference profiles** that automatically route re
 | `eu.` | European regions (eu-west-1) |
 | `ap.` | Asia Pacific regions (ap-northeast-1, ap-southeast-1, ap-southeast-2) |
 
-The default model `us.anthropic.claude-3-5-haiku-20241022-v1:0` uses the `us.` prefix, routing across US regions. If your deployment is in Europe or Asia Pacific, override the model to use the appropriate prefix.
+The default model `us.anthropic.claude-opus-4-6-v1` uses the `us.` prefix, routing across US regions. If your deployment is in Europe or Asia Pacific, swap the prefix for the matching geography.
+
+<Warning>
+Not every model is available as an inference profile in every geography, and the availability list changes over time. Before setting a prefixed ID, confirm the exact profile exists in your account — the [Bedrock Model Access console](https://console.aws.amazon.com/bedrock/home#/modelaccess) lists the inference profile IDs you can actually call. An ID that is valid in `us.` may not exist under `eu.` or `ap.`.
+</Warning>
 
 ## Model override examples
 
 ```bash
 # US cross-region (default)
-LLM_MODEL=us.anthropic.claude-3-5-haiku-20241022-v1:0
+LLM_MODEL=us.anthropic.claude-opus-4-6-v1
 
-# Europe cross-region
-LLM_MODEL=eu.anthropic.claude-3-5-haiku-20241022-v1:0
+# Europe cross-region — substitute a profile ID your account lists
+LLM_MODEL=eu.anthropic.<model-id>
 
-# Asia Pacific cross-region
-LLM_MODEL=ap.anthropic.claude-3-5-haiku-20241022-v1:0
+# Asia Pacific cross-region — substitute a profile ID your account lists
+LLM_MODEL=ap.anthropic.<model-id>
 
 # Single-region (no cross-region routing)
-LLM_MODEL=anthropic.claude-3-5-haiku-20241022-v1:0
+LLM_MODEL=anthropic.<model-id>
 ```
 
 ## Next steps

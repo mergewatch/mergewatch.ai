@@ -13,18 +13,18 @@ Set these environment variables in your `.env` file or container environment:
 | --- | --- | --- |
 | `LLM_PROVIDER` | Yes | `anthropic` |
 | `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
-| `LLM_MODEL` | Yes | Anthropic model ID to use (e.g., `claude-sonnet-4-20250514`) |
+| `LLM_MODEL` | Yes | Anthropic model ID to use (e.g., `claude-opus-4-6`) |
 
 <Note>
-When `LLM_PROVIDER=anthropic`, you **must** set `LLM_MODEL` to an Anthropic-native model ID. The built-in defaults (`us.anthropic.claude-sonnet-4-20250514-v1:0` for the primary model and `us.anthropic.claude-haiku-4-5-20251001-v1:0` for the light model) are [Bedrock inference profile IDs](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) and are not valid on the Anthropic API.
+When `LLM_PROVIDER=anthropic`, you **must** set `LLM_MODEL` to an Anthropic-native model ID. The built-in defaults (`us.anthropic.claude-opus-4-6-v1` for the primary model and `us.anthropic.claude-haiku-4-5-20251001-v1:0` for the light model) are [Bedrock inference profile IDs](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) and are not valid on the Anthropic API.
 </Note>
 
 ## Model roles
 
 MergeWatch uses two model slots per review:
 
-- **Primary model** (`model` in `.mergewatch.yml`) — runs the agent pipeline (security, bugs, style, error handling, test coverage, comment accuracy). Use **Claude Sonnet 4** for the best review quality.
-- **Light model** (`lightModel` in `.mergewatch.yml`) — runs the summary and diagram passes. **Claude Haiku 4.5** is a good cost-optimized choice here.
+- **Primary model** (`model` in `.mergewatch.yml`) — runs the agent pipeline (security, bugs, style, error handling, test coverage, comment accuracy). Use an **Opus-tier** model; `claude-opus-4-6` matches the Bedrock default exactly.
+- **Light model** (`lightModel` in `.mergewatch.yml`) — runs the summary and diagram passes. **`claude-haiku-4-5`** is the cost-optimized choice, and the native equivalent of the built-in `lightModel` default.
 
 Setting `LLM_MODEL` overrides **both** slots with the same model. For split primary/light models, configure them in `.mergewatch.yml` instead — see [mergewatch.yml reference](/configuration/mergewatch-yml).
 
@@ -35,16 +35,18 @@ Setting `LLM_MODEL` overrides **both** slots with the same model. For split prim
 LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-api03-...
 
-# Pick a model — Sonnet for the highest review quality
-LLM_MODEL=claude-sonnet-4-20250514
+# Pick a model — Opus 4.6 matches the Bedrock default
+LLM_MODEL=claude-opus-4-6
 ```
 
 ## Model suggestions
 
 | Anthropic model ID | Best for |
 | --- | --- |
-| `claude-sonnet-4-20250514` | Recommended. Highest review quality for deep agent analysis. |
-| `claude-haiku-4-5-20251001` | Cost-optimized. Faster and cheaper; good for summary/diagram. |
+| `claude-opus-4-6` | Recommended. The native equivalent of the built-in Bedrock default, so review behavior matches the documented defaults. |
+| `claude-opus-5` | Current Opus tier. Higher capability than 4.6; use it if you want the newest model rather than parity with the defaults. |
+| `claude-sonnet-5` | Balanced. Lower cost than Opus with strong coding and review quality. |
+| `claude-haiku-4-5` | Cost-optimized. Faster and cheaper; the native equivalent of the built-in `lightModel`. |
 
 ## Pricing
 
