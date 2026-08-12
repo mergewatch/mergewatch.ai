@@ -174,7 +174,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart) | Warnings dispute-rate vs criticals dispute-rate across 7d/30d/90d windows, with annotation when warnings exceed criticals × 1.5 across two adjacent windows (FB-I) | 2m | 60s | FB-I |
 | [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J |
 | [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K |
-| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection-target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
+| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection--target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
 | [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
 | [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
 | [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2) | 2m | 60s | FP-J |
@@ -195,6 +195,19 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 |
 | [E2E-67](#e2e-67-global-env-pricing-for-the-llm_model-233) | Self-hosted global pricing: `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` price whatever `LLM_MODEL` is set to (e.g. a Bedrock inference-profile ARN) for full reviews **and** inline replies — no per-repo config; per-repo `pricing:` wins; `0`/`0` = real $0; partial/invalid → one-time warn (#233) | 3m | 30s | #233 |
 | [E2E-68](#e2e-68-org-custom-agents-235) | Org admins define custom review agents in the dashboard (Settings → Custom Agents), scoped to all/selected repos with optional path/language targeting; advisory vs blocking (blocking critical → REQUEST_CHANGES + failing check); union with repo `.mergewatch.yml` (org wins on name clash); admin-only edit, members read-only; both backends (#235) | 3m | 60s | #235 |
+| [E2E-69](#e2e-69-mcp--review_diff-runs-the-pipeline-on-a-supplied-diff) | MCP `review_diff` reviews a supplied diff with no PR; `repo` loads that repo's config + conventions; review recorded `agentAuthored: true`; HTTP + stdio parity | 3m | 60s | MCP |
+| [E2E-70](#e2e-70-mcp--get_review_status-and-the-conventions-resource) | MCP `get_review_status` returns the latest review row; `mergewatch://conventions/{owner}/{repo}` serves resolved conventions as `text/markdown` | 2m | 30s | MCP |
+| [E2E-71](#e2e-71-mcp--api-key-scope-enforcement-and-revocation) | API keys are admin-only, shown once, hashed at rest; scoped keys rejected off-scope (`-32001`); revocation effective on the next request | 3m | 30s | MCP |
+| [E2E-72](#e2e-72-mcp--session-billing-dedup-30-minute-window) | Repeat `review_diff` calls sharing a `sessionId` bill only the positive delta within a 30-minute window | 4m | 60s | MCP |
+| [E2E-73](#e2e-73-billing--free-tier-exhaustion-blocks-reviews) | 5 lifetime free reviews per installation; the 6th blocks **before** the LLM call; MCP returns `-32002`; one notification, not one per PR | 4m | 60s | billing |
+| [E2E-74](#e2e-74-billing--top-up-and-auto-reload) | Manual top-up; auto-reload off by default; concurrent drops below threshold produce exactly one charge (`autoReloadInFlight` mutex) | 4m | 60s | billing |
+| [E2E-75](#e2e-75-skip--maxfiles-ceiling) | Over-`maxFiles` PRs skip with a **visible** check run (default 50, inclusive boundary); `@mergewatch review` overrides | 1m | 30s | core |
+| [E2E-76](#e2e-76-skip--reviewonmention-false) | `reviewOnMention: false` suppresses mention-triggered reviews; skip attributed to `reviewOnMentionOff`, not `autoReviewOff` | 1m | 30s | core |
+| [E2E-77](#e2e-77-diff-filter--excludepatterns) | `excludePatterns` removes files from the diff sent to agents without changing the PR-skip decision; excluding everything yields a clean review, not a crash | 2m | 60s | core |
+| [E2E-78](#e2e-78-output-shaping--minseverity-maxfindings-postsummaryonclean) | `minSeverity` filters by tier; `maxFindings` truncates **by rank** and discloses it; `postSummaryOnClean` gates the clean-PR comment | 3m | 60s | core |
+| [E2E-79](#e2e-79-ux-block--comment-presentation) | `ux` toggles change only their own section; `tone` rewords without changing findings; `commentHeader` is escaped against injection | 3m | 60s | core |
+| [E2E-80](#e2e-80-conventions--discovery-order-and-the-16-kb-cap) | Conventions resolve first-hit-wins in documented order; explicit `conventions:` never falls back on miss; >16 KB truncates with a visible marker | 3m | 60s | core |
+| [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core |
 
 ---
 
@@ -2444,6 +2457,378 @@ The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, ap
 
 ---
 
+### E2E-69: MCP — `review_diff` runs the pipeline on a supplied diff
+
+**Status:** ⬜ NOT YET COVERED — the MCP server (`packages/mcp`) had no fixture before this card.
+
+**Behavior:** An external coding agent calls the `review_diff` tool over MCP and gets a full review of a diff that is **not** attached to any pull request. Required param `diff` (unified diff); optional `repo` (`owner/repo` — loads that repo's `.mergewatch.yml` + resolved conventions), `description` (freeform intent, surfaced to agent prompts), and `sessionId` (billing dedup — see E2E-72). Reviews arriving this way are marked **`agentAuthored: true`**, which flips them into the stricter `agentReview` path. Two transports: HTTP/JSON-RPC 2.0 over a Lambda Function URL (SaaS) and stdio (self-hosted).
+
+**How to run.** With a valid API key (E2E-71) and the MCP Function URL from the `McpFunctionUrl` stack output.
+
+```bash
+curl -s "$MCP_URL" \
+  -H "Authorization: Bearer $MW_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"review_diff",
+        "arguments":{
+          "repo":"<owner>/mergewatch-fixtures",
+          "description":"Add an unvalidated query param to the handler",
+          "diff":"--- a/src/utils.ts\n+++ b/src/utils.ts\n@@\n+export function q(req){ return db.raw(`SELECT * FROM t WHERE id=${req.query.id}`) }\n"
+        }}}'
+```
+
+1. **Baseline:** `tools/list` returns exactly `review_diff` and `get_review_status` with the schemas in `http-dispatcher.ts`.
+2. **Review:** the call above returns findings for the injected SQL concern.
+3. **Repo config is honoured:** set `minSeverity: critical` in the fixture repo's `.mergewatch.yml`, re-run with the same `repo` → warnings disappear. Re-run **without** `repo` → the config is not applied.
+4. **Conventions are honoured:** add a convention that forbids the pattern under test; confirm the finding's framing reflects it when `repo` is passed.
+5. **Agent-authored:** confirm the stored review row has `agentAuthored: true`.
+6. **stdio transport:** run the same tool call against the self-hosted stdio server; identical findings.
+
+**Pass:**
+- [ ] `tools/list` advertises both tools; `resources/list` advertises the conventions resource.
+- [ ] `review_diff` with only `diff` returns findings (no `repo` required).
+- [ ] Passing `repo` loads that repo's `.mergewatch.yml` **and** conventions; omitting it does not.
+- [ ] `description` reaches the agent prompts (visible in the finding's reasoning).
+- [ ] The review is recorded with `agentAuthored: true`.
+- [ ] Malformed params → JSON-RPC `-32602`; internal failure → `-32603`.
+- [ ] Same result over stdio and HTTP.
+
+**Fail signals:**
+- ❌ A diff citing code the repo doesn't contain still produces "grounded" criticals — grounding must apply here exactly as on a PR.
+- ❌ `repo` is accepted but the config/conventions are silently ignored.
+- ❌ The review is stored without `agentAuthored`, so `agentReview` strict mode never engages.
+- ❌ A tool error is returned as HTTP 500 instead of a JSON-RPC error object.
+
+---
+
+### E2E-70: MCP — `get_review_status` and the conventions resource
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** `get_review_status` (required `repo`, `prNumber` ≥ 1) returns the latest review row for a PR, letting an agent poll a review it triggered. The `mergewatch://conventions/{owner}/{repo}` resource serves the repo's resolved conventions markdown (`text/markdown`) — the same text the review agents receive, resolved through the documented order (`conventions:` → `AGENTS.md` → `CONVENTIONS.md` → `.mergewatch/conventions.md`).
+
+**How to run.**
+1. Open any fixture PR and let it review (E2E-01).
+2. Call `get_review_status` with that `repo` + `prNumber` → returns the latest row (status, score, findings count).
+3. Call it with `prNumber: 0` → `-32602`.
+4. Call it for a PR that was never reviewed → an empty/absent result, **not** an error.
+5. Read `resources/read` on `mergewatch://conventions/<owner>/mergewatch-fixtures` → returns the repo's `AGENTS.md` content as `text/markdown`.
+6. Delete `AGENTS.md`, add `CONVENTIONS.md` → the resource now serves that file (order fallback).
+7. Point `conventions:` at a custom path → that file wins over both.
+
+**Pass:**
+- [ ] `get_review_status` returns the most recent review for a reviewed PR.
+- [ ] `prNumber < 1` or a missing `repo` → `-32602`.
+- [ ] An unreviewed PR returns an empty result rather than an error.
+- [ ] The conventions resource returns `text/markdown` and follows the documented discovery order.
+- [ ] A repo with **no** conventions file returns an empty resource, not a 500.
+
+**Fail signals:**
+- ❌ `get_review_status` returns a stale review after a re-review.
+- ❌ The conventions resource ignores `conventions:` and always reads `AGENTS.md`.
+- ❌ Reading conventions for a repo outside the key's scope succeeds (see E2E-71).
+
+---
+
+### E2E-71: MCP — API key scope enforcement and revocation
+
+**Status:** ⬜ NOT YET COVERED — this is the authentication boundary for the whole MCP surface.
+
+**Behavior:** Every MCP request authenticates with `Authorization: Bearer mw_sk_…`. Keys are created in the dashboard (**Settings → API keys**) by **installation admins only**, are stored hashed (the raw value is returned exactly once at creation), and carry a scope of either `all` or an explicit `owner/repo` allowlist. A scoped key operating outside its list is rejected. `lastUsedAt` updates on each authenticated request.
+
+**How to run.**
+1. **Admin-only:** as a non-admin member, POST `/api/api-keys` → **403**. As an admin → **200** with a `raw` key.
+2. **Shown once:** re-list keys → only a display prefix (`mw_sk_…<hash8>`), never the raw value.
+3. **Validation:** create with an empty label → 400; label > 100 chars → 400; `scope: []` → 400 ("Select at least one repo").
+4. **Scope enforcement:** create a key scoped to repo B only. Call `review_diff` with `repo: <owner>/A` → **`-32001`**. With repo B → succeeds.
+5. **Missing / malformed auth:** no `Authorization` header → `-32001`; `Authorization: token abc` (not `Bearer`) → `-32001`.
+6. **Revocation:** revoke the key, immediately retry → `-32001` on the very next request (no grace period).
+7. **lastUsedAt:** confirm it advances after a successful call.
+
+**Pass:**
+- [ ] Non-admins cannot create or revoke keys (403).
+- [ ] The raw key appears exactly once; only a hash-derived prefix is listed afterwards.
+- [ ] Scoped keys are rejected for out-of-scope repos with `-32001`.
+- [ ] Missing/malformed `Authorization` → `-32001`, never a 500 or a stack trace.
+- [ ] Revocation takes effect on the next request.
+- [ ] `lastUsedAt` updates on authenticated use.
+
+**Fail signals:**
+- ❌ A revoked key keeps working until a cache expires.
+- ❌ An out-of-scope `repo` is silently ignored and the review runs unscoped.
+- ❌ Any response echoes the raw key or its hash.
+- ❌ A scoped key can read another repo's conventions via `resources/read`.
+
+---
+
+### E2E-72: MCP — session billing dedup (30-minute window)
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** Coding agents iterate, so repeated `review_diff` calls carrying the same `sessionId` collapse into one billing session. Within a **30-minute** window each call is billed only the **positive delta** above the highest cost billed so far, and the session's iteration counter increments. Without this, an agent that reviews a diff five times pays five times.
+
+**How to run.** On a paid (non-free-tier) installation so charges are visible.
+1. Call `review_diff` with `sessionId: <uuid>` on a small diff. Record the charge and the balance.
+2. Call again with the **same** `sessionId` and the **same** diff → charge is **0** (already covered by the session max); iteration increments to 2.
+3. Call again with the same `sessionId` and a **larger** diff whose cost exceeds the session max → charged only the **difference**, not the full amount.
+4. Call with a **new** `sessionId` → charged in full.
+5. Wait out the 30-minute window, reuse the original `sessionId` → charged in full again (window expired).
+6. Omit `sessionId` entirely → every call charged in full.
+
+**Pass:**
+- [ ] Repeat calls in one session with no cost increase are billed 0.
+- [ ] A costlier call in an open session is billed only the delta.
+- [ ] A new `sessionId` starts a fresh session billed in full.
+- [ ] The window expires at 30 minutes and billing resets.
+- [ ] Omitting `sessionId` disables dedup rather than erroring.
+- [ ] The iteration counter reflects the true number of calls.
+
+**Fail signals:**
+- ❌ Every iteration is billed in full (dedup not applied) — makes the tool too expensive to iterate with.
+- ❌ A **cheaper** later call produces a negative charge or a refund.
+- ❌ Two concurrent calls on one `sessionId` both bill in full (race on the session max).
+- ❌ A `sessionId` supplied by one installation affects another's billing.
+
+---
+
+### E2E-73: Billing — free-tier exhaustion blocks reviews
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** Each installation gets **5 lifetime free reviews** (`FREE_REVIEW_LIMIT`). After that, a review runs only when `balanceCents >= MIN_BALANCE_CENTS` (5¢ / `MIN_BALANCE_USD` $0.05). When neither holds, the review is **blocked before it runs** — not run-and-billed — and the installation is notified once.
+
+**How to run.** On a fresh installation with no payment method.
+1. Open 5 PRs that each produce a real review. Confirm all 5 run and the free counter increments to 5/5.
+2. Open a 6th PR → the review is **blocked**. A notification lands (`MergeWatch: reviews paused — credits required`).
+3. Confirm the block is logged with `reason=` and that **no LLM call was made** (no cost record written).
+4. Confirm the MCP surface returns **`-32002`** (billing blocked) for the same installation.
+5. Add credits above 5¢ → the next PR reviews normally.
+6. Drain the balance below 5¢ → blocked again.
+
+**Pass:**
+- [ ] Exactly 5 free reviews run; the 6th is blocked.
+- [ ] The free counter is per **installation** and lifetime (not per repo, not per month).
+- [ ] Blocking happens **before** the LLM call — no `ReviewCostRecord` for a blocked review.
+- [ ] The block notification fires once, not on every subsequent PR.
+- [ ] MCP returns `-32002`; the PR surface explains how to resume.
+- [ ] Topping above the minimum balance resumes reviews without a restart.
+
+**Fail signals:**
+- ❌ A blocked review still calls the LLM (cost incurred with nothing delivered).
+- ❌ The free counter resets on reinstall, or counts per repo.
+- ❌ Reviews silently do nothing with no PR-visible explanation.
+- ❌ The block notification repeats on every PR.
+
+---
+
+### E2E-74: Billing — top-up and auto-reload
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** Credits are prepaid via Stripe. **Auto-reload** tops the balance up when it drops below a threshold, guarded by a conditional write on `autoReloadInFlight` so concurrent reviews cannot double-charge.
+
+**How to run.** On a SaaS installation with a test payment method.
+1. **Manual top-up:** add credits → balance increases; a Stripe charge is recorded; no subscription is created.
+2. **Auto-reload off (default):** drain the balance below the minimum → reviews block (E2E-73), no charge occurs.
+3. **Auto-reload on:** enable it, drain the balance → a top-up fires automatically and reviews continue uninterrupted.
+4. **Concurrency:** trigger several reviews simultaneously while the balance sits just below the threshold → **exactly one** top-up charge, not one per review.
+5. **Failure path:** with a card that declines, confirm the failure surfaces and reviews block rather than running unpaid.
+
+**Pass:**
+- [ ] Manual top-up increases the balance and creates no recurring subscription.
+- [ ] Auto-reload is off unless explicitly enabled.
+- [ ] With auto-reload on, a drained balance self-heals without blocking a review.
+- [ ] Concurrent drops below the threshold produce exactly one charge (mutex holds).
+- [ ] A declined card blocks reviews and surfaces the failure.
+
+**Fail signals:**
+- ❌ Two simultaneous reviews each trigger a top-up (the `autoReloadInFlight` guard is not holding).
+- ❌ Auto-reload charges when disabled.
+- ❌ A declined auto-reload lets reviews run unpaid.
+
+---
+
+### E2E-75: Skip — `maxFiles` ceiling
+
+**Status:** ⬜ NOT YET COVERED — `maxFiles` is a `RulesSkipKind` with no fixture.
+
+**Behavior:** A PR with more changed files than `rules.maxFiles` (default **50**) is skipped with a **visible** check run explaining why — unlike `autoReviewOff`, this skip is surfaced, not silent.
+
+**How to run.**
+1. Set `rules.maxFiles: 3`. Open a PR touching 4 files → skipped with a visible "Review skipped" check run naming the limit.
+2. Open a PR touching exactly 3 files → reviewed (boundary is inclusive).
+3. On the skipped PR, comment `@mergewatch review` → the review runs (mention overrides the skip).
+4. Remove the override and confirm the default of 50 applies when `maxFiles` is unset.
+
+**Pass:**
+- [ ] Over-limit PRs are skipped with a **visible** check run stating the reason.
+- [ ] The boundary is inclusive — exactly `maxFiles` files still reviews.
+- [ ] `@mergewatch review` overrides the skip.
+- [ ] Default is 50 when unset.
+
+**Fail signals:**
+- ❌ The skip is silent (that behavior is reserved for `autoReviewOff`).
+- ❌ An over-limit PR is reviewed anyway, burning tokens on a 200-file diff.
+- ❌ The check run doesn't say which limit was hit.
+
+---
+
+### E2E-76: Skip — `reviewOnMention: false`
+
+**Status:** ⬜ NOT YET COVERED — `reviewOnMentionOff` is a `RulesSkipKind` with no fixture.
+
+**Behavior:** With `rules.reviewOnMention: false`, an `@mergewatch review` mention does **not** trigger a review. This is the inverse of E2E-05 and the two interact: `autoReview: false` + `reviewOnMention: false` means nothing can trigger a review at all.
+
+**How to run.**
+1. Set `reviewOnMention: false` (leaving `autoReview: true`). Open a PR → reviews automatically.
+2. Comment `@mergewatch review` on it → **no** new review; a skip is recorded with the `reviewOnMentionOff` reason.
+3. Set **both** `autoReview: false` and `reviewOnMention: false`. Open a PR and mention → nothing happens by either path.
+4. Confirm `@mergewatch <question>` (conversational) behaviour in each combination is deliberate and documented.
+
+**Pass:**
+- [ ] `reviewOnMention: false` suppresses mention-triggered reviews while auto-review still works.
+- [ ] The skip reason recorded is `reviewOnMentionOff`, distinguishable from `autoReviewOff`.
+- [ ] Both flags off → no path triggers a review.
+
+**Fail signals:**
+- ❌ Mentions still trigger reviews (the flag is ignored).
+- ❌ The skip is attributed to `autoReviewOff`, making the dashboard misleading.
+
+---
+
+### E2E-77: Diff filter — `excludePatterns`
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** `excludePatterns` removes matching files from the diff **sent to the agents**, without affecting whether the PR is reviewed at all. It is the diff-filter layer — distinct from `includePatterns` (E2E-07), which operates at the PR-skip layer.
+
+**How to run.**
+1. Set `excludePatterns: ["**/*.generated.ts"]`. Open a PR changing both `src/utils.ts` and `src/api.generated.ts`, each with an obvious planted issue.
+2. Confirm the review flags the issue in `utils.ts` and **never mentions** `api.generated.ts`.
+3. Open a PR touching **only** `api.generated.ts` → the PR is still reviewed (it is not trivial), but the diff sent to agents is empty; confirm the outcome is a clean review, not a crash.
+4. Confirm `excludePatterns` and `includePatterns` compose as documented: a path can be force-included for the skip decision and still excluded from the diff.
+
+**Pass:**
+- [ ] Excluded files never appear in findings, inline comments, or the diagram.
+- [ ] Excluding every changed file yields a clean review, not an error.
+- [ ] `excludePatterns` does not change the PR-skip decision.
+- [ ] Defaults (`**/*.lock`, `**/package-lock.json`, `**/dist/**`, `**/node_modules/**`) apply when unset.
+
+**Fail signals:**
+- ❌ An excluded file still produces an inline comment.
+- ❌ Excluding everything throws instead of returning a clean review.
+- ❌ `excludePatterns` silently suppresses the whole PR (confusing it with `includePatterns`).
+
+---
+
+### E2E-78: Output shaping — `minSeverity`, `maxFindings`, `postSummaryOnClean`
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** Three independent knobs on what reaches the PR: `minSeverity` (`info` | `warning` | `critical`) drops lower-severity findings; `maxFindings` caps how many are posted; `postSummaryOnClean` decides whether a clean PR gets a comment at all.
+
+**How to run.** Use a diff that reliably produces a mix of info, warning, and critical findings.
+1. `minSeverity: info` (default) → all three tiers appear.
+2. `minSeverity: warning` → info findings gone, warnings and criticals remain.
+3. `minSeverity: critical` → only criticals.
+4. `maxFindings: 3` on a diff producing more → exactly 3 posted, and they are the **highest-ranked**, not the first found.
+5. `postSummaryOnClean: false` on a clean PR → no summary comment; the check run still reports.
+6. `postSummaryOnClean: true` → the "all clear" summary appears.
+
+**Pass:**
+- [ ] Each `minSeverity` level filters exactly as documented; the boundary tier is inclusive.
+- [ ] `maxFindings` truncates by rank, keeping the most severe.
+- [ ] Truncation is disclosed (the reader is told findings were withheld) rather than silent.
+- [ ] `postSummaryOnClean: false` suppresses the comment but not the check run.
+
+**Fail signals:**
+- ❌ `maxFindings` keeps arbitrary findings rather than the top-ranked ones.
+- ❌ Truncation is silent, so a reader believes they have seen everything.
+- ❌ `minSeverity: critical` also hides the merge score.
+
+---
+
+### E2E-79: UX block — comment presentation
+
+**Status:** ⬜ NOT YET COVERED — the whole `ux` config block is untested.
+
+**Behavior:** `ux` controls the review comment's presentation: `tone` (`collaborative` | `direct` | `advisory`), `showWorkDone`, `showSuppressedCount`, `reviewerChecklist`, `allClearMessage`, and `commentHeader` (replaces the default logo header).
+
+**How to run.** Run one fixture diff repeatedly, changing only the `ux` block.
+1. `tone: collaborative` (default) vs `direct` vs `advisory` → finding phrasing shifts; **the set of findings does not**.
+2. `showWorkDone: false` → the "work done" section disappears.
+3. `showSuppressedCount: true` → the comment reports how many findings were removed by dedup and quality filters (ties to E2E-29 / E2E-30 / E2E-32).
+4. `reviewerChecklist: true` → a checklist derived from the top findings renders.
+5. `allClearMessage: false` on a clean PR → no special all-clear block.
+6. `commentHeader: "Acme Review Bot"` → replaces the default header; confirm no HTML/markdown injection is possible through it.
+
+**Pass:**
+- [ ] Each toggle changes only its own section.
+- [ ] `tone` changes phrasing without changing which findings are reported.
+- [ ] `showSuppressedCount` reports a number consistent with what the filters actually dropped.
+- [ ] `commentHeader` is escaped — markdown or HTML in it cannot break the comment or inject links.
+
+**Fail signals:**
+- ❌ `tone: direct` suppresses findings rather than rewording them.
+- ❌ `commentHeader` allows raw HTML injection into every review comment.
+- ❌ `showSuppressedCount` reports 0 when filters demonstrably dropped findings.
+
+---
+
+### E2E-80: Conventions — discovery order and the 16 KB cap
+
+**Status:** ⬜ NOT YET COVERED — E2E-27 exercises conventions *content* (W11) but never the resolution mechanism.
+
+**Behavior:** Conventions resolve in a fixed order — `conventions:` in `.mergewatch.yml`, then `AGENTS.md`, `CONVENTIONS.md`, `.mergewatch/conventions.md` — **first hit wins, later candidates are never fetched**. When `conventions:` is set explicitly, only that path is tried, with **no fallback**. Content is capped at **16 KB** (`CONVENTIONS_MAX_BYTES`); beyond that it is truncated with a visible `[truncated — showing first 16 KB]` marker.
+
+**How to run.**
+1. Place distinguishable marker text in all four locations. Confirm `AGENTS.md` wins when `conventions:` is unset.
+2. Delete `AGENTS.md` → `CONVENTIONS.md` wins. Delete that → `.mergewatch/conventions.md` wins.
+3. Set `conventions: docs/house-rules.md` → that file wins over all four.
+4. Set `conventions:` to a **missing** path → **no** conventions are injected, and auto-discovery does **not** silently fall back to `AGENTS.md`.
+5. Commit a conventions file > 16 KB → the injected text is truncated and carries the marker; the review still completes.
+6. Confirm the review comment names which file was used (`sourcePath`).
+
+**Pass:**
+- [ ] Discovery order is exactly as documented; the first hit wins.
+- [ ] An explicit `conventions:` path never falls back on miss.
+- [ ] Over-cap files truncate at 16 KB with a visible marker, and the review still runs.
+- [ ] The source path is surfaced so authors can tell which file applied.
+- [ ] A repo with no conventions file reviews normally.
+
+**Fail signals:**
+- ❌ A missing explicit `conventions:` path silently falls back to `AGENTS.md` — the author believes their rules applied when they did not.
+- ❌ An over-cap file truncates mid-sentence with no marker, so the agents act on half a rule.
+- ❌ Multiple candidates are concatenated instead of first-hit-wins.
+
+---
+
+### E2E-81: Codebase awareness — file-request budget
+
+**Status:** ⬜ NOT YET COVERED.
+
+**Behavior:** With `codebaseAwareness: true`, agents may request files beyond the diff for cross-file context, bounded by `maxFileRequestRounds` (1–2) and `maxContextKB`. The budget exists so a curious agent cannot pull an unbounded amount of the repository into the prompt.
+
+**How to run.** Use a diff whose correctness depends on a file **not** in the diff (e.g. a caller changed to match a helper defined elsewhere).
+1. `codebaseAwareness: false` → the agent cannot see the helper; confirm it either says so or does not fabricate its contents.
+2. `codebaseAwareness: true`, `maxFileRequestRounds: 1` → the helper is fetched and the finding reflects its real contents.
+3. Set `maxContextKB` very low → confirm fetching stops at the budget and the review still completes with a partial-context note rather than failing.
+4. Confirm `maxFileRequestRounds: 2` allows a second round and that a third is never attempted.
+
+**Pass:**
+- [ ] With awareness off, agents do not invent the contents of unfetched files.
+- [ ] With it on, relevant out-of-diff files are fetched and change the finding.
+- [ ] `maxFileRequestRounds` and `maxContextKB` are both enforced.
+- [ ] Hitting the budget degrades gracefully — partial context, completed review.
+
+**Fail signals:**
+- ❌ An agent describes a file it never fetched (hallucinated context — the exact failure grounding exists to prevent).
+- ❌ The budget is exceeded, inflating cost on large repos.
+- ❌ Hitting the cap fails the review instead of degrading.
+
+---
+
 ## Quick smoke test (5 minutes)
 
 When you just want to confirm the deploy didn't immediately break things:
@@ -2495,6 +2880,28 @@ When this runbook stops feeling like fun, build the harness:
 3. A GitHub Action on the main repo that runs `e2e/run.ts` against every fixture nightly + after every deploy.
 
 The main flakiness risk is webhook timing (asynchronous Lambda invokes can take 30-90s). Build in generous timeouts with retries.
+
+---
+
+## Known coverage gaps
+
+Tracked deliberately so they are decisions rather than oversights. Each is a candidate fixture nobody has written yet.
+
+| Area | Why it is not covered | Risk if it breaks |
+|---|---|---|
+| **LLM provider matrix** | Every fixture runs against one provider. `anthropic`, `bedrock`, `litellm`, and `ollama` are never exercised side by side. | A provider-specific regression (auth, model-ID shape, token accounting) ships unnoticed to self-hosters. |
+| **Self-hosted deployment smoke** | Fixtures assume a running install; nothing tests `docker compose up` from a clean machine, migrations, or the documented platform guides. | The quickstart breaks and nobody finds out until a new user reports it. |
+| **`lightModel` split** | No fixture pins summary/diagram passes to the light model or verifies the split is honoured. | Cost regressions — the expensive model silently runs every pass. |
+| **`maxTokensPerAgent` / `customStyleRules`** | Documented config with no fixture. | Silent no-ops. |
+| **`agentReview` sub-flags** | E2E-16 covers detection; `strictChecks`, `autoIterate`, and `maxIterations` are untested. | An agent-authored PR loops indefinitely, or strict mode never engages. |
+| **Webhook event coverage** | `opened` / `synchronize` / `check_run.rerequested` are covered; `reopened` and `ready_for_review` are asserted only indirectly. | A reopened PR gets no review. |
+| **`@mergewatch <question>` conversational path** | Mentioned in E2E-05's neighbourhood but never asserted on its own. | The question path regresses into a full review (cost) or silence (UX). |
+| **Dashboard authz** | E2E-71 covers API-key admin gating; the dashboard's own read/write boundaries are otherwise untested. | A member edits installation settings. |
+
+<!-- Two documented behaviors were checked against the code while writing E2E-75/76 and do NOT exist. No fixtures were written for them, deliberately:
+     1. "autoReview: false posts a user-actionable check run" — the code goes fully silent (review-agent.ts:396, skip-logic.ts:151). E2E-04 is correct; the published docs are wrong.
+     2. "Repository is paused in the dashboard" as a skip reason — there is no pause feature; the only "paused" in the codebase is billing-driven (block-notify.ts). E2E-73 covers the real behavior.
+     Both are documentation defects, tracked outside this runbook. -->
 
 ---
 
