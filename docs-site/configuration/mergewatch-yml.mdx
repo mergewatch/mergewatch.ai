@@ -205,7 +205,7 @@ The `rules` object controls which files are reviewed and when reviews are trigge
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `maxFiles` | `number` | `50` | Maximum number of changed files to review. PRs exceeding this limit are skipped with a comment explaining why. |
-| `autoReview` | `boolean` | `true` | When `true`, MergeWatch reviews every PR automatically on open and synchronize events. When `false`, MergeWatch posts a neutral check run on each PR titled *"Auto-review is disabled for this repository"* instructing the author to comment `@mergewatch review` to trigger one — see [Auto-review off](/configuration/skip-rules#auto-review-off). |
+| `autoReview` | `boolean` | `true` | When `true`, MergeWatch reviews every PR automatically on open and synchronize events. When `false`, MergeWatch leaves no trace on the PR at all — no reaction, no check run, no comment — and only a `@mergewatch` mention triggers a review. See [Auto-review off](/configuration/skip-rules#auto-review-off). |
 | `reviewOnMention` | `boolean` | `true` | When `true`, MergeWatch runs a review when mentioned in a PR comment (e.g., `@mergewatch review`). Works even if `autoReview` is `false`. |
 | `skipDrafts` | `boolean` | `true` | Skip draft pull requests. Set to `false` to review drafts automatically. |
 | `ignoreLabels` | `string[]` | `["skip-review"]` | Skip PRs with any of these GitHub labels. PRs matching these labels are not reviewed. |

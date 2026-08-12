@@ -47,7 +47,7 @@ MergeWatch deliberately skips reviews in the following situations:
 - **Draft PRs** — Skipped by default. Set `rules.skipDrafts: false` in your `.mergewatch.yml` to review drafts.
 - **All changed files are built-in trivial** — If every file in the PR matches MergeWatch's built-in trivial-paths list (lock files, docs, build artifacts, editor/CI config), the PR is skipped. Use `includePatterns` to opt specific paths back in.
 - **PR exceeds `rules.maxFiles` limit** — PRs with more changed files than the configured `maxFiles` value (default: 50) are skipped with a comment explaining why.
-- **Repository is paused** — If MergeWatch is paused for the repository in the [dashboard](/dashboard/settings), no reviews run until it is resumed.
+- **Billing blocked (managed SaaS)** — Once the free tier is used up, reviews require a balance above the minimum. Below it, reviews are blocked *before* the model is called rather than run and billed. See [Billing](/dashboard/billing).
 </Warning>
 
 ## Review status values
@@ -91,7 +91,7 @@ There are two ways to manually re-trigger a review:
 
 Both paths work in all scenarios:
 
-- Even when `autoReview: false` is set in your configuration. In this mode MergeWatch posts a neutral check run titled *"Auto-review is disabled for this repository"* with a one-line instruction to comment `@mergewatch review` — see [Auto-review off](/configuration/skip-rules#auto-review-off).
+- Even when `autoReview: false` is set in your configuration. In this mode MergeWatch leaves no trace on the PR at all — no reaction, no check run, no comment — so a mention is the only way to get a review. See [Auto-review off](/configuration/skip-rules#auto-review-off).
 - After a failed review to retry
 - After pushing new commits, if you do not want to wait for the automatic trigger
 - On PRs that were previously skipped (the skip rules are re-evaluated)

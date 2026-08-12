@@ -87,17 +87,18 @@ A PR that touches only files matching `includePatterns` is reviewed even though 
 
 ## Auto-review off
 
-When `rules.autoReview: false` is set, MergeWatch does not run the review pipeline on PR open or synchronize events — but it does post a **user-actionable check run** to the PR's merge box so the author knows reviews are intentionally off and how to trigger one:
+When `rules.autoReview: false` is set, MergeWatch **leaves no trace on the pull request**. No 👀 reaction, no check run, no summary comment, no formal review, and no stored review record — the config is evaluated before any GitHub side effect, so a parked installation is genuinely silent rather than quietly noisy.
 
-```text
-✓ Auto-review is disabled for this repository
-   Comment @mergewatch review on this PR to run a review.
-```
+Mention-triggered reviews (`@mergewatch review`, `@mergewatch summary`) bypass the gate and post a normal review as usual.
 
-The check run uses the `neutral` conclusion so it does not block branch protection. Mention-triggered reviews (`@mergewatch review`, `@mergewatch summary`) bypass the gate and post a normal review comment as usual.
+<Warning>
+`autoReview: false` is the **only** skip that is silent. Every other rule-based skip — drafts, ignored labels, `maxFiles` exceeded, `reviewOnMention: false` — posts a visible "Review skipped" check run with the reason.
+
+That asymmetry is deliberate. A parked repository should look untouched; a PR that *was* considered and deliberately skipped should say so, or authors are left wondering whether MergeWatch is broken.
+</Warning>
 
 <Note>
-This user-actionable copy is specific to the `autoReviewOff` skip kind. Other rule-based skips (drafts, label-ignored, `maxFiles` exceeded, `reviewOnMention: false`) post a generic "Review skipped" check run with the detailed reason as summary — those are intentional skips that don't need user-facing instructions.
+Because nothing appears on the PR, the way to confirm auto-review is off is the absence of a check run — plus a `autoReview off — silently skipping <owner>/<repo>#<N>` line in your logs. If you want a visible marker instead, leave `autoReview` on and use an ignored label ([label-based skip](#label-based-skip)), which skips visibly.
 </Note>
 
 ## Label-based skip
