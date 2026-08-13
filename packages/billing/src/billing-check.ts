@@ -72,7 +72,9 @@ export async function billingCheck(
     console.log(`[billing] allow install=${installationId} reason=oss repo=${repo?.repoFullName}`);
     return { status: 'allow', firstBlock: false, reason: 'oss' };
   }
-  const ossReason = repo ? oss.reason : undefined;
+  // Always the concrete reason — `no_repo_context` when OSS wasn't evaluated at
+  // all. Self-describing beats an undefined a reader has to reason about.
+  const ossReason = oss.reason;
   if (repo && oss.reason !== 'no_grant') {
     console.log(
       `[billing] oss not applied install=${installationId} repo=${repo.repoFullName} reason=${oss.reason}`,

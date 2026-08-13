@@ -168,6 +168,9 @@ describe('billingCheck — OSS Program (#261)', () => {
     mockGetFields.mockResolvedValue({ ...exhausted, ...activeGrant });
     const result = await billingCheck(client, table, installationId);
     expect(result.status).toBe('block');
+    // Self-describing rather than undefined; isLapsedOssGrant treats it as false,
+    // so the block copy stays the standard credits wording.
+    expect(result.ossReason).toBe('no_repo_context');
   });
 });
 
