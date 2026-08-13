@@ -60,6 +60,7 @@ import {
   blockingCriticalAgents,
   languagesFromFiles,
   findingMatchKeys,
+  resolveReviewModelId,
 } from '@mergewatch/core';
 import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
@@ -100,7 +101,11 @@ const FP_INSIGHTS_TABLE = process.env.FP_INSIGHTS_TABLE ?? DEFAULT_FP_INSIGHTS_T
 const PR_LIFECYCLE_TABLE = process.env.PR_LIFECYCLE_TABLE ?? DEFAULT_PR_LIFECYCLE_TABLE;
 const SATISFACTION_TABLE = process.env.SATISFACTION_TABLE ?? DEFAULT_SATISFACTION_TABLE;
 const REVIEW_COSTS_TABLE = process.env.REVIEW_COSTS_TABLE ?? DEFAULT_REVIEW_COSTS_TABLE;
-const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? 'us.anthropic.claude-opus-4-6-v1';
+// Last-resort model when the deploy-time parameter is unset. The deployed
+// value comes from infra/params/{dev,prod}.env via DEFAULT_BEDROCK_MODEL_ID;
+// this constant only applies to a stack that never received the parameter.
+const FALLBACK_BEDROCK_MODEL_ID = 'us.anthropic.claude-opus-4-6-v1';
+const DEFAULT_BEDROCK_MODEL_ID = process.env.DEFAULT_BEDROCK_MODEL_ID ?? FALLBACK_BEDROCK_MODEL_ID;
 const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch.ai';
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
@@ -598,7 +603,28 @@ export async function handler(
       console.log(`Excluded ${excludedFiles.length} file(s) from diff: ${excludedFiles.join(', ')}`);
     }
 
-    const modelId = installation?.modelId ?? DEFAULT_BEDROCK_MODEL_ID;
+    // Model resolution (#264). Precedence, most specific first:
+    //   1. installation.modelId — per-repo admin override on the installation row
+    //   2. .mergewatch.yml `model:` — the documented per-repo key
+    //   3. DEFAULT_BEDROCK_MODEL_ID — the deploy-time default
+    //
+    // Read the RAW yamlConfig, never runtimeConfig.model: mergeConfig always
+    // fills DEFAULT_CONFIG.model, so the merged value is truthy for every repo
+    // and using it here would silently override the deployed default
+    // everywhere. Only an explicitly-authored `model:` should win.
+    //
+    // Until #264 this line read `installation?.modelId ?? DEFAULT_...`, which
+    // ignored `model:` entirely — while the very next line honored
+    // `lightModel:`. Self-hosted (review-processor.ts) already resolved both
+    // from config, so the two runtimes disagreed about a documented setting.
+    const resolvedModel = resolveReviewModelId({
+      installationModelId: installation?.modelId,
+      repoConfigModel: yamlConfig?.model,
+      deployDefault: DEFAULT_BEDROCK_MODEL_ID,
+      fallback: FALLBACK_BEDROCK_MODEL_ID,
+    });
+    const modelId = resolvedModel.modelId;
+    console.log(`[model] ${repoFullName}#${prNumber} using ${modelId} (source=${resolvedModel.source})`);
     const lightModelId = runtimeConfig.lightModel;
 
     const modelName = Object.entries(SUPPORTED_MODELS)

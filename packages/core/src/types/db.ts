@@ -116,10 +116,16 @@ export interface InstallationItem {
 
   /**
    * Amazon Bedrock model ID override for this specific repository.
-   * If set, this takes precedence over the global DEFAULT_BEDROCK_MODEL_ID.
    *
-   * Use this to assign different models to different repos — for example,
-   * a larger model for critical repos or a smaller model for high-volume repos.
+   * Precedence (#264): this wins over `.mergewatch.yml` `model:`, which in turn
+   * wins over the deploy-time `DEFAULT_BEDROCK_MODEL_ID`.
+   *
+   * NOTE: nothing in the codebase currently *writes* this field — there is no
+   * dashboard control or API that sets it, so in practice it is only ever
+   * present if someone edited the row by hand. The supported way to pick a
+   * per-repo model is `model:` in `.mergewatch.yml`. It is read (not removed)
+   * so any hand-set row keeps working; if a dashboard control is added later,
+   * this is where it should land.
    *
    * Example: "us.anthropic.claude-sonnet-4-20250514-v1:0"
    */

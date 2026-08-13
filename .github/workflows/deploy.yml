@@ -139,16 +139,45 @@ jobs:
 
       - name: SAM deploy to dev
         working-directory: infra
+        env:
+          DEPLOYMENT_MODE: ${{ vars.DEPLOYMENT_MODE }}
         run: |
+          # Every stack parameter comes from infra/params/dev.env and is passed
+          # on every deploy. CloudFormation silently retains any parameter a
+          # deploy omits, which is how prod stayed pinned to a stale model (#264).
+          STACK_PARAMS=$(grep -vE '^\s*(#|$)' params/dev.env | tr '\n' ' ')
+          [ -n "$DEPLOYMENT_MODE" ] || { echo "::error::DEPLOYMENT_MODE repo variable is not set. Refusing to deploy rather than silently defaulting."; exit 1; }
+          echo "Deploying dev with: Stage=dev DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS"
           sam deploy \
             --stack-name mergewatch-dev \
             --region "$AWS_REGION" \
-            --parameter-overrides "Stage=dev DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }} DefaultBedrockModelId=us.anthropic.claude-opus-4-6-v1 DashboardBaseUrl=${{ vars.DASHBOARD_BASE_URL || 'https://mergewatch.ai' }}" \
+            --parameter-overrides "Stage=dev DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS" \
             --capabilities CAPABILITY_NAMED_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --tags "Project=MergeWatch Environment=dev"
+
+      - name: Verify deployed parameters match the repo
+        working-directory: infra
+        run: |
+          # The failure mode #264 documented is silent: a parameter drifts and
+          # nothing surfaces it until someone reads a Lambda's environment
+          # months later. Assert the deployed value equals the declared one so
+          # the drift can only ever be loud.
+          EXPECTED=$(grep -E '^DefaultBedrockModelId=' params/dev.env | cut -d= -f2-)
+          ACTUAL=$(aws lambda get-function-configuration \
+            --function-name mergewatch-review-agent-dev \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables.DEFAULT_BEDROCK_MODEL_ID' \
+            --output text)
+          echo "declared: $EXPECTED"
+          echo "deployed: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Deployed review model ($ACTUAL) does not match infra/params/dev.env ($EXPECTED)."
+            exit 1
+          fi
+          echo "Review model matches the repo."
 
       - name: Print dev outputs
         if: success()
@@ -217,16 +246,45 @@ jobs:
 
       - name: SAM deploy to prod
         working-directory: infra
+        env:
+          DEPLOYMENT_MODE: ${{ vars.DEPLOYMENT_MODE }}
         run: |
+          # See the dev step. Prod previously passed neither DefaultBedrockModelId
+          # nor DashboardBaseUrl, so CloudFormation retained whatever the stack
+          # already held — the root cause of #264.
+          STACK_PARAMS=$(grep -vE '^\s*(#|$)' params/prod.env | tr '\n' ' ')
+          [ -n "$DEPLOYMENT_MODE" ] || { echo "::error::DEPLOYMENT_MODE repo variable is not set. Refusing to deploy rather than silently defaulting."; exit 1; }
+          echo "Deploying prod with: Stage=prod DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS"
           sam deploy \
             --stack-name mergewatch \
             --region "$AWS_REGION" \
-            --parameter-overrides "Stage=prod DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }}" \
+            --parameter-overrides "Stage=prod DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS" \
             --capabilities CAPABILITY_NAMED_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --tags "Project=MergeWatch Environment=prod"
+
+      - name: Verify deployed parameters match the repo
+        working-directory: infra
+        run: |
+          # The failure mode #264 documented is silent: a parameter drifts and
+          # nothing surfaces it until someone reads a Lambda's environment
+          # months later. Assert the deployed value equals the declared one so
+          # the drift can only ever be loud.
+          EXPECTED=$(grep -E '^DefaultBedrockModelId=' params/prod.env | cut -d= -f2-)
+          ACTUAL=$(aws lambda get-function-configuration \
+            --function-name mergewatch-review-agent-prod \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables.DEFAULT_BEDROCK_MODEL_ID' \
+            --output text)
+          echo "declared: $EXPECTED"
+          echo "deployed: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Deployed review model ($ACTUAL) does not match infra/params/prod.env ($EXPECTED)."
+            exit 1
+          fi
+          echo "Review model matches the repo."
 
       - name: Print prod outputs
         if: success()

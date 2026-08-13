@@ -121,7 +121,7 @@ ux:
 | Property | Type | Default | Description |
 |---|---|---|---|
 | `version` | `number` | `1` | Schema version. Currently only `1` is supported. |
-| `model` | `string` | `us.anthropic.claude-opus-4-6-v1` | Bedrock model ID used for all agents. Any model available in your Bedrock account can be specified. |
+| `model` | `string` | *(deployment default)* | Bedrock model ID used for all agents. Any model available in your Bedrock account can be specified. When omitted, the deployment's configured default is used — see [Which model actually runs](#which-model-actually-runs). |
 | `lightModel` | `string` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Lighter model used for low-complexity tasks such as summary generation. |
 | `maxTokensPerAgent` | `number` | `4096` | Maximum output tokens per agent invocation. Increase for large PRs; decrease to reduce cost. |
 | `minSeverity` | `string` | `info` | Minimum severity level to report. One of `info`, `warning`, `critical`. Findings below this threshold are suppressed. |
@@ -295,6 +295,24 @@ pricing:
     inputPer1M: 0.50
     outputPer1M: 0.75
 ```
+
+## Which model actually runs
+
+`model:` is resolved against two other sources. Highest precedence first:
+
+1. **An installation-level override**, if one has been set on the repository's installation record.
+2. **`model:` in this file** — the per-repo setting documented above.
+3. **The deployment default.** On MergeWatch SaaS this is set per environment at deploy time. Self-hosted, it is the `LLM_MODEL` environment variable.
+
+Omitting `model:` therefore means "use whatever this deployment is configured with", not "use the value shown in the table above" — which is why the Default column reads *(deployment default)* rather than naming a model. The review log line records which source won:
+
+```
+[model] owner/repo#42 using us.anthropic.claude-sonnet-4-20250514-v1:0 (source=deploy-default)
+```
+
+<Note>
+Before MergeWatch v0.1.x, `model:` was silently ignored on the hosted service — the deployment default was used regardless of what this file said. Self-hosted always honored it. If you set `model:` and saw no change, that was why; it now works on both.
+</Note>
 
 ## Minimal configuration
 

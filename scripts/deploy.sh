@@ -107,15 +107,33 @@ deploy() {
   info "Deploying MergeWatch (environment: ${ENVIRONMENT})..."
   cd "$INFRA_DIR"
 
+  # #264 — pass every stack parameter explicitly, from the same per-stage files
+  # the CI workflow uses. CloudFormation retains the existing value for any
+  # parameter a deploy omits, so an omitted parameter is a silent pin, not a
+  # fallback to the template's Default. `prod` maps to params/prod.env; any
+  # other named environment maps to params/<env>.env when one exists.
+  local stage_file="params/${ENVIRONMENT}.env"
+  [ "$ENVIRONMENT" = "default" ] && stage_file="params/prod.env"
+
+  local stack_params=""
+  if [ -f "$stage_file" ]; then
+    stack_params=$(grep -vE '^[[:space:]]*(#|$)' "$stage_file" | tr '\n' ' ')
+    info "Stack parameters from ${stage_file}: ${stack_params}"
+  else
+    warn "No ${stage_file} — deploying without explicit parameter overrides."
+    warn "CloudFormation will RETAIN the stack's current values; the template's"
+    warn "Default: does not apply to an existing stack. See #264."
+  fi
+
   if [ "$ENVIRONMENT" = "--guided" ]; then
     # Interactive first-time setup
     sam deploy --guided
   elif [ "$ENVIRONMENT" = "default" ]; then
     # Use default config from samconfig.toml
-    sam deploy
+    sam deploy ${stack_params:+--parameter-overrides "$stack_params"}
   else
     # Use environment-specific config (staging, dev, etc.)
-    sam deploy --config-env "$ENVIRONMENT"
+    sam deploy --config-env "$ENVIRONMENT" ${stack_params:+--parameter-overrides "$stack_params"}
   fi
 
   info "Deployment complete!"
