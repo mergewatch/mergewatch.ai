@@ -227,6 +227,37 @@ async function handleWebhook(event: APIGatewayProxyEventV2): Promise<APIGatewayP
   return json(200, { received: true });
 }
 
+/**
+ * #261 — OSS Program status for the dashboard, or null when the installation
+ * has no grant.
+ *
+ * `active` is computed here rather than left to the client so the dashboard
+ * can't drift from the gate's own notion of "active" (`evaluateOssGrant`).
+ * Period spend is reported as 0 once `ossPeriod` goes stale, matching how the
+ * cap is actually applied — last month's spend never eats this month's
+ * allowance.
+ */
+function ossStatus(fields: Awaited<ReturnType<typeof getBillingFields>>) {
+  const repos = fields.ossGrantRepos ?? [];
+  if (!fields.ossGrantExpiresAt || repos.length === 0) return null;
+
+  const expiresAt = Date.parse(fields.ossGrantExpiresAt);
+  const period = new Date().toISOString().slice(0, 7);
+
+  return {
+    active: Number.isFinite(expiresAt) && expiresAt > Date.now(),
+    repos: repos.map((r) => r.fullName),
+    expiresAt: fields.ossGrantExpiresAt,
+    grantedAt: fields.ossGrantedAt ?? null,
+    note: fields.ossGrantNote ?? null,
+    monthlyCapCents: fields.ossMonthlyCapCents ?? null,
+    sponsoredThisPeriodCents: fields.ossPeriod === period
+      ? (fields.ossSponsoredCentsThisPeriod ?? 0)
+      : 0,
+    sponsoredLifetimeCents: fields.ossSponsoredCentsLifetime ?? 0,
+  };
+}
+
 async function handleStatus(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   const installationId = event.queryStringParameters?.installationId;
   if (!installationId) {
@@ -264,6 +295,11 @@ async function handleStatus(event: APIGatewayProxyEventV2): Promise<APIGatewayPr
     totalBilledCents: fields.totalBilledCents ?? 0,
     prCount: fields.prCount ?? 0,
     prTimestamps: fields.prTimestamps ?? [],
+
+    // OSS Program (#261). `oss` is null for every installation without a
+    // grant, which is what the dashboard keys off to decide whether to show
+    // the program panel instead of the balance/top-up one.
+    oss: ossStatus(fields),
   });
 }
 
