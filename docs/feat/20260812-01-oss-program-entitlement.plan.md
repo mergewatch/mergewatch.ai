@@ -1,6 +1,6 @@
 # OSS Program — Sponsored-Review Entitlement
 
-**Status:** In progress
+**Status:** Shipped
 **Tracking issue:** [#261](https://github.com/mergewatch/mergewatch.ai/issues/261)
 
 ## Summary
@@ -98,9 +98,9 @@ Ships dark — nothing writes the fields yet, so this is a no-op in prod and saf
 
 ### Phase 2 — Webhook plumbing + gate wiring
 
-- [ ] Forward `repoId` + `isPublic` from `webhook.ts:230` through the review-agent event.
-- [ ] Pass `repoContext` at `review-agent.ts:450`.
-- [ ] OSS-aware copy in `block-notify.ts` for the over-cap/lapsed case.
+- [x] Forward `repoId` + `isPublic` from `webhook.ts:230` through the review-agent event.
+- [x] Pass `repoContext` at `review-agent.ts:450`.
+- [x] OSS-aware copy in `block-notify.ts` for the over-cap/lapsed case.
 
 **Tests:** event carries both fields · gate receives them · over-cap block copy references BYOK.
 
@@ -108,19 +108,19 @@ Ships dark — nothing writes the fields yet, so this is a no-op in prod and saf
 
 ### Phase 3 — Operator script
 
-- [ ] `scripts/grant-oss.sh` — `grant` / `--add` / `--remove` / `--revoke` / `--inspect`.
-- [ ] Repo → installation resolution via App JWT minted from SSM (as `github-auth-ssm.ts:57` does); `gh api` cannot hit `/repos/{owner}/{repo}/installation` with a user token.
-- [ ] Eligibility check (`private === false`), blast-radius print listing covered **and** uncovered repos in the installation (a `Query` on `installationId`, the partition key — no GSI needed), confirm before write.
-- [ ] Refuse to run without explicit `--stage prod|dev`.
+- [x] `scripts/grant-oss.ts` — `grant` / `--add` / `--remove` / `--revoke` / `--inspect`.
+- [x] Repo → installation resolution via App JWT minted from SSM (as `github-auth-ssm.ts:57` does); `gh api` cannot hit `/repos/{owner}/{repo}/installation` with a user token.
+- [x] Eligibility check (`private === false`), blast-radius print listing covered **and** uncovered repos in the installation (a `Query` on `installationId`, the partition key — no GSI needed), confirm before write.
+- [x] Refuse to run without explicit `--stage prod|dev`.
 
 **RUNBOOK:** `E2E-83` — grant, verify sponsorship, revoke, verify fallback to free tier.
 
 ### Phase 4 — Dashboard + docs (capstone)
 
-- [ ] OSS fields in the `/billing/status` response (`packages/lambda/src/handlers/billing.ts:254`).
-- [ ] OSS Program state in `BillingClient.tsx` — covered repos, sponsored this month, fair-use headroom — replacing the balance/top-up prompt.
-- [ ] Update `docs-site/saas/billing.mdx` to describe actual grant behavior.
-- [ ] Graduate `docs/pending/oss-program.md` → `docs/oss-program.md`.
+- [x] OSS fields in the `/billing/status` response (`packages/lambda/src/handlers/billing.ts:254`).
+- [x] OSS Program state in `BillingClient.tsx` — covered repos, sponsored this month, fair-use headroom. Rendered *alongside* the balance card rather than replacing it: a granted installation can still hold private or unnamed repos that bill normally, so both states are simultaneously true.
+- [x] Update `docs-site/saas/billing.mdx` to describe actual grant behavior.
+- [x] Graduate `docs/pending/oss-program.md` → `docs/oss-program.md`.
 
 ## Out of scope / deferred
 

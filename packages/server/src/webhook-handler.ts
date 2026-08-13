@@ -130,6 +130,18 @@ async function recordPrLifecycle(payload: PullRequestEvent, deps: WebhookDeps) {
   }
 }
 
+/**
+ * OSS Program (#261) — repo identity carried on every review job.
+ *
+ * Self-hosted doesn't run the billing gate (it's behind `isSaas()`), so these
+ * are inert here. They're populated anyway to keep `ReviewJobPayload` honest
+ * across both runtimes — a payload that means different things depending on
+ * which webhook built it is a trap for the next person.
+ */
+function ossRepoFields(repository: { id: number; private: boolean }) {
+  return { repoId: repository.id, isPublic: !repository.private };
+}
+
 async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
   const { action, pull_request, repository, installation } = payload;
   if (!installation) return;
@@ -214,6 +226,7 @@ async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
     source,
     agentKind,
     headSha: pull_request.head?.sha,
+    ...ossRepoFields(repository),
   };
 
   // Process in background
@@ -244,6 +257,7 @@ async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps)
     prNumber: issue.number,
     mode,
     mentionTriggered: true,
+    ...ossRepoFields(repository),
     ...(userComment ? { userComment, userCommentAuthor: comment.user.login } : {}),
   };
 
@@ -265,6 +279,7 @@ async function handleReviewComment(payload: PullRequestReviewCommentEvent, deps:
     prNumber: pull_request.number,
     mode: 'inline_reply',
     inlineReplyCommentId: comment.id,
+    ...ossRepoFields(repository),
   };
 
   processReviewJob(job, deps).catch((err) => {
@@ -337,6 +352,7 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
     source: classification.source,
     agentKind: classification.agentKind,
     headSha: pr.head?.sha,
+    ...ossRepoFields(payload.repository),
   };
 
   processReviewJob(job, deps).catch((err) => {

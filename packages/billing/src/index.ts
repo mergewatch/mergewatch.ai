@@ -26,7 +26,7 @@ export { calculateReviewCost } from './cost';
 export type { ReviewCost } from './cost';
 
 // ─── Billing check ──────────────────────────────────────────────────────────
-export { billingCheck } from './billing-check';
+export { billingCheck, isLapsedOssGrant } from './billing-check';
 export type { BillingCheckResult } from './billing-check';
 
 // ─── Record review ──────────────────────────────────────────────────────────
@@ -44,6 +44,7 @@ export {
 
 // ─── Block notifications ────────────────────────────────────────────────────
 export { postBlockedCheckRun, ensureBillingIssue, closeBillingIssue } from './block-notify';
+export type { BlockVariant } from './block-notify';
 
 // ─── Stripe client ──────────────────────────────────────────────────────────
 export { getStripe } from './stripe-client';

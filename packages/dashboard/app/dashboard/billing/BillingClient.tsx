@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { CreditCard, Zap, TrendingUp, AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CreditCard, Zap, TrendingUp, AlertCircle, CheckCircle2, Loader2, RefreshCw, HeartHandshake } from "lucide-react";
 
 interface BillingStatus {
   freeReviewsUsed: number;
@@ -16,6 +16,21 @@ interface BillingStatus {
   totalBilledCents: number;
   prCount: number;
   prTimestamps: string[];
+  /**
+   * OSS Program (#261). Null for every installation without a grant.
+   * `active` is computed server-side so this panel can't drift from the
+   * billing gate's own notion of an active grant.
+   */
+  oss: {
+    active: boolean;
+    repos: string[];
+    expiresAt: string;
+    grantedAt: string | null;
+    note: string | null;
+    monthlyCapCents: number | null;
+    sponsoredThisPeriodCents: number;
+    sponsoredLifetimeCents: number;
+  } | null;
 }
 
 interface BillingClientProps {
@@ -210,6 +225,106 @@ export default function BillingClient({ installationId, accountLogin, setupCompl
             >
               Dismiss
             </button>
+          </div>
+        )}
+
+        {/* OSS Program (#261) — sponsored reviews.
+            Rendered alongside the credit balance rather than replacing it:
+            a granted installation can still contain private or unnamed repos
+            that bill normally, so both states are true at once. */}
+        {status.oss && (
+          <div className="rounded-lg border border-border-default bg-surface-card p-5 sm:p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <HeartHandshake className="h-4 w-4 text-accent-green" />
+              <h2 className="text-[11px] font-semibold uppercase tracking-widest text-fg-muted">
+                Open Source Program
+              </h2>
+              {!status.oss.active && (
+                <span className="ml-auto rounded-full border border-yellow-500/30 bg-yellow-500/5 px-2 py-0.5 text-[10px] font-medium text-yellow-300">
+                  Expired
+                </span>
+              )}
+            </div>
+
+            {status.oss.active ? (
+              <p className="text-sm text-fg-secondary">
+                Reviews on the repositories below are sponsored by MergeWatch — no charge, and
+                they don&rsquo;t use your free reviews or balance.
+              </p>
+            ) : (
+              <p className="text-sm text-fg-secondary">
+                This grant expired on {new Date(status.oss.expiresAt).toLocaleDateString()}. Reviews
+                now fall back to your free tier and balance. Get in touch at{" "}
+                <a
+                  href="https://mergewatch.ai/open-source"
+                  className="text-accent-green hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  mergewatch.ai/open-source
+                </a>{" "}
+                to renew it — there&rsquo;s no charge.
+              </p>
+            )}
+
+            <div className="mt-5 grid gap-5 sm:grid-cols-3">
+              <div>
+                <div className="text-2xl font-bold text-fg-primary tabular-nums">
+                  ${(status.oss.sponsoredThisPeriodCents / 100).toFixed(2)}
+                </div>
+                <p className="mt-1 text-xs text-fg-tertiary">Sponsored this month</p>
+                {status.oss.monthlyCapCents !== null && (
+                  <>
+                    <div className="mt-2 h-2 rounded-full bg-surface-card-hover">
+                      <div
+                        className="h-2 rounded-full bg-accent-green transition-all"
+                        style={{
+                          // A zero cap means no allowance at all, so the bar is
+                          // full. Guarding the divide matters: 0/0 is NaN, which
+                          // renders as `width: "NaN%"` and silently drops the bar.
+                          width: `${status.oss.monthlyCapCents > 0
+                            ? Math.min(100, (status.oss.sponsoredThisPeriodCents / status.oss.monthlyCapCents) * 100)
+                            : 100}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-fg-muted">
+                      of ${(status.oss.monthlyCapCents / 100).toFixed(2)} fair-use limit
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div>
+                <div className="text-2xl font-bold text-fg-primary tabular-nums">
+                  ${(status.oss.sponsoredLifetimeCents / 100).toFixed(2)}
+                </div>
+                <p className="mt-1 text-xs text-fg-tertiary">Sponsored to date</p>
+              </div>
+
+              <div>
+                <div className="text-2xl font-bold text-fg-primary tabular-nums">
+                  {status.oss.repos.length}
+                </div>
+                <p className="mt-1 text-xs text-fg-tertiary">
+                  {status.oss.repos.length === 1 ? "Covered repository" : "Covered repositories"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-border-default">
+              <p className="text-xs text-fg-tertiary mb-2">Covered repositories</p>
+              <ul className="space-y-1">
+                {status.oss.repos.map((r) => (
+                  <li key={r} className="text-sm text-fg-secondary">{r}</li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[11px] text-fg-muted">
+                Only these repositories are sponsored, and only while they are public. Anything
+                else in this installation bills normally.
+                {status.oss.active && ` Grant runs until ${new Date(status.oss.expiresAt).toLocaleDateString()}.`}
+              </p>
+            </div>
           </div>
         )}
 

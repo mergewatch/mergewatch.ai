@@ -556,3 +556,51 @@ describe('handler — check_run.rerequested', () => {
     expect(mockEnqueue).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// OSS Program repo identity (#261)
+// ---------------------------------------------------------------------------
+
+describe('handler — OSS repo identity on the job payload (#261)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetInstallationOctokit.mockResolvedValue({});
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+  });
+
+  function enqueuedPayload() {
+    const invokeInput = (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input;
+    return JSON.parse(invokeInput.Payload.toString());
+  }
+
+  it('forwards repoId and isPublic for a public repo', async () => {
+    const body = JSON.stringify(makePullRequestEvent());
+    await handler(makeApiGatewayEvent(body));
+
+    const payload = enqueuedPayload();
+    expect(payload.repoId).toBe(1);
+    expect(payload.isPublic).toBe(true);
+  });
+
+  it('reports isPublic=false for a private repo', async () => {
+    // The gate re-checks visibility on every review precisely so a repo
+    // flipped private stops being sponsored — this is the signal it reads.
+    const event = makePullRequestEvent();
+    event.repository.private = true;
+    const body = JSON.stringify(event);
+    await handler(makeApiGatewayEvent(body));
+
+    expect(enqueuedPayload().isPublic).toBe(false);
+  });
+
+  it('carries the numeric repo id, not the name', async () => {
+    // Grants match on the immutable id so a rename or transfer can't lapse them.
+    const event = makePullRequestEvent();
+    event.repository.id = 987654;
+    const body = JSON.stringify(event);
+    await handler(makeApiGatewayEvent(body));
+
+    expect(enqueuedPayload().repoId).toBe(987654);
+  });
+});

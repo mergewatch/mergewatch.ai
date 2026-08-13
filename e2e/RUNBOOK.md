@@ -208,6 +208,8 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-79](#e2e-79-ux-block--comment-presentation) | `ux` toggles change only their own section; `tone` rewords without changing findings; `commentHeader` is escaped against injection | 3m | 60s | core |
 | [E2E-80](#e2e-80-conventions--discovery-order-and-the-16-kb-cap) | Conventions resolve first-hit-wins in documented order; explicit `conventions:` never falls back on miss; >16 KB truncates with a visible marker | 3m | 60s | core |
 | [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core |
+| [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 |
+| [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
 
 ---
 
@@ -2826,6 +2828,76 @@ curl -s "$MCP_URL" \
 - ❌ An agent describes a file it never fetched (hallucinated context — the exact failure grounding exists to prevent).
 - ❌ The budget is exceeded, inflating cost on large repos.
 - ❌ Hitting the cap fails the review instead of degrading.
+
+---
+
+### E2E-82: OSS Program — sponsored review on a granted public repo
+
+**Status:** ✅ SHIPPED (#263, #265) — fixture not yet run.
+
+**Behavior:** A repository named in an active OSS grant (#261) is reviewed with no balance, no payment method, and no free-tier consumption. Being named is necessary but not sufficient — the repo must also be public at review time, the grant must not have expired, and the month must be under its fair-use cap. See `docs/oss-program.md`.
+
+**Setup**
+
+Branch: `fixture/82-oss-sponsored-review`. Any diff that produces a real review is fine (reuse `fixture/01-clean-pr`).
+
+Prerequisites on the fixtures installation:
+1. Exhaust the free tier (`freeReviewsUsed >= 5`) and leave `balanceCents` at 0 — without a grant this install is blocked.
+2. Grant the fixtures repo: `scripts/grant-oss.ts <owner>/<fixtures-repo> --stage dev`.
+
+**How to run.**
+1. Open a PR. Confirm it is reviewed normally despite zero balance.
+2. Confirm the free-tier counter did **not** move and `balanceCents` is unchanged.
+3. Confirm `ossSponsoredCentsThisPeriod` and `ossSponsoredCentsLifetime` increased by the review's cost.
+4. Open a PR on a **different** public repo in the same installation that is *not* named in the grant → confirm it is blocked (credits copy).
+5. Flip the granted repo to private, push again → confirm the next review is **not** sponsored.
+6. Rename the granted repo, push again → confirm it **is** still sponsored (grants match on the numeric repo id).
+7. Revoke the grant (`--revoke`) and push again → confirm it falls back to the free tier, not straight to a block.
+
+**Pass:**
+- [ ] Sponsored review completes with zero balance and no card on file.
+- [ ] `freeReviewsUsed` unchanged; `balanceCents` unchanged; no Stripe activity.
+- [ ] Both sponsored-cost counters increase by the review's cost.
+- [ ] An unnamed public repo in the same installation is still gated.
+- [ ] Flipping the repo private stops sponsorship on the next review.
+- [ ] Renaming the repo does **not** stop sponsorship.
+- [ ] A revoked grant degrades to the free tier.
+
+**Fail signals:**
+- ❌ A sponsored review consumes the free tier — a lapsed grant would then block the maintainer and file a "credits required" issue on their public repo.
+- ❌ An unnamed repo in a granted installation is sponsored (open-core leak).
+- ❌ A repo flipped private stays sponsored (the cost leak an approval-time check cannot catch).
+- ❌ Any Stripe call on the sponsored path.
+
+---
+
+### E2E-83: OSS Program — operator grant lifecycle
+
+**Status:** ✅ SHIPPED (#266) — fixture not yet run.
+
+**Behavior:** `scripts/grant-oss.ts` is the only way a grant is written. It resolves a repo to its installation via an App JWT, verifies the repo is public, shows the blast radius, and refuses to run without an explicit `--stage`.
+
+**How to run.**
+1. `scripts/grant-oss.ts <owner>/<repo>` with no `--stage` → confirm it refuses rather than defaulting to prod.
+2. `--inspect` on an ungranted repo → confirm it reports no grant.
+3. Grant with `--stage dev --cap 500 --months 1`; confirm the confirmation prompt lists the covered repo **and** the installation's other repos that are *not* covered.
+4. `--inspect` again → confirm cap, expiry, `ossGrantedAt`, and `ossGrantNote` render back.
+5. `--add` a second repo, then `--remove` it; confirm the list changes and nothing else does.
+6. Attempt to grant a **private** repo → confirm it refuses.
+7. `--revoke`; confirm expiry moves to the past and `--inspect` reports it inactive.
+
+**Pass:**
+- [ ] Refuses to run without `--stage`.
+- [ ] Private repo is rejected at grant time.
+- [ ] Blast radius lists both covered and uncovered repos before writing.
+- [ ] `--add` / `--remove` mutate only the repo list.
+- [ ] `--inspect` renders provenance (`ossGrantedAt`, `ossGrantNote`) for auditing months later.
+- [ ] `--revoke` leaves the install on the standard gate, not blocked.
+
+**Fail signals:**
+- ❌ Runs against prod without an explicit stage.
+- ❌ Grants a private repo.
+- ❌ Writes without showing what it will cover.
 
 ---
 

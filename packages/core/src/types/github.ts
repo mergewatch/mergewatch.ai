@@ -316,4 +316,18 @@ export interface ReviewJobPayload {
   source?: 'agent' | 'human';
   /** Agent kind when source='agent' (derived from whichever detection rule matched). */
   agentKind?: 'claude' | 'cursor' | 'codex' | 'other';
+  /**
+   * OSS Program (#261) — GitHub's immutable numeric repository ID. The OSS
+   * billing gate matches grants on this rather than `owner/repo`, because a
+   * rename or org transfer changes the name and would silently lapse a grant.
+   * Optional: job payloads already in flight when this shipped won't carry it,
+   * and its absence simply skips OSS evaluation.
+   */
+  repoId?: number;
+  /**
+   * OSS Program (#261) — whether the repo is public, as of the webhook that
+   * triggered this job. Read live rather than snapshotted at grant time so a
+   * repo flipped private stops being sponsored on its next review.
+   */
+  isPublic?: boolean;
 }
