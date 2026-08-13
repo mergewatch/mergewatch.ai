@@ -108,10 +108,10 @@ Ships dark — nothing writes the fields yet, so this is a no-op in prod and saf
 
 ### Phase 3 — Operator script
 
-- [ ] `scripts/grant-oss.sh` — `grant` / `--add` / `--remove` / `--revoke` / `--inspect`.
-- [ ] Repo → installation resolution via App JWT minted from SSM (as `github-auth-ssm.ts:57` does); `gh api` cannot hit `/repos/{owner}/{repo}/installation` with a user token.
-- [ ] Eligibility check (`private === false`), blast-radius print listing covered **and** uncovered repos in the installation (a `Query` on `installationId`, the partition key — no GSI needed), confirm before write.
-- [ ] Refuse to run without explicit `--stage prod|dev`.
+- [x] `scripts/grant-oss.ts` — `grant` / `--add` / `--remove` / `--revoke` / `--inspect`.
+- [x] Repo → installation resolution via App JWT minted from SSM (as `github-auth-ssm.ts:57` does); `gh api` cannot hit `/repos/{owner}/{repo}/installation` with a user token.
+- [x] Eligibility check (`private === false`), blast-radius print listing covered **and** uncovered repos in the installation (a `Query` on `installationId`, the partition key — no GSI needed), confirm before write.
+- [x] Refuse to run without explicit `--stage prod|dev`.
 
 **RUNBOOK:** `E2E-83` — grant, verify sponsorship, revoke, verify fallback to free tier.
 

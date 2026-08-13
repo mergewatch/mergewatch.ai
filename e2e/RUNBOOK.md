@@ -209,7 +209,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-80](#e2e-80-conventions--discovery-order-and-the-16-kb-cap) | Conventions resolve first-hit-wins in documented order; explicit `conventions:` never falls back on miss; >16 KB truncates with a visible marker | 3m | 60s | core |
 | [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core |
 | [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 |
-| [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.sh` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
+| [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
 
 ---
 
@@ -2843,7 +2843,7 @@ Branch: `fixture/82-oss-sponsored-review`. Any diff that produces a real review 
 
 Prerequisites on the fixtures installation:
 1. Exhaust the free tier (`freeReviewsUsed >= 5`) and leave `balanceCents` at 0 — without a grant this install is blocked.
-2. Grant the fixtures repo: `scripts/grant-oss.sh <owner>/<fixtures-repo> --stage dev`.
+2. Grant the fixtures repo: `scripts/grant-oss.ts <owner>/<fixtures-repo> --stage dev`.
 
 **How to run.**
 1. Open a PR. Confirm it is reviewed normally despite zero balance.
@@ -2875,10 +2875,10 @@ Prerequisites on the fixtures installation:
 
 **Status:** ⬜ NOT YET COVERED.
 
-**Behavior:** `scripts/grant-oss.sh` is the only way a grant is written. It resolves a repo to its installation via an App JWT, verifies the repo is public, shows the blast radius, and refuses to run without an explicit `--stage`.
+**Behavior:** `scripts/grant-oss.ts` is the only way a grant is written. It resolves a repo to its installation via an App JWT, verifies the repo is public, shows the blast radius, and refuses to run without an explicit `--stage`.
 
 **How to run.**
-1. `scripts/grant-oss.sh <owner>/<repo>` with no `--stage` → confirm it refuses rather than defaulting to prod.
+1. `scripts/grant-oss.ts <owner>/<repo>` with no `--stage` → confirm it refuses rather than defaulting to prod.
 2. `--inspect` on an ungranted repo → confirm it reports no grant.
 3. Grant with `--stage dev --cap 500 --months 1`; confirm the confirmation prompt lists the covered repo **and** the installation's other repos that are *not* covered.
 4. `--inspect` again → confirm cap, expiry, `ossGrantedAt`, and `ossGrantNote` render back.

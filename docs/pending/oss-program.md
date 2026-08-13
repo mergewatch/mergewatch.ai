@@ -56,9 +56,38 @@ Accrual is atomic: same-period accruals use DynamoDB `ADD` so concurrent reviews
 
 ## Granting
 
-Grants are written only by `scripts/grant-oss.sh`, run manually by an operator. There is no admin API route and no dashboard granting UI. Because of that, the `#SETTINGS` row is the sole record of who was granted what and why — which is what `ossGrantedAt` and `ossGrantNote` exist for, and what `--inspect` renders back.
+Grants are written only by `scripts/grant-oss.ts`, run manually by an operator. There is no admin API route and no dashboard granting UI. Because of that, the `#SETTINGS` row is the sole record of who was granted what and why — which is what `ossGrantedAt` and `ossGrantNote` exist for, and what `--inspect` renders back.
 
-See [Operating the OSS Program](#operating-the-oss-program) below (added in stage 3).
+### Operating the program
+
+```bash
+# Approve a project (the maintainer must have installed the App first —
+# the installation is what a grant attaches to)
+scripts/grant-oss.ts octocat/hello-world --stage prod --note "form response #42"
+
+# Several repos in one installation
+scripts/grant-oss.ts octocat/hello-world,octocat/docs --stage prod
+
+# Amend an existing grant rather than re-granting
+scripts/grant-oss.ts --add    octocat/new-project --stage prod
+scripts/grant-oss.ts --remove octocat/old-project --stage prod
+
+# End it. Reviews fall back to the standard gate — they are NOT blocked.
+scripts/grant-oss.ts --revoke octocat/hello-world --stage prod
+
+# Audit an existing grant months later
+scripts/grant-oss.ts --inspect octocat/hello-world --stage prod
+```
+
+Options: `--cap <cents>` (default 2000 = $20/month), `--months <n>` (default 12), `--note "<text>"`, `--yes` to skip the confirmation.
+
+Three things the script does before writing:
+
+1. **Refuses to run without `--stage`.** There is no default. It writes to a live table, and defaulting the environment is how a grant lands in the wrong one.
+2. **Verifies the repo is public** and reports last-push and open-issue counts, so the human approving has the activity signal in front of them.
+3. **Prints the blast radius** — the repos this grant will cover *and* the other repos in the same installation it will not. An accidental omission is then visible before the write, not after a maintainer reports that half their project isn't being reviewed.
+
+Under the hood it needs two GitHub identities: an **App JWT** to call `GET /repos/{owner}/{repo}/installation` (the repo→installation lookup, which a user token cannot reach — this is why it isn't a `gh api` one-liner), then an **installation token** to read the repository itself. Credentials come from SSM (`/mergewatch/{stage}/github-app-id`, `/mergewatch/{stage}/github-private-key`) using the `mergewatch` AWS profile.
 
 ## Scope
 
