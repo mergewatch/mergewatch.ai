@@ -1,6 +1,6 @@
 # OSS Program — Sponsored-Review Entitlement
 
-**Status:** In progress
+**Status:** Shipped
 **Tracking issue:** [#261](https://github.com/mergewatch/mergewatch.ai/issues/261)
 
 ## Summary
@@ -117,10 +117,10 @@ Ships dark — nothing writes the fields yet, so this is a no-op in prod and saf
 
 ### Phase 4 — Dashboard + docs (capstone)
 
-- [ ] OSS fields in the `/billing/status` response (`packages/lambda/src/handlers/billing.ts:254`).
-- [ ] OSS Program state in `BillingClient.tsx` — covered repos, sponsored this month, fair-use headroom — replacing the balance/top-up prompt.
-- [ ] Update `docs-site/saas/billing.mdx` to describe actual grant behavior.
-- [ ] Graduate `docs/pending/oss-program.md` → `docs/oss-program.md`.
+- [x] OSS fields in the `/billing/status` response (`packages/lambda/src/handlers/billing.ts:254`).
+- [x] OSS Program state in `BillingClient.tsx` — covered repos, sponsored this month, fair-use headroom. Rendered *alongside* the balance card rather than replacing it: a granted installation can still hold private or unnamed repos that bill normally, so both states are simultaneously true.
+- [x] Update `docs-site/saas/billing.mdx` to describe actual grant behavior.
+- [x] Graduate `docs/pending/oss-program.md` → `docs/oss-program.md`.
 
 ## Out of scope / deferred
 

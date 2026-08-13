@@ -1,6 +1,6 @@
 # MergeWatch for Open Source — sponsored reviews
 
-**Status:** 🚧 In progress (#261)
+**Status:** ✅ Shipped (#261)
 
 Approved open-source repositories have their PR reviews sponsored: no balance, no payment method, and no consumption of the standard 5-review free tier. This is the runtime behind the promise on [mergewatch.ai/open-source](https://mergewatch.ai/open-source).
 
