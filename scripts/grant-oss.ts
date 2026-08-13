@@ -99,12 +99,24 @@ function parseArgs(argv: string[]): Args {
     if (!/^[^/\s]+\/[^/\s]+$/.test(r)) fail(`Not an owner/repo: ${r}`);
   }
 
+  const capCents = Number(flag(argv, '--cap') ?? DEFAULT_CAP_CENTS);
+  const months = Number(flag(argv, '--months') ?? DEFAULT_TERM_MONTHS);
+  // A zero or negative cap is almost certainly a typo, and it produces a grant
+  // that is active but sponsors nothing — the most confusing possible state for
+  // a maintainer. Reject it here rather than letting it reach the row.
+  if (!Number.isFinite(capCents) || capCents <= 0) {
+    fail(`--cap must be a positive number of cents (got ${flag(argv, '--cap')}). Use --revoke to end a grant.`);
+  }
+  if (!Number.isFinite(months) || months <= 0) {
+    fail(`--months must be a positive number (got ${flag(argv, '--months')}).`);
+  }
+
   return {
     repos,
     stage: stage!,
     mode,
-    capCents: Number(flag(argv, '--cap') ?? DEFAULT_CAP_CENTS),
-    months: Number(flag(argv, '--months') ?? DEFAULT_TERM_MONTHS),
+    capCents,
+    months,
     note: flag(argv, '--note'),
     yes: argv.includes('--yes'),
   };

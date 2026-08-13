@@ -2833,9 +2833,9 @@ curl -s "$MCP_URL" \
 
 ### E2E-82: OSS Program — sponsored review on a granted public repo
 
-**Status:** ⬜ NOT YET COVERED.
+**Status:** ✅ SHIPPED (#263, #265) — fixture not yet run.
 
-**Behavior:** A repository named in an active OSS grant (#261) is reviewed with no balance, no payment method, and no free-tier consumption. Being named is necessary but not sufficient — the repo must also be public at review time, the grant must not have expired, and the month must be under its fair-use cap. See `docs/pending/oss-program.md`.
+**Behavior:** A repository named in an active OSS grant (#261) is reviewed with no balance, no payment method, and no free-tier consumption. Being named is necessary but not sufficient — the repo must also be public at review time, the grant must not have expired, and the month must be under its fair-use cap. See `docs/oss-program.md`.
 
 **Setup**
 
@@ -2873,7 +2873,7 @@ Prerequisites on the fixtures installation:
 
 ### E2E-83: OSS Program — operator grant lifecycle
 
-**Status:** ⬜ NOT YET COVERED.
+**Status:** ✅ SHIPPED (#266) — fixture not yet run.
 
 **Behavior:** `scripts/grant-oss.ts` is the only way a grant is written. It resolves a repo to its installation via an App JWT, verifies the repo is public, shows the blast radius, and refuses to run without an explicit `--stage`.
 
