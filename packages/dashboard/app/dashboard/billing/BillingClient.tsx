@@ -279,7 +279,12 @@ export default function BillingClient({ installationId, accountLogin, setupCompl
                       <div
                         className="h-2 rounded-full bg-accent-green transition-all"
                         style={{
-                          width: `${Math.min(100, (status.oss.sponsoredThisPeriodCents / status.oss.monthlyCapCents) * 100)}%`,
+                          // A zero cap means no allowance at all, so the bar is
+                          // full. Guarding the divide matters: 0/0 is NaN, which
+                          // renders as `width: "NaN%"` and silently drops the bar.
+                          width: `${status.oss.monthlyCapCents > 0
+                            ? Math.min(100, (status.oss.sponsoredThisPeriodCents / status.oss.monthlyCapCents) * 100)
+                            : 100}%`,
                         }}
                       />
                     </div>
