@@ -36,19 +36,56 @@ interface ModelRequestBody {
   accept: string;
 }
 
+/**
+ * Model families that REJECT non-default sampling parameters (#262).
+ *
+ * Anthropic removed `temperature` / `top_p` / `top_k` from Opus 4.7 onward and
+ * from the entire 5 generation; sending any of them returns a 400, not a
+ * degraded response. Everything older still accepts them, and MergeWatch has
+ * always sent `temperature: 0` for deterministic reviews — so this cannot be a
+ * blanket removal. Dropping the parameter for a model that accepts it would
+ * silently move reviews from deterministic to default sampling.
+ *
+ * Patterns are deliberately narrow so near-miss IDs keep their sampling:
+ * `claude-haiku-4-5` and `claude-sonnet-4-5` contain a "5" but are not the 5
+ * generation.
+ */
+const REJECTS_SAMPLING_PARAMS: readonly RegExp[] = [
+  // Opus 4.7, 4.8, and any later 4.x
+  /claude-opus-4-(?:[7-9]|\d{2,})/,
+  // The 5 generation: sonnet-5, opus-5, fable-5, mythos-5
+  /claude-(?:sonnet|opus|haiku|fable|mythos)-5(?![\d-])/,
+];
+
+/**
+ * Whether this model accepts `temperature` / `top_p` / `top_k`.
+ *
+ * Unknown models default to **accepting**, preserving today's behavior. If a
+ * newer model that rejects them is adopted without being added above, every
+ * review fails with a loud 400 rather than drifting silently — the better of
+ * the two failure modes, and the reason the flip to a new model is a
+ * deliberate one-line repo edit (see infra/params/*.env).
+ */
+export function acceptsSamplingParams(modelId: string): boolean {
+  return !REJECTS_SAMPLING_PARAMS.some((re) => re.test(modelId));
+}
+
 function buildAnthropicBody(
   prompt: string,
   maxTokens: number,
   sampling: LLMSamplingConfig,
+  modelId: string,
 ): ModelRequestBody {
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
-    temperature: sampling.temperature ?? 0,
     messages: [{ role: 'user', content: prompt }],
   };
-  if (sampling.topP !== undefined) body.top_p = sampling.topP;
-  if (sampling.topK !== undefined) body.top_k = sampling.topK;
+  if (acceptsSamplingParams(modelId)) {
+    body.temperature = sampling.temperature ?? 0;
+    if (sampling.topP !== undefined) body.top_p = sampling.topP;
+    if (sampling.topK !== undefined) body.top_k = sampling.topK;
+  }
   return {
     body: JSON.stringify(body),
     contentType: 'application/json',
@@ -90,12 +127,12 @@ function buildRequestBody(
   sampling: LLMSamplingConfig,
 ): ModelRequestBody {
   if (isAnthropicModel(modelId)) {
-    return buildAnthropicBody(prompt, maxTokens, sampling);
+    return buildAnthropicBody(prompt, maxTokens, sampling, modelId);
   }
   if (isTitanModel(modelId)) {
     return buildTitanBody(prompt, maxTokens, sampling);
   }
-  return buildAnthropicBody(prompt, maxTokens, sampling);
+  return buildAnthropicBody(prompt, maxTokens, sampling, modelId);
 }
 
 // ─── Response parsers per model family ─────────────────────────────────────

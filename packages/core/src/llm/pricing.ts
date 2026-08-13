@@ -20,6 +20,12 @@ interface ModelPricing {
  */
 export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // Bedrock Anthropic model IDs
+  // The 5 generation (#262). Bedrock inference-profile IDs carry no version
+  // suffix; `global.` variants are priced identically to `us.`.
+  'us.anthropic.claude-sonnet-5': { inputPer1M: 3, outputPer1M: 15 },
+  'global.anthropic.claude-sonnet-5': { inputPer1M: 3, outputPer1M: 15 },
+  'us.anthropic.claude-opus-5': { inputPer1M: 5, outputPer1M: 25 },
+  'global.anthropic.claude-opus-5': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-8-v1': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-6-v1': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-20250514-v1:0': { inputPer1M: 15, outputPer1M: 75 },
@@ -29,6 +35,8 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   'us.anthropic.claude-3-5-haiku-20241022-v1:0': { inputPer1M: 0.80, outputPer1M: 4 },
 
   // Direct Anthropic model IDs
+  'claude-sonnet-5': { inputPer1M: 3, outputPer1M: 15 },
+  'claude-opus-5': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-8': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-6': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-20250514': { inputPer1M: 15, outputPer1M: 75 },
