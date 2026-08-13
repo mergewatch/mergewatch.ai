@@ -7,12 +7,19 @@ vi.mock('./dynamo-billing', () => ({
   getBillingFields: vi.fn(),
   incrementFreeReviewsUsed: vi.fn(),
   deductBalanceAndRecordUsage: vi.fn(),
+  accrueOssSponsoredCost: vi.fn(),
 }));
 
-import { getBillingFields, incrementFreeReviewsUsed, deductBalanceAndRecordUsage } from './dynamo-billing';
+import {
+  getBillingFields,
+  incrementFreeReviewsUsed,
+  deductBalanceAndRecordUsage,
+  accrueOssSponsoredCost,
+} from './dynamo-billing';
 const mockGetFields = vi.mocked(getBillingFields);
 const mockIncrement = vi.mocked(incrementFreeReviewsUsed);
 const mockDeductAndRecord = vi.mocked(deductBalanceAndRecordUsage);
+const mockAccrueOss = vi.mocked(accrueOssSponsoredCost);
 
 const client = {} as any;
 const table = 'test-table';
@@ -146,5 +153,101 @@ describe('recordReview', () => {
 
     // DynamoDB deduction still happened
     expect(mockDeductAndRecord).toHaveBeenCalled();
+  });
+});
+
+describe('recordReview — OSS Program (#261)', () => {
+  const REPO_ID = 4242;
+  const grantedRepo = { repoId: REPO_ID, repoFullName: 'octocat/hello-world', isPublic: true };
+  const activeGrant = {
+    ossGrantRepos: [{ id: REPO_ID, fullName: 'octocat/hello-world' }],
+    ossGrantExpiresAt: '2099-01-01T00:00:00.000Z',
+    ossMonthlyCapCents: 2000,
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('accrues sponsored cost instead of charging', async () => {
+    mockGetFields.mockResolvedValue({ ...activeGrant, freeReviewsUsed: FREE_REVIEW_LIMIT });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, grantedRepo);
+
+    // Same formula the paid path charges: $0.02 LLM + $0.005 infra + 40%
+    // margin = $0.033, rounded up by calculateReviewCost to 4 cents.
+    expect(mockAccrueOss).toHaveBeenCalledWith(
+      client,
+      table,
+      installationId,
+      4,
+      new Date().toISOString().slice(0, 7),
+    );
+    expect(mockDeductAndRecord).not.toHaveBeenCalled();
+  });
+
+  it('does NOT consume the free tier on a sponsored review', async () => {
+    // Burning freeReviewsUsed here would turn a lapsed grant into an instantly
+    // blocked account with an issue filed on the maintainer's public repo.
+    mockGetFields.mockResolvedValue({ ...activeGrant, freeReviewsUsed: 0 });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, grantedRepo);
+
+    expect(mockIncrement).not.toHaveBeenCalled();
+    expect(mockAccrueOss).toHaveBeenCalled();
+  });
+
+  it('never touches Stripe on a sponsored review', async () => {
+    const mockStripe = {
+      customers: { createBalanceTransaction: vi.fn() },
+    } as any;
+    mockGetFields.mockResolvedValue({
+      ...activeGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+      stripeCustomerId: 'cus_123',
+    });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, mockStripe, grantedRepo);
+
+    expect(mockStripe.customers.createBalanceTransaction).not.toHaveBeenCalled();
+    expect(mockAccrueOss).toHaveBeenCalled();
+  });
+
+  it('charges normally for an unnamed repo in a granted installation', async () => {
+    mockGetFields.mockResolvedValue({
+      ...activeGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+    });
+    const other = { repoId: 9999, repoFullName: 'octocat/commercial', isPublic: true };
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, other);
+
+    expect(mockAccrueOss).not.toHaveBeenCalled();
+    expect(mockDeductAndRecord).toHaveBeenCalled();
+  });
+
+  it('charges normally once the grant has expired', async () => {
+    mockGetFields.mockResolvedValue({
+      ...activeGrant,
+      ossGrantExpiresAt: '2020-01-01T00:00:00.000Z',
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+    });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, grantedRepo);
+
+    expect(mockAccrueOss).not.toHaveBeenCalled();
+    expect(mockDeductAndRecord).toHaveBeenCalled();
+  });
+
+  it('is unchanged from pre-#261 when repo context is omitted', async () => {
+    mockGetFields.mockResolvedValue({ ...activeGrant, freeReviewsUsed: 2 });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey);
+
+    expect(mockAccrueOss).not.toHaveBeenCalled();
+    expect(mockIncrement).toHaveBeenCalled();
   });
 });

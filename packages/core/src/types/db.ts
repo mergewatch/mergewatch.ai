@@ -494,6 +494,50 @@ export interface BillingFields {
   blockIssueNumber?: number;
   /** Repo where the billing block issue was filed (owner/repo). */
   blockIssueRepo?: string;
+
+  // --- OSS Program (#261) ---
+  // Sponsored-review entitlement for approved open-source repositories. Set by
+  // the manually-run `scripts/grant-oss.sh`; never written by the review path
+  // except for the accrual counters below.
+
+  /**
+   * Repositories covered by this grant. Required and non-empty for an active
+   * grant — there is no installation-wide mode, because an installation can
+   * mix a genuinely-OSS repo with public-but-commercial ones (open core).
+   *
+   * Matched on the immutable numeric `id`: GitHub renames and org transfers
+   * change `fullName`, so a name-keyed list would silently stop matching and
+   * lapse the sponsorship. `fullName` is retained for display/debuggability
+   * only and may be stale — never match on it.
+   */
+  ossGrantRepos?: OssGrantRepo[];
+  /**
+   * ISO 8601. Presence + a future date = active grant; absent or past = no
+   * grant. Deliberately the only status field — revoking is setting this to
+   * the past, so there are no two-field states to keep consistent.
+   */
+  ossGrantExpiresAt?: string;
+  /** ISO 8601 of when the grant was written. Informational — no gate logic reads it. */
+  ossGrantedAt?: string;
+  /** Free-text provenance: application reference, project name, approver. Informational. */
+  ossGrantNote?: string;
+  /** Fair-use ceiling on sponsored review cost per calendar month, across the named repos. */
+  ossMonthlyCapCents?: number;
+  /** Accrual period (YYYY-MM) that `ossSponsoredCentsThisPeriod` belongs to. */
+  ossPeriod?: string;
+  /** Sponsored review cost accrued during `ossPeriod`. Reset when the period rolls over. */
+  ossSponsoredCentsThisPeriod?: number;
+  /** Sponsored review cost accrued over the lifetime of the grant. Monotonic. */
+  ossSponsoredCentsLifetime?: number;
+}
+
+/**
+ * One repository covered by an OSS grant. `id` is GitHub's immutable numeric
+ * repository ID and is the only field the gate matches on.
+ */
+export interface OssGrantRepo {
+  id: number;
+  fullName: string;
 }
 
 // =============================================================================

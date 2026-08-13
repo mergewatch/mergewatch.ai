@@ -268,6 +268,7 @@ export type {
   InstallationItem,
   InstallationSettings,
   BillingFields,
+  OssGrantRepo,
   ReviewItem,
   ReviewStatus,
   ReviewFinding,

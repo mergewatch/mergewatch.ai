@@ -9,7 +9,17 @@ export {
   MARGIN_PERCENT,
   MIN_BALANCE_USD,
   MIN_BALANCE_CENTS,
+  OSS_DEFAULT_MONTHLY_CAP_CENTS,
+  OSS_DEFAULT_TERM_MONTHS,
 } from './constants';
+
+// ─── OSS Program grant (#261) ───────────────────────────────────────────────
+export {
+  evaluateOssGrant,
+  currentPeriod,
+  sponsoredCentsThisPeriod,
+} from './oss-grant';
+export type { RepoContext, OssEligibility, OssIneligibleReason } from './oss-grant';
 
 // ─── Cost calculation ───────────────────────────────────────────────────────
 export { calculateReviewCost } from './cost';
@@ -28,6 +38,7 @@ export {
   incrementFreeReviewsUsed,
   deductBalance,
   deductBalanceAndRecordUsage,
+  accrueOssSponsoredCost,
   updateBillingFields,
 } from './dynamo-billing';
 

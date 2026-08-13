@@ -12,3 +12,14 @@ export const MIN_BALANCE_USD = 0.05;
 
 /** Minimum balance in cents (derived from MIN_BALANCE_USD). */
 export const MIN_BALANCE_CENTS = Math.round(MIN_BALANCE_USD * 100);
+
+/**
+ * #261 — Default fair-use ceiling for an OSS grant, per calendar month, shared
+ * across every repo named in the grant. At the $0.01–$0.10 per-review range
+ * this is ~200–2000 reviews: generous for any real OSS project while bounding
+ * a runaway repo. Overridable per grant via `scripts/grant-oss.sh --cap`.
+ */
+export const OSS_DEFAULT_MONTHLY_CAP_CENTS = 2000;
+
+/** #261 — Default OSS grant term in months, after which it needs renewal. */
+export const OSS_DEFAULT_TERM_MONTHS = 12;
