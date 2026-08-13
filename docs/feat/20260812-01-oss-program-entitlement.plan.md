@@ -98,9 +98,9 @@ Ships dark — nothing writes the fields yet, so this is a no-op in prod and saf
 
 ### Phase 2 — Webhook plumbing + gate wiring
 
-- [ ] Forward `repoId` + `isPublic` from `webhook.ts:230` through the review-agent event.
-- [ ] Pass `repoContext` at `review-agent.ts:450`.
-- [ ] OSS-aware copy in `block-notify.ts` for the over-cap/lapsed case.
+- [x] Forward `repoId` + `isPublic` from `webhook.ts:230` through the review-agent event.
+- [x] Pass `repoContext` at `review-agent.ts:450`.
+- [x] OSS-aware copy in `block-notify.ts` for the over-cap/lapsed case.
 
 **Tests:** event carries both fields · gate receives them · over-cap block copy references BYOK.
 

@@ -2,7 +2,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { getBillingFields } from './dynamo-billing';
 import { FREE_REVIEW_LIMIT, MIN_BALANCE_CENTS } from './constants';
 import { evaluateOssGrant } from './oss-grant';
-import type { RepoContext } from './oss-grant';
+import type { RepoContext, OssIneligibleReason } from './oss-grant';
 
 export interface BillingCheckResult {
   /** Whether the review is allowed. */
@@ -19,6 +19,24 @@ export interface BillingCheckResult {
    * for logging and for the dashboard's billing state.
    */
   reason?: 'oss' | 'free_tier' | 'paid';
+  /**
+   * Why the OSS grant did not apply, when repo context was supplied and the
+   * review wasn't sponsored. Lets the block path tell a lapsed or over-cap
+   * maintainer something useful ("your grant expired") instead of the generic
+   * "add a credit card", which is the wrong thing to say to someone we invited
+   * into a free program.
+   */
+  ossReason?: OssIneligibleReason;
+}
+
+/**
+ * Reasons that warrant OSS-specific block copy: the installation has a real
+ * grant relationship that lapsed or hit its ceiling. The others
+ * (`no_grant`, `repo_not_granted`, `repo_not_public`) mean this repo was never
+ * sponsored, so standard billing copy is correct.
+ */
+export function isLapsedOssGrant(reason: OssIneligibleReason | undefined): boolean {
+  return reason === 'grant_expired' || reason === 'cap_exceeded';
 }
 
 /**
@@ -54,6 +72,7 @@ export async function billingCheck(
     console.log(`[billing] allow install=${installationId} reason=oss repo=${repo?.repoFullName}`);
     return { status: 'allow', firstBlock: false, reason: 'oss' };
   }
+  const ossReason = repo ? oss.reason : undefined;
   if (repo && oss.reason !== 'no_grant') {
     console.log(
       `[billing] oss not applied install=${installationId} repo=${repo.repoFullName} reason=${oss.reason}`,
@@ -63,17 +82,17 @@ export async function billingCheck(
   // Free tier path
   if (freeUsed < FREE_REVIEW_LIMIT) {
     console.log(`[billing] allow install=${installationId} reason=free_tier used=${freeUsed}/${FREE_REVIEW_LIMIT}`);
-    return { status: 'allow', firstBlock: false, reason: 'free_tier' };
+    return { status: 'allow', firstBlock: false, reason: 'free_tier', ossReason };
   }
 
   // Paid path
   if (balanceCents >= MIN_BALANCE_CENTS) {
     console.log(`[billing] allow install=${installationId} reason=paid balance=${balanceCents}c`);
-    return { status: 'allow', firstBlock: false, reason: 'paid' };
+    return { status: 'allow', firstBlock: false, reason: 'paid', ossReason };
   }
 
   // Blocked
   const firstBlock = !fields.blockedAt;
   console.log(`[billing] block install=${installationId} balance=${balanceCents}c firstBlock=${firstBlock}`);
-  return { status: 'block', firstBlock };
+  return { status: 'block', firstBlock, ossReason };
 }

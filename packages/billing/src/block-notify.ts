@@ -14,20 +14,42 @@ const SETTINGS_SK = '#SETTINGS';
 
 type Octokit = Parameters<typeof createCheckRun>[0];
 
+/**
+ * Copy variant for the block notifications.
+ *
+ * `oss` is used when the installation had an OSS Program grant that lapsed or
+ * hit its fair-use ceiling (#261). Telling an open-source maintainer we
+ * invited into a free program to "add a credit card" is the wrong message —
+ * the public page promises heavy usage moves to bring-your-own-key or
+ * sponsorship, so the copy points there instead.
+ */
+export type BlockVariant = 'credits' | 'oss';
+
+const OSS_PROGRAM_URL = 'https://mergewatch.ai/open-source';
+const BILLING_URL = 'https://mergewatch.ai/dashboard/billing';
+
 /** Post a Check Run indicating the review was blocked by billing. */
 export async function postBlockedCheckRun(
   octokit: Octokit,
   owner: string,
   repo: string,
   sha: string,
+  variant: BlockVariant = 'credits',
 ): Promise<void> {
+  const oss = variant === 'oss';
   await createCheckRun(octokit, owner, repo, sha, {
     status: 'completed',
     conclusion: 'action_required',
-    title: 'Review blocked — credits required',
-    summary:
-      'This PR was not reviewed because this installation has no remaining credits. '
-      + 'Please add credits at https://mergewatch.ai/dashboard/billing to resume reviews.',
+    title: oss
+      ? 'Review paused — open-source grant needs renewing'
+      : 'Review blocked — credits required',
+    summary: oss
+      ? 'This PR was not reviewed because this project\'s MergeWatch open-source '
+        + 'grant has expired or reached its fair-use limit for this month. '
+        + `Get in touch via ${OSS_PROGRAM_URL} to renew it, or switch to `
+        + 'bring-your-own-key or self-hosting — both are free and unlimited.'
+      : 'This PR was not reviewed because this installation has no remaining credits. '
+        + `Please add credits at ${BILLING_URL} to resume reviews.`,
   });
 }
 
@@ -42,6 +64,7 @@ export async function ensureBillingIssue(
   installationId: string,
   client: DynamoDBDocumentClient,
   table: string,
+  variant: BlockVariant = 'credits',
 ): Promise<void> {
   // Atomically claim the right to create the issue
   try {
@@ -69,13 +92,23 @@ export async function ensureBillingIssue(
     const issue = await octokit.issues.create({
       owner,
       repo,
-      title: 'MergeWatch: reviews paused — credits required',
-      body:
-        'MergeWatch has paused PR reviews for this repository because the installation '
-        + 'has used all free reviews and has no remaining credits.\n\n'
-        + 'To resume reviews, please add credits at '
-        + '[mergewatch.ai/dashboard/billing](https://mergewatch.ai/dashboard/billing).\n\n'
-        + 'This issue will be closed automatically once credits are added.',
+      title: variant === 'oss'
+        ? 'MergeWatch: reviews paused — open-source grant needs renewing'
+        : 'MergeWatch: reviews paused — credits required',
+      body: variant === 'oss'
+        ? 'MergeWatch has paused PR reviews for this repository because its '
+          + 'open-source grant has expired or reached its fair-use limit for '
+          + 'this month.\n\n'
+          + `Reply here or get in touch via [mergewatch.ai/open-source](${OSS_PROGRAM_URL}) `
+          + 'and we will renew it — there is no charge.\n\n'
+          + 'If this project has outgrown the program, bring-your-own-key and '
+          + 'self-hosting are both free and unlimited.\n\n'
+          + 'This issue will be closed automatically once reviews resume.'
+        : 'MergeWatch has paused PR reviews for this repository because the installation '
+          + 'has used all free reviews and has no remaining credits.\n\n'
+          + 'To resume reviews, please add credits at '
+          + `[mergewatch.ai/dashboard/billing](${BILLING_URL}).\n\n`
+          + 'This issue will be closed automatically once credits are added.',
       labels: ['mergewatch'],
     });
     issueNumber = issue.data.number;

@@ -86,7 +86,7 @@ import {
   DEFAULT_REVIEW_COSTS_TABLE,
 } from '@mergewatch/storage-dynamo';
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
-import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe } from '@mergewatch/billing';
+import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe, isLapsedOssGrant } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
 
 // -- Singletons (re-used across warm invocations) ----------------------------
@@ -446,15 +446,32 @@ export async function handler(
   }
 
   // ── Billing gate (SaaS only) ────
+  //
+  // OSS Program (#261): repo context is only present when the webhook carried
+  // it. Absent (older in-flight jobs), the gate skips OSS evaluation and
+  // behaves exactly as it did pre-#261.
+  const ossRepoContext = event.repoId != null && event.isPublic != null
+    ? { repoId: event.repoId, repoFullName, isPublic: event.isPublic }
+    : undefined;
+
   if (isSaas()) {
-    const billing = await billingCheck(dynamodb, INSTALLATIONS_TABLE, String(installationId));
+    const billing = await billingCheck(
+      dynamodb,
+      INSTALLATIONS_TABLE,
+      String(installationId),
+      ossRepoContext,
+    );
     if (billing.status === 'block') {
       console.log(`Billing blocked for installation ${installationId}`);
 
-      await postBlockedCheckRun(octokit, owner, repo, headSha);
+      // #261 — a maintainer whose OSS grant lapsed or hit its cap gets copy
+      // pointing at renewal / BYOK, not "add a credit card".
+      const blockVariant = isLapsedOssGrant(billing.ossReason) ? 'oss' as const : 'credits' as const;
+
+      await postBlockedCheckRun(octokit, owner, repo, headSha, blockVariant);
 
       if (billing.firstBlock) {
-        await ensureBillingIssue(octokit, owner, repo, String(installationId), dynamodb, INSTALLATIONS_TABLE);
+        await ensureBillingIssue(octokit, owner, repo, String(installationId), dynamodb, INSTALLATIONS_TABLE, blockVariant);
         await updateBillingFields(dynamodb, INSTALLATIONS_TABLE, String(installationId), {
           blockedAt: new Date().toISOString(),
         });
@@ -1016,7 +1033,7 @@ export async function handler(
       let billingRecorded = false;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          await recordReview(dynamodb, INSTALLATIONS_TABLE, String(installationId), result.estimatedCostUsd, prNumberCommitSha, stripe);
+          await recordReview(dynamodb, INSTALLATIONS_TABLE, String(installationId), result.estimatedCostUsd, prNumberCommitSha, stripe, ossRepoContext);
           billingRecorded = true;
           break;
         } catch (err) {

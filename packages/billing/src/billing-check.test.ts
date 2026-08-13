@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { billingCheck } from './billing-check';
+import { billingCheck, isLapsedOssGrant } from './billing-check';
 import { FREE_REVIEW_LIMIT, MIN_BALANCE_CENTS } from './constants';
 
 // Mock the DynamoDB layer — we test billing logic, not DynamoDB calls
@@ -144,7 +144,9 @@ describe('billingCheck — OSS Program (#261)', () => {
       freeReviewsUsed: 0,
     });
     const result = await billingCheck(client, table, installationId, grantedRepo);
-    expect(result).toEqual({ status: 'allow', firstBlock: false, reason: 'free_tier' });
+    expect(result).toEqual({
+      status: 'allow', firstBlock: false, reason: 'free_tier', ossReason: 'grant_expired',
+    });
   });
 
   it('falls through to the standard gate when over the fair-use cap', async () => {
@@ -156,7 +158,9 @@ describe('billingCheck — OSS Program (#261)', () => {
       balanceCents: 10_000,
     });
     const result = await billingCheck(client, table, installationId, grantedRepo);
-    expect(result).toEqual({ status: 'allow', firstBlock: false, reason: 'paid' });
+    expect(result).toEqual({
+      status: 'allow', firstBlock: false, reason: 'paid', ossReason: 'cap_exceeded',
+    });
   });
 
   it('is byte-for-byte pre-#261 when repo context is omitted', async () => {
@@ -164,5 +168,21 @@ describe('billingCheck — OSS Program (#261)', () => {
     mockGetFields.mockResolvedValue({ ...exhausted, ...activeGrant });
     const result = await billingCheck(client, table, installationId);
     expect(result.status).toBe('block');
+  });
+});
+
+describe('isLapsedOssGrant', () => {
+  it('is true only for a grant relationship that lapsed or hit its ceiling', () => {
+    expect(isLapsedOssGrant('grant_expired')).toBe(true);
+    expect(isLapsedOssGrant('cap_exceeded')).toBe(true);
+  });
+
+  it('is false when the repo was simply never sponsored', () => {
+    // These get standard billing copy — there is no grant to renew.
+    expect(isLapsedOssGrant('no_grant')).toBe(false);
+    expect(isLapsedOssGrant('repo_not_granted')).toBe(false);
+    expect(isLapsedOssGrant('repo_not_public')).toBe(false);
+    expect(isLapsedOssGrant('no_repo_context')).toBe(false);
+    expect(isLapsedOssGrant(undefined)).toBe(false);
   });
 });
