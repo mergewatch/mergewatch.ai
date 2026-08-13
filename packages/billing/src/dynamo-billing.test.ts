@@ -4,6 +4,7 @@ import {
   incrementFreeReviewsUsed,
   deductBalance,
   deductBalanceAndRecordUsage,
+  accrueOssSponsoredCost,
   updateBillingFields,
 } from './dynamo-billing';
 
@@ -156,5 +157,81 @@ describe('updateBillingFields', () => {
     expect(input.ExpressionAttributeNames['#balanceCents']).toBe('balanceCents');
     expect(input.ExpressionAttributeNames['#blockedAt']).toBe('blockedAt');
     expect(input.ExpressionAttributeValues[':balanceCents']).toBe(1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// accrueOssSponsoredCost (#261)
+// ---------------------------------------------------------------------------
+
+describe('accrueOssSponsoredCost', () => {
+  /** Mimics DynamoDB rejecting the same-period ADD because ossPeriod differs. */
+  function conditionalCheckFailure() {
+    const err = new Error('The conditional request failed');
+    err.name = 'ConditionalCheckFailedException';
+    return err;
+  }
+
+  it('atomically ADDs both counters when the period matches', async () => {
+    const client = createMockClient();
+
+    await accrueOssSponsoredCost(client, table, installationId, 33, '2026-08');
+
+    expect(client.send).toHaveBeenCalledTimes(1);
+    const input = client.send.mock.calls[0][0].input;
+    expect(input.UpdateExpression).toContain('ADD ossSponsoredCentsThisPeriod :amount');
+    expect(input.UpdateExpression).toContain('ossSponsoredCentsLifetime :amount');
+    expect(input.ConditionExpression).toBe('ossPeriod = :period');
+    expect(input.ExpressionAttributeValues[':amount']).toBe(33);
+    expect(input.ExpressionAttributeValues[':period']).toBe('2026-08');
+  });
+
+  it('resets the period counter when the month rolls over', async () => {
+    const client = {
+      send: vi.fn()
+        .mockRejectedValueOnce(conditionalCheckFailure())
+        .mockResolvedValueOnce({}),
+    } as any;
+
+    await accrueOssSponsoredCost(client, table, installationId, 33, '2026-09');
+
+    expect(client.send).toHaveBeenCalledTimes(2);
+    const input = client.send.mock.calls[1][0].input;
+    // Period counter is SET to this review's cost, lifetime still accumulates.
+    expect(input.UpdateExpression).toContain('SET ossPeriod = :period');
+    expect(input.UpdateExpression).toContain('ossSponsoredCentsThisPeriod = :amount');
+    expect(input.UpdateExpression).toContain('ADD ossSponsoredCentsLifetime :amount');
+  });
+
+  it('takes the reset path on the very first accrual (no ossPeriod yet)', async () => {
+    const client = {
+      send: vi.fn()
+        .mockRejectedValueOnce(conditionalCheckFailure())
+        .mockResolvedValueOnce({}),
+    } as any;
+
+    await accrueOssSponsoredCost(client, table, installationId, 12, '2026-08');
+
+    expect(client.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('rethrows a non-conditional DynamoDB error instead of silently resetting', async () => {
+    const client = {
+      send: vi.fn().mockRejectedValue(new Error('DynamoDB timeout')),
+    } as any;
+
+    await expect(
+      accrueOssSponsoredCost(client, table, installationId, 33, '2026-08'),
+    ).rejects.toThrow('DynamoDB timeout');
+    expect(client.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes to the #SETTINGS sentinel row', async () => {
+    const client = createMockClient();
+    await accrueOssSponsoredCost(client, table, installationId, 33, '2026-08');
+    expect(client.send.mock.calls[0][0].input.Key).toEqual({
+      installationId,
+      repoFullName: '#SETTINGS',
+    });
   });
 });

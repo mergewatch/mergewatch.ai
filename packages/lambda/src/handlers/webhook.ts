@@ -106,6 +106,19 @@ export function parseReviewMode(commentBody: string): ReviewMode | null {
 /**
  * Asynchronously invoke the ReviewAgent Lambda with the given payload.
  */
+/**
+ * OSS Program (#261) — repo identity the sponsored-review gate needs, in the
+ * shape `ReviewJobPayload` carries it.
+ *
+ * Every enqueue path gets these, not just `pull_request`: an `@mergewatch`
+ * mention or a re-requested check on a sponsored repo runs the same billing
+ * gate, and omitting them there would silently bill a maintainer we promised
+ * free review.
+ */
+function ossRepoFields(repository: { id: number; private: boolean }) {
+  return { repoId: repository.id, isPublic: !repository.private };
+}
+
 async function enqueueReviewJob(payload: ReviewJobPayload): Promise<void> {
   const functionName =
     process.env.REVIEW_AGENT_FUNCTION_NAME ?? "mergewatch-review-agent";
@@ -275,6 +288,7 @@ async function handlePullRequestEvent(
     source: classification.source,
     agentKind: classification.agentKind,
     headSha: pr.head?.sha,
+    ...ossRepoFields(repository),
   });
 
   console.log(
@@ -326,6 +340,7 @@ async function handleIssueCommentEvent(
     mode,
     existingCommentId,
     mentionTriggered: true,
+    ...ossRepoFields(event.repository),
   };
 
   if (mode === "respond") {
@@ -383,6 +398,7 @@ async function handleReviewCommentEvent(
     prNumber: event.pull_request.number,
     mode: 'inline_reply',
     inlineReplyCommentId: event.comment.id,
+    ...ossRepoFields(event.repository),
   };
 
   await enqueueReviewJob(payload);
@@ -461,6 +477,7 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     source: classification.source,
     agentKind: classification.agentKind,
     headSha: pr.head?.sha,
+    ...ossRepoFields(event.repository),
   });
 
   console.log(

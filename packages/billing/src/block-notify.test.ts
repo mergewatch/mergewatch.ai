@@ -172,3 +172,41 @@ describe('postBlockedCheckRun', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// OSS Program block copy (#261)
+// ---------------------------------------------------------------------------
+
+describe('block notifications — OSS variant (#261)', () => {
+  it('defaults to credits copy, unchanged from pre-#261', async () => {
+    const octokit = createMockOctokit();
+    await postBlockedCheckRun(octokit, owner, repo, 'sha123');
+
+    const { output } = octokit.checks.create.mock.calls[0][0];
+    expect(output.title).toContain('credits required');
+    expect(output.summary).toContain('dashboard/billing');
+  });
+
+  it('points a lapsed OSS grant at renewal and BYOK, never at a credit card', async () => {
+    const octokit = createMockOctokit();
+    await postBlockedCheckRun(octokit, owner, repo, 'sha123', 'oss');
+
+    const { output } = octokit.checks.create.mock.calls[0][0];
+    expect(output.title).toContain('open-source grant');
+    expect(output.summary).toContain('mergewatch.ai/open-source');
+    expect(output.summary).not.toContain('dashboard/billing');
+    expect(output.summary).not.toContain('add credits');
+  });
+
+  it('files an OSS-worded issue rather than a credits one', async () => {
+    const octokit = createMockOctokit();
+    const client = createMockDynamo();
+
+    await ensureBillingIssue(octokit, owner, repo, 'inst-1', client, 'tbl', 'oss');
+
+    const issue = octokit.issues.create.mock.calls[0][0];
+    expect(issue.title).toContain('open-source grant');
+    expect(issue.body).toContain('there is no charge');
+    expect(issue.body).not.toContain('dashboard/billing');
+  });
+});

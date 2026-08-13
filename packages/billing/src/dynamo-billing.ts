@@ -22,7 +22,13 @@ export async function getBillingFields(
       'freeReviewsUsed, stripeCustomerId, balanceCents, billingPeriod, '
       + 'prCount, prTimestamps, totalBilledCents, autoReloadEnabled, '
       + 'autoReloadThresholdCents, autoReloadAmountCents, autoReloadInFlight, '
-      + 'blockedAt, blockIssueNumber, blockIssueRepo',
+      + 'blockedAt, blockIssueNumber, blockIssueRepo, '
+      // OSS Program (#261). Omitting a field here reads it back as undefined
+      // with no error, which would silently disable sponsorship — keep this
+      // list in sync with BillingFields.
+      + 'ossGrantRepos, ossGrantExpiresAt, ossGrantedAt, ossGrantNote, '
+      + 'ossMonthlyCapCents, ossPeriod, ossSponsoredCentsThisPeriod, '
+      + 'ossSponsoredCentsLifetime',
   }));
 
   return (result.Item as BillingFields) ?? {};
@@ -104,6 +110,54 @@ export async function deductBalanceAndRecordUsage(
       ':period': params.billingPeriod,
       ':timestamps': params.prTimestamps,
     },
+  }));
+}
+
+/**
+ * #261 — Atomically accrue a sponsored review's cost against the OSS grant.
+ *
+ * Two paths, because DynamoDB can't branch between ADD and SET in one
+ * expression:
+ *   1. Same period → `ADD` both counters. Atomic, so concurrent reviews across
+ *      repos in the same installation can't lose an increment.
+ *   2. Period rolled over (or first ever accrual) → `SET` the period counter to
+ *      this review's cost while still `ADD`-ing lifetime.
+ *
+ * Two reviews racing across a month boundary can both take path 2, and one
+ * overwrites the other's period counter. That undercounts a fair-use figure by
+ * one review at the rollover instant and is not worth a transaction; the
+ * lifetime counter stays exact because it is always an ADD.
+ */
+export async function accrueOssSponsoredCost(
+  client: DynamoDBDocumentClient,
+  table: string,
+  installationId: string,
+  amountCents: number,
+  period: string,
+): Promise<void> {
+  const key = { installationId, repoFullName: SETTINGS_SK };
+
+  try {
+    await client.send(new UpdateCommand({
+      TableName: table,
+      Key: key,
+      UpdateExpression:
+        'ADD ossSponsoredCentsThisPeriod :amount, ossSponsoredCentsLifetime :amount',
+      ConditionExpression: 'ossPeriod = :period',
+      ExpressionAttributeValues: { ':amount': amountCents, ':period': period },
+    }));
+    return;
+  } catch (err) {
+    if ((err as { name?: string }).name !== 'ConditionalCheckFailedException') throw err;
+  }
+
+  await client.send(new UpdateCommand({
+    TableName: table,
+    Key: key,
+    UpdateExpression:
+      'SET ossPeriod = :period, ossSponsoredCentsThisPeriod = :amount '
+      + 'ADD ossSponsoredCentsLifetime :amount',
+    ExpressionAttributeValues: { ':amount': amountCents, ':period': period },
   }));
 }
 
