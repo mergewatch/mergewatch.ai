@@ -21,10 +21,22 @@ interface ModelPricing {
 export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   // Bedrock Anthropic model IDs
   // The 5 generation (#262). Bedrock inference-profile IDs carry no version
-  // suffix; `global.` variants are priced identically to `us.`.
-  'us.anthropic.claude-sonnet-5': { inputPer1M: 3, outputPer1M: 15 },
-  'global.anthropic.claude-sonnet-5': { inputPer1M: 3, outputPer1M: 15 },
-  'us.anthropic.claude-opus-5': { inputPer1M: 5, outputPer1M: 25 },
+  // suffix.
+  //
+  // These are AWS's rates, NOT Anthropic's first-party list prices, and the two
+  // differ: Anthropic lists Sonnet 5 at $3/$15, while Bedrock in us-west-2
+  // charges $2.20/$11 for the `us.` cross-region profile and $2/$10 for
+  // `global.`. Since this table feeds calculateReviewCost and therefore what
+  // customers are charged, using the first-party numbers would have overcharged
+  // by ~36%.
+  //
+  // Source of truth, per region:
+  //   aws bedrock list-foundation-model-agreement-offers \
+  //     --model-id anthropic.claude-sonnet-5 \
+  //     --query "offers[0].termDetails.usageBasedPricingTerm.rateCard[?contains(dimension,'USW2')]"
+  'us.anthropic.claude-sonnet-5': { inputPer1M: 2.20, outputPer1M: 11 },
+  'global.anthropic.claude-sonnet-5': { inputPer1M: 2, outputPer1M: 10 },
+  'us.anthropic.claude-opus-5': { inputPer1M: 5.50, outputPer1M: 27.50 },
   'global.anthropic.claude-opus-5': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-8-v1': { inputPer1M: 5, outputPer1M: 25 },
   'us.anthropic.claude-opus-4-6-v1': { inputPer1M: 5, outputPer1M: 25 },
