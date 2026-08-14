@@ -179,6 +179,29 @@ jobs:
           fi
           echo "Review model matches the repo."
 
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            sed -n '1,20p' /tmp/smoke-err.txt
+            exit 1
+          fi
+
       - name: Print dev outputs
         if: success()
         run: |
@@ -285,6 +308,29 @@ jobs:
             exit 1
           fi
           echo "Review model matches the repo."
+
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            sed -n '1,20p' /tmp/smoke-err.txt
+            exit 1
+          fi
 
       - name: Print prod outputs
         if: success()
