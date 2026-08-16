@@ -1,0 +1,33 @@
+# =============================================================================
+# Keep source files diffable (#307)
+# =============================================================================
+#
+# Git decides a blob is "binary" if it finds a NUL byte in the first 8000
+# bytes, and marks a diff binary when EITHER side is. One stray control
+# character therefore turns a source file into `Bin 45080 -> 45082 bytes` on
+# GitHub, in `git diff`, and to any reviewer that reads diffs — including
+# MergeWatch itself.
+#
+# That is not hypothetical: two literal NUL bytes in
+# packages/server/src/review-processor.ts (a 45KB file on the self-hosted
+# review path) made every change to it unreviewable, and an external
+# contributor's PR to that file was reviewed against an undiffable blob.
+#
+# Marking these types with the `diff` attribute forces a textual diff
+# regardless of content, so a file can never silently become unreviewable.
+# The complementary guard is packages/core/src/source-hygiene.test.ts, which
+# fails the build if a NUL byte is committed at all — this attribute keeps the
+# damage visible in the window before that test is consulted.
+
+*.ts    diff
+*.tsx   diff
+*.js    diff
+*.jsx   diff
+*.mjs   diff
+*.cjs   diff
+*.json  diff
+*.md    diff
+*.mdx   diff
+*.yml   diff
+*.yaml  diff
+*.sh    diff
