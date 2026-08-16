@@ -587,6 +587,61 @@ describe('processReviewJob — config merging', () => {
     expect(runReviewPipeline).toHaveBeenCalled();
   });
 
+  it('committed .mergewatch.yml wins over dashboard settings for keys it sets', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({
+      maxFindings: 25,
+      customStyleRules: ['yml rule'],
+    });
+
+    const deps = makeDeps({
+      installationStore: {
+        get: vi.fn().mockResolvedValue(null),
+        getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSettings: vi.fn().mockResolvedValue({
+          ...DEFAULT_INSTALLATION_SETTINGS,
+          maxComments: 5,
+          customInstructions: 'dashboard instructions',
+        }),
+        upsert: vi.fn(),
+      } as unknown as IInstallationStore,
+    });
+
+    await processReviewJob(makeJob(), deps);
+
+    const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+    expect(pipelineCall.maxFindings).toBe(25);
+    expect(pipelineCall.customStyleRules).toEqual(['yml rule']);
+  });
+
+  it('dashboard settings apply where the yml is silent, including per-agent toggles', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({
+      agents: { style: true },
+    });
+
+    const deps = makeDeps({
+      installationStore: {
+        get: vi.fn().mockResolvedValue(null),
+        getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSettings: vi.fn().mockResolvedValue({
+          ...DEFAULT_INSTALLATION_SETTINGS,
+          maxComments: 5,
+          commentTypes: { logic: false, syntax: true, style: false },
+        }),
+        upsert: vi.fn(),
+      } as unknown as IInstallationStore,
+    });
+
+    await processReviewJob(makeJob(), deps);
+
+    const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+    // yml silent on maxFindings — dashboard maxComments applies
+    expect(pipelineCall.maxFindings).toBe(5);
+    // yml explicitly re-enables style — wins over the dashboard toggle
+    expect(pipelineCall.enabledAgents.style).toBe(true);
+    // yml silent on security — dashboard's logic=false applies
+    expect(pipelineCall.enabledAgents.security).toBe(false);
+  });
+
   it('overrides model with LLM_MODEL env var', async () => {
     const original = process.env.LLM_MODEL;
     process.env.LLM_MODEL = 'env-override-model';

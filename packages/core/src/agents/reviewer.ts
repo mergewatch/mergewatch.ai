@@ -257,7 +257,9 @@ async function invokeAgent(
     const result = await invokeWithFileFetching(llm, modelId, prompt, fileFetchOptions);
     if (result.roundsUsed > 1) {
       const fileCount = Object.keys(result.fetchedFiles).length;
-      console.log(`Agent fetched ${fileCount} file(s) in ${result.roundsUsed} round(s)`);
+      console.log(
+        `Agent fetched ${fileCount} file(s) in ${result.roundsUsed} round(s): ${Object.keys(result.fetchedFiles).join(', ')}`,
+      );
     }
     return result.response;
   }

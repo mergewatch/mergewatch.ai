@@ -560,7 +560,14 @@ export async function handler(
 
     // yamlConfig was loaded earlier for the smart-skip includePatterns
     // override; reuse it here instead of paying another GitHub round-trip.
-    const runtimeConfig = mergeConfig({ ...(yamlConfig ?? {}), ...settingsOverrides });
+    // Precedence: defaults < dashboard settings < the repo's committed
+    // .mergewatch.yml — the yml wins per the documented configuration
+    // contract; dashboard values apply only where the yml is silent.
+    const runtimeConfig = mergeConfig({
+      ...settingsOverrides,
+      ...(yamlConfig ?? {}),
+      agents: { ...settingsOverrides.agents, ...(yamlConfig?.agents ?? {}) },
+    });
 
     // ── Rules-based skip (skipDrafts, maxFiles, ignoreLabels, autoReview, reviewOnMention) ────
     const rulesSkip = shouldSkipByRules(runtimeConfig.rules, {
