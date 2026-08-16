@@ -210,6 +210,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core |
 | [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 |
 | [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
+| [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 |
 
 ---
 
@@ -2974,6 +2975,29 @@ Tracked deliberately so they are decisions rather than oversights. Each is a can
      1. "autoReview: false posts a user-actionable check run" — the code goes fully silent (review-agent.ts:396, skip-logic.ts:151). E2E-04 is correct; the published docs are wrong.
      2. "Repository is paused in the dashboard" as a skip reason — there is no pause feature; the only "paused" in the codebase is billing-driven (block-notify.ts). E2E-73 covers the real behavior.
      Both are documentation defects, tracked outside this runbook. -->
+
+---
+
+### E2E-84: #334 — Time-bounded insight rollup windows
+
+**Status:** 🚧 In review (#334) — fixture not yet run.
+
+**Behavior:** every disposition-counter increment (surface, dispute, verified, unverified, silentDrop, agreement, resolve) also bumps a sparse per-UTC-day bucket (`periodCounts`, keyed `YYYY-MM-DD`) on the `FindingDispositionRecord`, atomically with the lifetime counter, on both backends. The nightly rollup then derives every windowed number from in-window activity: a record first seen inside the window contributes its lifetime counters (exact by definition); an older record contributes only the day buckets overlapping the window. `7d ≤ 30d ≤ 90d` holds by construction. Records written before #334 shipped have no buckets and contribute nothing to windows that predate their `firstSeen` — they ramp up within one window-length of deploy instead of injecting lifetime history.
+
+**How to run.**
+Branch: `fixture/84-windowed-rollups`. Pre-seed an installation with:
+1. A "long-lived" record: `firstSeen` ~180 days back, `surfaceCount: 200`, `disputeCount: 30`, plus a `periodCounts` bucket for yesterday (`{ surface: 1 }`).
+2. A "recent" record: `firstSeen` 2 days back, `surfaceCount: 3`, `disputeCount: 1`, no buckets needed.
+3. A "legacy" record: `firstSeen` ~180 days back, large lifetime counters, **no** `periodCounts`.
+Trigger the rollup manually (same paths as E2E-41), then read the three insight rows back.
+
+**Expected outcomes.**
+- [ ] 7d `totalFindingsSurfaced` = 4 (yesterday's bucket + the recent record) — NOT 200+
+- [ ] 7d `totalDisputes` = 1 — the long-lived record's 30 lifetime disputes do not appear
+- [ ] The legacy record contributes 0 to every window (honest ramp-up)
+- [ ] `7d ≤ 30d ≤ 90d` for `totalFindingsSurfaced` and `totalDisputes`
+- [ ] `perCategory` / `perSeverity` / `perRepo` / `topClusters` reflect windowed counts (spot-check the long-lived record's category bucket shows 1, not 200)
+- [ ] New reviews after deploy write `periodCounts` buckets on both backends (inspect a row: Postgres `period_counts` jsonb / Dynamo `pc#<day>#<counter>` attributes)
 
 ---
 
