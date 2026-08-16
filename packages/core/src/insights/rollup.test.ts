@@ -35,11 +35,13 @@ function record(over: Partial<FindingDispositionRecord> = {}): FindingDispositio
 // ─── Window filtering ───────────────────────────────────────────────────────
 
 describe('buildInsightFromDispositions — window filtering', () => {
-  it('includes only records whose lastSeen falls inside the window', () => {
+  it('includes only activity that happened inside the window (#334)', () => {
+    // Each record's whole lifetime sits at a distinct age, so its lifetime
+    // counters equal its in-window activity for windows that contain it.
     const records = [
-      record({ lastSeen: isoOffset(1), surfaceCount: 5 }),
-      record({ lastSeen: isoOffset(10), surfaceCount: 3 }),
-      record({ lastSeen: isoOffset(45), surfaceCount: 7 }),
+      record({ firstSeen: isoOffset(1),  lastSeen: isoOffset(1),  surfaceCount: 5 }),
+      record({ firstSeen: isoOffset(10), lastSeen: isoOffset(10), surfaceCount: 3 }),
+      record({ firstSeen: isoOffset(45), lastSeen: isoOffset(45), surfaceCount: 7 }),
     ];
     const r7  = buildInsightFromDispositions('42', '7d',  WINDOW_END, records);
     const r30 = buildInsightFromDispositions('42', '30d', WINDOW_END, records);
@@ -62,6 +64,121 @@ describe('buildInsightFromDispositions — window filtering', () => {
     expect(r.topClusters).toEqual([]);
     expect(r.perCategory).toEqual({});
     expect(r.perRepo).toEqual({});
+  });
+});
+
+// ─── #334 — time-bounded windows ────────────────────────────────────────────
+
+/** The `periodCounts` day key `daysBack` days before the window end. */
+function dayOffset(daysBack: number): string {
+  return isoOffset(daysBack).slice(0, 10);
+}
+
+describe('buildInsightFromDispositions — #334 windowed counters', () => {
+  it('a record whose activity predates the window does not contribute pre-window counts', () => {
+    const records = [
+      // Long-lived: first seen ~6 months ago, surfaced 200× / disputed 30×
+      // over its lifetime, surfaced exactly once yesterday.
+      record({
+        firstSeen: isoOffset(180),
+        lastSeen: isoOffset(1),
+        surfaceCount: 200,
+        disputeCount: 30,
+        periodCounts: { [dayOffset(1)]: { surface: 1 } },
+      }),
+      // Recent: born 2 days ago, everything in-window.
+      record({ firstSeen: isoOffset(2), lastSeen: isoOffset(1), surfaceCount: 3, disputeCount: 1 }),
+    ];
+    const r7 = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    // The long-lived record contributes ONLY yesterday's surfacing.
+    expect(r7.totalFindingsSurfaced).toBe(1 + 3);
+    expect(r7.totalDisputes).toBe(0 + 1);
+    expect(r7.disputeRate).toBeCloseTo(1 / 4);
+  });
+
+  it('7d ≤ 30d ≤ 90d holds for a dataset that previously violated it', () => {
+    const records = [
+      record({
+        firstSeen: isoOffset(180),
+        lastSeen: isoOffset(1),
+        surfaceCount: 200,
+        disputeCount: 30,
+        periodCounts: {
+          [dayOffset(60)]: { surface: 4, dispute: 2 },
+          [dayOffset(20)]: { surface: 2, dispute: 1 },
+          [dayOffset(1)]:  { surface: 1 },
+        },
+      }),
+      record({ firstSeen: isoOffset(15), lastSeen: isoOffset(15), surfaceCount: 5, disputeCount: 2 }),
+    ];
+    const windows = (['7d', '30d', '90d'] as const).map(
+      (w) => buildInsightFromDispositions('42', w, WINDOW_END, records),
+    );
+    const [r7, r30, r90] = windows;
+    expect(r7.totalFindingsSurfaced).toBe(1);              // yesterday's bucket only
+    expect(r30.totalFindingsSurfaced).toBe(1 + 2 + 5);     // + 20d bucket + 15d-old record
+    expect(r90.totalFindingsSurfaced).toBe(1 + 2 + 4 + 5); // + 60d bucket
+    expect(r7.totalFindingsSurfaced).toBeLessThanOrEqual(r30.totalFindingsSurfaced);
+    expect(r30.totalFindingsSurfaced).toBeLessThanOrEqual(r90.totalFindingsSurfaced);
+    expect(r7.totalDisputes).toBeLessThanOrEqual(r30.totalDisputes);
+    expect(r30.totalDisputes).toBeLessThanOrEqual(r90.totalDisputes);
+  });
+
+  it('per-category / per-severity / per-repo / clusters all derive from windowed counts', () => {
+    const records = [
+      record({
+        firstSeen: isoOffset(180),
+        lastSeen: isoOffset(1),
+        surfaceCount: 100,
+        disputeCount: 50,
+        category: 'security',
+        severity: 'critical',
+        repoFullName: 'org/api',
+        sigTokens: ['token'],
+        periodCounts: { [dayOffset(2)]: { surface: 2, dispute: 1 } },
+      }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.perCategory.security).toEqual({ surfaced: 2, disputed: 1, rate: 0.5 });
+    expect(r.perSeverity!.critical).toEqual({ surfaced: 2, disputed: 1, rate: 0.5 });
+    expect(r.perRepo['org/api']).toEqual({ surfaced: 2, disputed: 1, rate: 0.5 });
+    expect(r.topClusters[0].surfaceCount).toBe(2);
+    expect(r.topClusters[0].disputeCount).toBe(1);
+  });
+
+  it('legacy long-lived record (no periodCounts) contributes nothing — honest ramp-up, not lifetime injection', () => {
+    const records = [
+      record({ firstSeen: isoOffset(180), lastSeen: isoOffset(1), surfaceCount: 200, disputeCount: 30, periodCounts: undefined }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.totalFindingsSurfaced).toBe(0);
+    expect(r.totalDisputes).toBe(0);
+    expect(r.perCategory).toEqual({});
+    expect(r.topClusters).toEqual([]);
+  });
+
+  it('counts a dispute that lands after the finding\'s last surfacing (inclusion follows activity, not lastSeen)', () => {
+    const records = [
+      record({
+        firstSeen: isoOffset(60),
+        lastSeen: isoOffset(20), // last SURFACED 20 days ago…
+        surfaceCount: 10,
+        disputeCount: 3,
+        periodCounts: { [dayOffset(1)]: { dispute: 1 } }, // …but disputed yesterday
+      }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.totalDisputes).toBe(1);
+    expect(r.totalFindingsSurfaced).toBe(0);
+    expect(r.disputeRate).toBe(0); // divide-by-zero guard unchanged
+  });
+
+  it('ignores a record first seen after the window end', () => {
+    const records = [
+      record({ firstSeen: isoOffset(-2), lastSeen: isoOffset(-2), surfaceCount: 9 }),
+    ];
+    const r = buildInsightFromDispositions('42', '7d', WINDOW_END, records);
+    expect(r.totalFindingsSurfaced).toBe(0);
   });
 });
 
