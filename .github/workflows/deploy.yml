@@ -139,16 +139,79 @@ jobs:
 
       - name: SAM deploy to dev
         working-directory: infra
+        env:
+          DEPLOYMENT_MODE: ${{ vars.DEPLOYMENT_MODE }}
         run: |
+          # Every stack parameter comes from infra/params/dev.env and is passed
+          # on every deploy. CloudFormation silently retains any parameter a
+          # deploy omits, which is how prod stayed pinned to a stale model (#264).
+          STACK_PARAMS=$(grep -vE '^\s*(#|$)' params/dev.env | tr '\n' ' ')
+          [ -n "$DEPLOYMENT_MODE" ] || { echo "::error::DEPLOYMENT_MODE repo variable is not set. Refusing to deploy rather than silently defaulting."; exit 1; }
+          echo "Deploying dev with: Stage=dev DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS"
           sam deploy \
             --stack-name mergewatch-dev \
             --region "$AWS_REGION" \
-            --parameter-overrides "Stage=dev DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }} DefaultBedrockModelId=us.anthropic.claude-opus-4-6-v1 DashboardBaseUrl=${{ vars.DASHBOARD_BASE_URL || 'https://mergewatch.ai' }}" \
+            --parameter-overrides "Stage=dev DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS" \
             --capabilities CAPABILITY_NAMED_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --tags "Project=MergeWatch Environment=dev"
+
+      - name: Verify deployed parameters match the repo
+        working-directory: infra
+        run: |
+          # The failure mode #264 documented is silent: a parameter drifts and
+          # nothing surfaces it until someone reads a Lambda's environment
+          # months later. Assert the deployed value equals the declared one so
+          # the drift can only ever be loud.
+          EXPECTED=$(grep -E '^DefaultBedrockModelId=' params/dev.env | cut -d= -f2-)
+          ACTUAL=$(aws lambda get-function-configuration \
+            --function-name mergewatch-review-agent-dev \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables.DEFAULT_BEDROCK_MODEL_ID' \
+            --output text)
+          echo "declared: $EXPECTED"
+          echo "deployed: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Deployed review model ($ACTUAL) does not match infra/params/dev.env ($EXPECTED)."
+            exit 1
+          fi
+          echo "Review model matches the repo."
+
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
+            exit 1
+          fi
 
       - name: Print dev outputs
         if: success()
@@ -217,16 +280,79 @@ jobs:
 
       - name: SAM deploy to prod
         working-directory: infra
+        env:
+          DEPLOYMENT_MODE: ${{ vars.DEPLOYMENT_MODE }}
         run: |
+          # See the dev step. Prod previously passed neither DefaultBedrockModelId
+          # nor DashboardBaseUrl, so CloudFormation retained whatever the stack
+          # already held — the root cause of #264.
+          STACK_PARAMS=$(grep -vE '^\s*(#|$)' params/prod.env | tr '\n' ' ')
+          [ -n "$DEPLOYMENT_MODE" ] || { echo "::error::DEPLOYMENT_MODE repo variable is not set. Refusing to deploy rather than silently defaulting."; exit 1; }
+          echo "Deploying prod with: Stage=prod DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS"
           sam deploy \
             --stack-name mergewatch \
             --region "$AWS_REGION" \
-            --parameter-overrides "Stage=prod DeploymentMode=${{ vars.DEPLOYMENT_MODE || 'self-hosted' }}" \
+            --parameter-overrides "Stage=prod DeploymentMode=$DEPLOYMENT_MODE $STACK_PARAMS" \
             --capabilities CAPABILITY_NAMED_IAM \
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --tags "Project=MergeWatch Environment=prod"
+
+      - name: Verify deployed parameters match the repo
+        working-directory: infra
+        run: |
+          # The failure mode #264 documented is silent: a parameter drifts and
+          # nothing surfaces it until someone reads a Lambda's environment
+          # months later. Assert the deployed value equals the declared one so
+          # the drift can only ever be loud.
+          EXPECTED=$(grep -E '^DefaultBedrockModelId=' params/prod.env | cut -d= -f2-)
+          ACTUAL=$(aws lambda get-function-configuration \
+            --function-name mergewatch-review-agent-prod \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables.DEFAULT_BEDROCK_MODEL_ID' \
+            --output text)
+          echo "declared: $EXPECTED"
+          echo "deployed: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Deployed review model ($ACTUAL) does not match infra/params/prod.env ($EXPECTED)."
+            exit 1
+          fi
+          echo "Review model matches the repo."
+
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
+            exit 1
+          fi
 
       - name: Print prod outputs
         if: success()

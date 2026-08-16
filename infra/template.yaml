@@ -53,7 +53,15 @@ Parameters:
   DefaultBedrockModelId:
     Type: String
     Default: us.anthropic.claude-opus-4-6-v1
-    Description: Default Amazon Bedrock model ID for PR reviews
+    # WARNING (#264): this Default binds only when the stack is FIRST created.
+    # On an update, CloudFormation retains the stack's existing value for any
+    # parameter the deploy does not pass — editing this line does nothing to a
+    # live stack. The authoritative per-stage values live in infra/params/*.env
+    # and are passed on every deploy; change the model there, not here.
+    Description: >-
+      Default Amazon Bedrock model ID for PR reviews. Authoritative values are
+      in infra/params/{dev,prod}.env — this Default applies only at initial
+      stack creation.
 
   # Deployment mode: 'saas' enables billing enforcement, 'self-hosted' disables it.
   DeploymentMode:
