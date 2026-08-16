@@ -129,6 +129,11 @@ const nextConfig = {
     // #195 Phase 5 — optional; NPS route reports ineligible when unset.
     DYNAMODB_TABLE_SATISFACTION: process.env.DYNAMODB_TABLE_SATISFACTION,
     API_KEYS_TABLE: process.env.API_KEYS_TABLE,
+    // #315 — Adversarial Defense waitlist. An env var absent from this block
+    // does not exist at runtime on Amplify, so both must be declared here or
+    // signups land in the wrong table and never reach Slack.
+    WAITLIST_TABLE: process.env.WAITLIST_TABLE,
+    SLACK_WAITLIST_WEBHOOK_URL: process.env.SLACK_WAITLIST_WEBHOOK_URL,
     GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
     DEPLOYMENT_MODE: process.env.DEPLOYMENT_MODE,
     BILLING_API_URL: process.env.BILLING_API_URL,

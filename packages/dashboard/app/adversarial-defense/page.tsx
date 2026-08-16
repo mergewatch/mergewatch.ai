@@ -11,16 +11,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { adversarialFaqs } from "./faqs";
-
-/**
- * Waitlist form for Adversarial Defense.
- *
- * Same guard as the OSS application CTA: while this is a placeholder the
- * button degrades to a disabled state rather than shipping a dead link to
- * production. A market-test page whose only CTA 404s measures nothing.
- */
-const WAITLIST_URL = "PLACEHOLDER_WAITLIST_URL";
-const WAITLIST_OPEN = !WAITLIST_URL.includes("PLACEHOLDER");
+import { WaitlistForm } from "./WaitlistForm";
 
 /**
  * /adversarial-defense — market-test landing page.
@@ -62,15 +53,15 @@ export default function AdversarialDefensePage() {
             reasoning, from the inside, where the information is better.
           </p>
 
-          <div className="mt-9 flex w-full max-w-sm flex-col items-center gap-3 sm:w-auto sm:flex-row">
-            <WaitlistButton full />
-            <a
-              href="#how-it-works"
-              className="inline-flex w-full items-center justify-center rounded-lg border border-border-default px-6 py-3 text-sm font-semibold text-fg-primary transition hover:bg-surface-card sm:w-auto"
-            >
-              See how it works
-            </a>
+          <div className="mt-9 w-full">
+            <WaitlistForm compact />
           </div>
+          <a
+            href="#how-it-works"
+            className="mt-5 text-sm font-medium text-primer-muted underline-offset-4 transition hover:text-fg-primary hover:underline"
+          >
+            Or see how it works first
+          </a>
 
           <p className="mt-5 max-w-xl text-xs leading-relaxed text-primer-muted">
             Pull request review is live today and free for qualifying
@@ -349,8 +340,8 @@ export default function AdversarialDefensePage() {
             specific fear about your own stack, that is the most useful thing
             you can bring.
           </p>
-          <div className="mt-9 flex justify-center">
-            <WaitlistButton />
+          <div className="mt-9">
+            <WaitlistForm />
           </div>
         </section>
       </main>
@@ -366,40 +357,6 @@ export default function AdversarialDefensePage() {
 }
 
 /* ─── Inline sub-components ────────────────────────────────────────────── */
-
-/**
- * Primary CTA. Degrades to a disabled button while WAITLIST_URL is a
- * placeholder, so this page can never ship its only conversion path broken.
- */
-function WaitlistButton({ full = false }: { full?: boolean }) {
-  const width = full ? "w-full sm:w-auto" : "";
-
-  if (!WAITLIST_OPEN) {
-    return (
-      <button
-        type="button"
-        disabled
-        aria-disabled="true"
-        title="The waitlist form is not wired up yet."
-        className={`inline-flex ${width} cursor-not-allowed items-center justify-center rounded-lg border border-border-default bg-surface-card px-6 py-3 text-sm font-semibold text-primer-muted`}
-      >
-        Waitlist opening shortly
-      </button>
-    );
-  }
-
-  return (
-    <a
-      href={WAITLIST_URL}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`inline-flex ${width} items-center justify-center rounded-lg bg-primer-green px-6 py-3 text-sm font-semibold text-black transition hover:brightness-110`}
-    >
-      Join the waitlist
-      <ArrowRight className="ml-2 h-4 w-4" />
-    </a>
-  );
-}
 
 /** Badge marking a capability that is not generally available. */
 function PilotBadge() {
