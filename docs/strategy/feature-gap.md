@@ -1,5 +1,7 @@
 # Feature Gap Analysis — MergeWatch vs. Top 3 Players
 
+> **⚠️ Refreshed 2026-08-13:** competitor state and the catch-up mapping are superseded by [`feature-gap-2026-08.md`](./feature-gap-2026-08.md) (adds Greptile + Macroscope, maps gaps to weekly releases R1–R12, tracking issue #304). This file remains the July baseline.
+
 > Companion to [`validation-layer-pivot.md`](./validation-layer-pivot.md) and [`competitive-matrix.md`](./competitive-matrix.md). Detailed, dimension-by-dimension feature gap vs. the three ranked threats. Catch-up plan: [`catch-up-plan.md`](./catch-up-plan.md).
 > **Date:** 2026-07-17
 > **Compared against:** **CodeRabbit** (highest threat, $550M), **GitHub Copilot code review** (platform/bundling threat), **Qodo** (narrative/verification threat).
