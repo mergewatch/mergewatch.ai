@@ -69,3 +69,28 @@ describe('acceptsSamplingParams', () => {
     expect(acceptsSamplingParams('us.anthropic.claude-something-new')).toBe(true);
   });
 });
+
+describe('non-Anthropic models on the fallback body builder', () => {
+  // buildRequestBody falls back to the Anthropic body shape for any model that
+  // is neither Anthropic nor Titan, and now passes modelId so the sampling
+  // check can run. MergeWatch review flagged this as possibly applying
+  // Anthropic-specific logic to non-Anthropic models.
+  //
+  // It does not: the reject patterns all require a `claude-` prefix, so every
+  // non-Anthropic id resolves to "accepts", which is byte-for-byte the
+  // pre-#262 behavior (sampling params always sent). Pinned here so a future
+  // broadening of those patterns cannot silently strip sampling from a
+  // third-party model on the fallback path.
+  const fallbackModels = [
+    'meta.llama3-70b-instruct-v1:0',
+    'cohere.command-r-plus-v1:0',
+    'mistral.mistral-large-2402-v1:0',
+    'ai21.jamba-1-5-large-v1:0',
+    'some-unregistered-model',
+  ];
+  for (const id of fallbackModels) {
+    it(`${id} keeps its sampling params`, () => {
+      expect(acceptsSamplingParams(id)).toBe(true);
+    });
+  }
+});

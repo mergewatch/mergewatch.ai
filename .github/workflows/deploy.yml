@@ -198,7 +198,18 @@ jobs:
             echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
           else
             echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
-            sed -n '1,20p' /tmp/smoke-err.txt
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
             exit 1
           fi
 
@@ -328,7 +339,18 @@ jobs:
             echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
           else
             echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
-            sed -n '1,20p' /tmp/smoke-err.txt
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
             exit 1
           fi
 

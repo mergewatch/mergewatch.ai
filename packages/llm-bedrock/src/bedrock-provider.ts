@@ -53,7 +53,9 @@ interface ModelRequestBody {
 const REJECTS_SAMPLING_PARAMS: readonly RegExp[] = [
   // Opus 4.7, 4.8, and any later 4.x
   /claude-opus-4-(?:[7-9]|\d{2,})/,
-  // The 5 generation: sonnet-5, opus-5, fable-5, mythos-5
+  // The 5 generation. `haiku` is included for symmetry with a future Haiku 5
+  // that would follow the same rule — no such model exists today, and the
+  // negative lookahead keeps `claude-haiku-4-5` out of this pattern.
   /claude-(?:sonnet|opus|haiku|fable|mythos)-5(?![\d-])/,
 ];
 
