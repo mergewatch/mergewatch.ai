@@ -137,23 +137,29 @@ export interface IFindingDispositionStore {
     attribution?: FindingDispositionAttribution,
   ): Promise<void>;
 
-  /** Increment disputeCount by 1. No-op if no record exists yet (we don't backfill — a dispute without prior surfacing is a write-ordering bug we'd want to see logged separately). */
-  incrementDispute(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  /**
+   * Increment disputeCount by 1. No-op if no record exists yet (we don't backfill — a dispute without prior surfacing is a write-ordering bug we'd want to see logged separately).
+   *
+   * #334 — every increment also bumps the matching per-day bucket in
+   * `periodCounts`. `nowIso` names the event day (UTC); implementations
+   * default it to the current time, so existing callers stay correct.
+   */
+  incrementDispute(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** Increment verifiedCount by 1. */
-  incrementVerified(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  incrementVerified(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** Increment unverifiedCount by 1. */
-  incrementUnverified(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  incrementUnverified(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** FB-B — increment silentDropCount by 1. */
-  incrementSilentDrop(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  incrementSilentDrop(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** FB-C — increment agreementCount by 1. */
-  incrementAgreement(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  incrementAgreement(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** #195 — increment resolveCount by 1 (a `/resolve` command on the bot's inline thread). */
-  incrementResolve(installationId: string, repoFullName: string, findingMatchKey: string): Promise<void>;
+  incrementResolve(installationId: string, repoFullName: string, findingMatchKey: string, nowIso?: string): Promise<void>;
 
   /** FB-D — append a rejectReason entry. Idempotent at the record level; appends always extend. */
   appendRejectReason(

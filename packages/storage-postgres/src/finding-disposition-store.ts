@@ -18,8 +18,27 @@ import type {
   IFindingDispositionStore,
   FindingDispositionAttribution,
   FindingDispositionRecord,
+  PeriodCounterBucket,
 } from '@mergewatch/core';
+import { periodDayKey } from '@mergewatch/core';
 import { findingDispositions } from './schema.js';
+
+/**
+ * #334 — atomic single-statement bump of `period_counts[day][counter]`.
+ * The outer jsonb_set (create_missing = true) materialises the day object,
+ * the `||` merge overwrites just the one counter inside it — no
+ * read-modify-write loop, so concurrent writers can't lose increments.
+ */
+function bumpPeriodCountSql(day: string, counter: keyof PeriodCounterBucket) {
+  const col = findingDispositions.periodCounts;
+  return sql`jsonb_set(
+    COALESCE(${col}, '{}'::jsonb),
+    ARRAY[${day}]::text[],
+    COALESCE(${col} -> ${day}, '{}'::jsonb)
+      || jsonb_build_object(${counter}::text, COALESCE((${col} -> ${day} ->> ${counter})::int, 0) + 1),
+    true
+  )`;
+}
 
 export class PostgresFindingDispositionStore implements IFindingDispositionStore {
   constructor(private db: PostgresJsDatabase) {}
@@ -41,6 +60,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
           firstSeen: nowIso,
           lastSeen: nowIso,
           surfaceCount: 1,
+          periodCounts: { [periodDayKey(nowIso)]: { surface: 1 } },
           category: attribution?.category ?? null,
           topAgent: attribution?.topAgent ?? null,
           severity: attribution?.severity ?? null,
@@ -57,6 +77,7 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
           set: {
             lastSeen: nowIso,
             surfaceCount: sql`${findingDispositions.surfaceCount} + 1`,
+            periodCounts: bumpPeriodCountSql(periodDayKey(nowIso), 'surface'),
             // COALESCE keeps the prior value when this caller doesn't carry
             // attribution data (e.g. a 👎 reaction handler) — otherwise the
             // last writer would clear category/topAgent/sigTokens to null.
@@ -85,20 +106,27 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
     repoFullName: string,
     findingMatchKey: string,
     column: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount' | 'resolveCount',
+    nowIso?: string,
   ): Promise<void> {
     try {
+      // Lifetime column + its #334 per-day bucket key, kept in one map so a
+      // counter can never bump one without the other.
       const colMap = {
-        disputeCount:    findingDispositions.disputeCount,
-        verifiedCount:   findingDispositions.verifiedCount,
-        unverifiedCount: findingDispositions.unverifiedCount,
-        silentDropCount: findingDispositions.silentDropCount,
-        agreementCount:  findingDispositions.agreementCount,
-        resolveCount:    findingDispositions.resolveCount,
+        disputeCount:    { col: findingDispositions.disputeCount,    period: 'dispute' },
+        verifiedCount:   { col: findingDispositions.verifiedCount,   period: 'verified' },
+        unverifiedCount: { col: findingDispositions.unverifiedCount, period: 'unverified' },
+        silentDropCount: { col: findingDispositions.silentDropCount, period: 'silentDrop' },
+        agreementCount:  { col: findingDispositions.agreementCount,  period: 'agreement' },
+        resolveCount:    { col: findingDispositions.resolveCount,    period: 'resolve' },
       } as const;
-      const dbCol = colMap[column];
+      const { col: dbCol, period } = colMap[column];
+      const day = periodDayKey(nowIso ?? new Date().toISOString());
       await this.db
         .update(findingDispositions)
-        .set({ [column]: sql`${dbCol} + 1` } as Record<string, unknown>)
+        .set({
+          [column]: sql`${dbCol} + 1`,
+          periodCounts: bumpPeriodCountSql(day, period),
+        } as Record<string, unknown>)
         .where(and(
           eq(findingDispositions.installationId, installationId),
           eq(findingDispositions.repoFullName, repoFullName),
@@ -109,12 +137,12 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
     }
   }
 
-  incrementDispute(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'disputeCount'); }
-  incrementVerified(i: string, r: string, k: string)    { return this.incrementCounter(i, r, k, 'verifiedCount'); }
-  incrementUnverified(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount'); }
-  incrementSilentDrop(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'silentDropCount'); }
-  incrementAgreement(i: string, r: string, k: string)   { return this.incrementCounter(i, r, k, 'agreementCount'); }
-  incrementResolve(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'resolveCount'); }
+  incrementDispute(i: string, r: string, k: string, nowIso?: string)     { return this.incrementCounter(i, r, k, 'disputeCount', nowIso); }
+  incrementVerified(i: string, r: string, k: string, nowIso?: string)    { return this.incrementCounter(i, r, k, 'verifiedCount', nowIso); }
+  incrementUnverified(i: string, r: string, k: string, nowIso?: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount', nowIso); }
+  incrementSilentDrop(i: string, r: string, k: string, nowIso?: string)  { return this.incrementCounter(i, r, k, 'silentDropCount', nowIso); }
+  incrementAgreement(i: string, r: string, k: string, nowIso?: string)   { return this.incrementCounter(i, r, k, 'agreementCount', nowIso); }
+  incrementResolve(i: string, r: string, k: string, nowIso?: string)     { return this.incrementCounter(i, r, k, 'resolveCount', nowIso); }
 
   async appendRejectReason(
     installationId: string,
@@ -171,6 +199,9 @@ export class PostgresFindingDispositionStore implements IFindingDispositionStore
       ...(r.severity ? { severity: r.severity as FindingDispositionRecord['severity'] } : {}),
       ...(Array.isArray(r.sigTokens) ? { sigTokens: r.sigTokens as string[] } : {}),
       ...(Array.isArray(r.rejectReasons) ? { rejectReasons: r.rejectReasons as FindingDispositionRecord['rejectReasons'] } : {}),
+      ...(r.periodCounts && typeof r.periodCounts === 'object' && !Array.isArray(r.periodCounts)
+        ? { periodCounts: r.periodCounts as FindingDispositionRecord['periodCounts'] }
+        : {}),
     }));
     // Single-page for now — FB-E rollup can extend to cursor paging if any
     // installation exceeds the 1000-row cap.

@@ -153,6 +153,10 @@ export const findingDispositions = pgTable('finding_dispositions', {
   severity: text('severity'),
   sigTokens: jsonb('sig_tokens'),
   rejectReasons: jsonb('reject_reasons'),
+  // #334 — sparse per-UTC-day counter buckets ({ 'YYYY-MM-DD': { surface: n,
+  // dispute: n, … } }). Nullable so pre-#334 rows need no backfill; the
+  // rollup treats a missing map as zero in-window activity.
+  periodCounts: jsonb('period_counts'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.findingMatchKey] }),
   installationIdx: index('finding_dispositions_installation_idx').on(t.installationId),
