@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { aggregateReviews } from "@/lib/analytics-aggregate";
+import { collectAllReviews, ANALYTICS_PAGE_SIZE } from "@/lib/analytics-collect";
 import {
   fetchUserInstallations,
   fetchAccessibleRepoNames,
@@ -68,12 +69,30 @@ export async function GET(req: NextRequest) {
       ? allRepos.filter((r) => r === repoParam)
       : allRepos;
 
-    // Fetch up to 500 reviews for aggregation (with optional date filter)
-    const result = await store.reviews.listReviews(targetRepos, 500, undefined, undefined, startDate, endDate);
+    // Walk every page in the range. Aggregating a single page and calling the
+    // result a total is what #333 was: because the stores return newest-first,
+    // the dropped rows were the *oldest* in the range, so the trends lost
+    // their history while still being labelled with the full range.
+    const { reviews, truncated } = await collectAllReviews((cursor) =>
+      store.reviews.listReviews(
+        targetRepos,
+        ANALYTICS_PAGE_SIZE,
+        cursor,
+        undefined,
+        startDate,
+        endDate,
+      ),
+    );
 
-    const analytics = aggregateReviews(result.items);
+    const analytics = aggregateReviews(reviews);
 
-    return NextResponse.json({ analytics, availableRepos: allRepos });
+    return NextResponse.json({
+      analytics,
+      availableRepos: allRepos,
+      // Only ever true at the safety bound. The UI must label the figures as
+      // partial when it is — a capped aggregate shown as a total is the bug.
+      truncated,
+    });
   } catch (err) {
     if (err instanceof TokenExpiredError) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });
