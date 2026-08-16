@@ -1,15 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 180" width="1000" height="180" role="img" aria-label="Mergewatch" color="#0D1117">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 180" width="940" height="180" role="img" aria-label="mergewatch.ai">
+  <title>mergewatch.ai</title>
   <defs>
-    <style type="text/css">
-      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@800&amp;display=swap');
-      .wm { font-family: 'Nunito', system-ui, -apple-system, sans-serif; font-weight: 800; letter-spacing: -0.02em; fill: currentColor; }
-      .wm-dim { opacity: 0.55; }
-    </style>
+    <mask id="mw-pupil">
+      <circle cx="512" cy="644.4" r="108" fill="#fff"></circle>
+      <circle cx="474.2" cy="601.2" r="32.4" fill="#000"></circle>
+    </mask>
   </defs>
-  <g transform="translate(120 21.599999999999994) scale(0.13359375)">
-    <path d="M 207 579.4 Q 512 274.4 817 579.4" fill="none" stroke="currentColor" stroke-width="82" stroke-linecap="round" />
-    <circle cx="512" cy="644.4" r="108" fill="currentColor" />
-    <circle cx="474.2" cy="601.1999999999999" r="32.4" fill="#F4F2EA" />
+  <g transform="translate(120 21.6) scale(0.13359375)" color="#16A34A">
+    <path d="M 207 579.4 Q 512 274.4 817 579.4" fill="none" stroke="currentColor" stroke-width="82" stroke-linecap="round"></path>
+    <circle cx="512" cy="644.4" r="108" fill="currentColor" mask="url(#mw-pupil)"></circle>
   </g>
-  <text x="289.2" y="119.376" class="wm" font-size="86.39999999999999">mergewatch<tspan class="wm-dim">.ai</tspan></text>
+  <text x="289.2" y="119.4" font-family="&#39;Plus Jakarta Sans&#39;,&#39;Helvetica Neue&#39;,Helvetica,Arial,sans-serif" font-weight="800" font-size="86.4" letter-spacing="-3" fill="#767C87">mergewatch<tspan fill="#16A34A">.ai</tspan></text>
 </svg>
