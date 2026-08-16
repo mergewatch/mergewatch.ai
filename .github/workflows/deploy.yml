@@ -179,6 +179,40 @@ jobs:
           fi
           echo "Review model matches the repo."
 
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
+            exit 1
+          fi
+
       - name: Print dev outputs
         if: success()
         run: |
@@ -285,6 +319,40 @@ jobs:
             exit 1
           fi
           echo "Review model matches the repo."
+
+          # Matching the parameter is not the same as the model being usable.
+          # A Bedrock model can be listed ACTIVE, have its agreement accepted,
+          # and still reject InvokeModel for minutes afterwards — or forever, if
+          # the account never accepted the agreement at all. Without this probe
+          # the deploy goes green and every review 400s instead.
+          #
+          # The body deliberately mirrors what the provider sends: no sampling
+          # parameters, because Opus 4.7+ and the 5 generation reject them
+          # (see acceptsSamplingParams in packages/llm-bedrock).
+          echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":8,"messages":[{"role":"user","content":"ping"}]}' > /tmp/smoke.json
+          if aws bedrock-runtime invoke-model \
+               --model-id "$ACTUAL" \
+               --region "$AWS_REGION" \
+               --body fileb:///tmp/smoke.json \
+               --cli-binary-format raw-in-base64-out \
+               /tmp/smoke-out.json > /dev/null 2>/tmp/smoke-err.txt; then
+            echo "Smoke invoke succeeded — $ACTUAL is reachable and accepts the request shape."
+          else
+            echo "::error::Deployed model $ACTUAL is configured but NOT invocable. Reviews would fail on every PR."
+            # Print the whole error. A Bedrock refusal is a few lines, and
+            # silently clipping it hides the one thing worth reading — an
+            # AccessDeniedException reads very differently from a
+            # ValidationException. Guarded with an if (not `[ ] && echo`, whose
+            # non-zero exit would itself fail the step under bash -e).
+            ERR_LINES=$(wc -l < /tmp/smoke-err.txt)
+            if [ "$ERR_LINES" -gt 60 ]; then
+              sed -n '1,60p' /tmp/smoke-err.txt
+              echo "... ($((ERR_LINES - 60)) more lines suppressed)"
+            else
+              cat /tmp/smoke-err.txt
+            fi
+            exit 1
+          fi
 
       - name: Print prod outputs
         if: success()

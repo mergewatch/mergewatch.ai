@@ -1051,6 +1051,20 @@ export async function handler(
     // so CloudWatch alarms can catch revenue leaks. We don't throw because
     // the review comment is already posted — crashing would retry the entire
     // review pipeline which is worse than a missed billing record.
+    // #262 — an unpriced model makes estimatedCostUsd null, which skips
+    // recordReview entirely: no free-tier increment, no balance deduction, no
+    // error. Every review becomes free, silently. The REVENUE LEAK log below
+    // only covers recordReview *throwing*, not being skipped — so log the skip
+    // loudly too. Adding a model without a DEFAULT_PRICING row is the way this
+    // happens.
+    if (isSaas() && result.estimatedCostUsd == null) {
+      console.error(
+        `[billing] UNPRICED MODEL: no cost for ${modelId} on ${repoFullName}#${prNumber} — `
+        + 'review NOT billed and free tier NOT consumed. Add a DEFAULT_PRICING entry '
+        + '(packages/core/src/llm/pricing.ts) or a `pricing:` override in .mergewatch.yml.',
+      );
+    }
+
     if (isSaas() && result.estimatedCostUsd != null) {
       let stripe;
       try { stripe = await getStripe(); } catch (err) {

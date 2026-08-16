@@ -3,15 +3,15 @@ import { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './pricing.j
 
 describe('estimateCost', () => {
   it('returns correct cost for a known Bedrock model', () => {
-    // us.anthropic.claude-sonnet-4: input $3/1M, output $15/1M
-    // 1000 input tokens, 500 output tokens
+    // us.anthropic.claude-sonnet-4: the `us.` cross-region profile is billed at
+    // $3.30/$16.50, not the $3/$15 published base rate (see below).
     const cost = estimateCost(
       'us.anthropic.claude-sonnet-4-20250514-v1:0',
       1000,
       500,
     );
-    // (1000 / 1_000_000) * 3 + (500 / 1_000_000) * 15 = 0.003 + 0.0075 = 0.0105
-    expect(cost).toBeCloseTo(0.0105, 6);
+    // (1000 / 1_000_000) * 3.30 + (500 / 1_000_000) * 16.50 = 0.0033 + 0.00825
+    expect(cost).toBeCloseTo(0.01155, 6);
   });
 
   it('returns correct cost for a known direct Anthropic model', () => {
@@ -21,23 +21,65 @@ describe('estimateCost', () => {
     expect(cost).toBeCloseTo(0.105, 6);
   });
 
-  it('prices the Opus 4.6 default (Bedrock) at $5/$25 per 1M', () => {
-    // us.anthropic.claude-opus-4-6-v1: input $5/1M, output $25/1M
-    const cost = estimateCost('us.anthropic.claude-opus-4-6-v1', 1000, 500);
-    // (1000 / 1_000_000) * 5 + (500 / 1_000_000) * 25 = 0.005 + 0.0125 = 0.0175
-    expect(cost).toBeCloseTo(0.0175, 6);
-  });
+  // ── The `us.` cross-region premium ──────────────────────────────────────
+  //
+  // Bedrock's published rate applies to `global.` inference profiles. The `us.`
+  // profiles — which every model MergeWatch runs uses — cost exactly 10% more.
+  // Verified against three rate cards (Sonnet 5, Opus 5, Fable 5).
+  //
+  // These assertions exist because the obvious "fix" when they fail is to set
+  // the Bedrock rows back to the published price, which silently under-bills
+  // every SaaS review by ~10%. If a rate genuinely changes, re-derive it with:
+  //   aws bedrock list-foundation-model-agreement-offers --model-id <base-id>
+  describe('Bedrock us. profiles carry a 10% premium over the published rate', () => {
+    const M = 1_000_000;
 
-  it('prices current-gen Sonnet 4.6 (Bedrock + direct) at $3/$15 per 1M', () => {
-    // (1_000_000/1M)*3 + (1_000_000/1M)*15 = 18
-    expect(estimateCost('us.anthropic.claude-sonnet-4-6', 1_000_000, 1_000_000)).toBeCloseTo(18, 6);
-    expect(estimateCost('claude-sonnet-4-6', 1_000_000, 1_000_000)).toBeCloseTo(18, 6);
-  });
+    it('Opus 4.6 — the deployment default — bills at $5.50/$27.50, not $5/$25', () => {
+      expect(estimateCost('us.anthropic.claude-opus-4-6-v1', M, M)).toBeCloseTo(33, 6);
+      // The published rate would have produced 30.
+      expect(estimateCost('claude-opus-4-6', M, M)).toBeCloseTo(30, 6);
+    });
 
-  it('prices current-gen Opus 4.8 (Bedrock + direct) at $5/$25 per 1M', () => {
-    // (1_000_000/1M)*5 + (1_000_000/1M)*25 = 30
-    expect(estimateCost('us.anthropic.claude-opus-4-8-v1', 1_000_000, 1_000_000)).toBeCloseTo(30, 6);
-    expect(estimateCost('claude-opus-4-8', 1_000_000, 1_000_000)).toBeCloseTo(30, 6);
+    it('Sonnet 4.6 bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
+      expect(estimateCost('us.anthropic.claude-sonnet-4-6', M, M)).toBeCloseTo(19.8, 6);
+      expect(estimateCost('claude-sonnet-4-6', M, M)).toBeCloseTo(18, 6);
+    });
+
+    it('Opus 4.8 bills at $5.50/$27.50 on Bedrock, $5/$25 direct', () => {
+      expect(estimateCost('us.anthropic.claude-opus-4-8-v1', M, M)).toBeCloseTo(33, 6);
+      expect(estimateCost('claude-opus-4-8', M, M)).toBeCloseTo(30, 6);
+    });
+
+    it('Sonnet 5 global. is the published rate; us. is 10% above it', () => {
+      expect(estimateCost('global.anthropic.claude-sonnet-5', M, M)).toBeCloseTo(12, 6);
+      expect(estimateCost('us.anthropic.claude-sonnet-5', M, M)).toBeCloseTo(13.2, 6);
+    });
+
+    it('Haiku 4.5 — the lightModel on every review — bills at $1.10/$5.50', () => {
+      // Previously $0.80/$4, which matched no published rate and under-billed
+      // by 27% on a model used in every single review.
+      expect(estimateCost('us.anthropic.claude-haiku-4-5-20251001-v1:0', M, M))
+        .toBeCloseTo(6.6, 6);
+      expect(estimateCost('claude-haiku-4-5-20251001', M, M)).toBeCloseTo(6, 6);
+    });
+
+    it('every us. row is exactly 1.1x its global/direct counterpart', () => {
+      const pairs: Array<[string, string]> = [
+        ['us.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-5'],
+        ['us.anthropic.claude-opus-5', 'global.anthropic.claude-opus-5'],
+        ['us.anthropic.claude-fable-5', 'global.anthropic.claude-fable-5'],
+        ['us.anthropic.claude-opus-4-6-v1', 'claude-opus-4-6'],
+        ['us.anthropic.claude-sonnet-4-6', 'claude-sonnet-4-6'],
+        ['us.anthropic.claude-haiku-4-5-20251001-v1:0', 'claude-haiku-4-5-20251001'],
+      ];
+      for (const [usId, baseId] of pairs) {
+        const us = estimateCost(usId, M, M);
+        const base = estimateCost(baseId, M, M);
+        expect(us, `${usId} priced`).not.toBeNull();
+        expect(base, `${baseId} priced`).not.toBeNull();
+        expect(us! / base!, `${usId} vs ${baseId}`).toBeCloseTo(1.1, 6);
+      }
+    });
   });
 
   it('the retired claude-3-5-sonnet is no longer priced (returns null)', () => {
