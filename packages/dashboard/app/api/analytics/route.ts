@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
+import { aggregateReviews } from "@/lib/analytics-aggregate";
+import { collectAllReviews, ANALYTICS_PAGE_SIZE } from "@/lib/analytics-collect";
 import {
   fetchUserInstallations,
   fetchAccessibleRepoNames,
@@ -67,152 +69,30 @@ export async function GET(req: NextRequest) {
       ? allRepos.filter((r) => r === repoParam)
       : allRepos;
 
-    // Fetch up to 500 reviews for aggregation (with optional date filter)
-    const result = await store.reviews.listReviews(targetRepos, 500, undefined, undefined, startDate, endDate);
-    const reviews = result.items;
+    // Walk every page in the range. Aggregating a single page and calling the
+    // result a total is what #333 was: because the stores return newest-first,
+    // the dropped rows were the *oldest* in the range, so the trends lost
+    // their history while still being labelled with the full range.
+    const { reviews, truncated } = await collectAllReviews((cursor) =>
+      store.reviews.listReviews(
+        targetRepos,
+        ANALYTICS_PAGE_SIZE,
+        cursor,
+        undefined,
+        startDate,
+        endDate,
+      ),
+    );
 
-    // --- Aggregate analytics in-memory ---
+    const analytics = aggregateReviews(reviews);
 
-    // Score trend: average mergeScore per day
-    const scoreByDate = new Map<string, { sum: number; count: number }>();
-    // Severity breakdown
-    const severityBreakdown: Record<string, number> = { critical: 0, warning: 0, info: 0 };
-    // Duration stats
-    const durations: number[] = [];
-    // Repo breakdown
-    const repoBreakdown = new Map<string, number>();
-    // Category breakdown
-    const categoryBreakdown: Record<string, number> = { security: 0, bug: 0, style: 0 };
-    // Totals
-    let totalFindings = 0;
-    let mergeScoreSum = 0;
-    let mergeScoreCount = 0;
-    // Cost stats
-    let totalCostUsd = 0;
-    let costCount = 0;
-    // Status counts
-    const statusCounts: Record<string, number> = { complete: 0, failed: 0, skipped: 0, pending: 0, in_progress: 0 };
-    // Findings-per-review trend
-    const findingsByDate = new Map<string, { sum: number; count: number }>();
-    // Merge score distribution (1-5)
-    const mergeScoreDistribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-
-    for (const review of reviews) {
-      // Status counts
-      if (review.status && statusCounts[review.status] !== undefined) {
-        statusCounts[review.status]++;
-      }
-
-      // Score trend
-      if (review.createdAt && review.mergeScore != null) {
-        const date = review.createdAt.substring(0, 10); // YYYY-MM-DD
-        const entry = scoreByDate.get(date) ?? { sum: 0, count: 0 };
-        entry.sum += review.mergeScore;
-        entry.count += 1;
-        scoreByDate.set(date, entry);
-        mergeScoreSum += review.mergeScore;
-        mergeScoreCount += 1;
-
-        // Merge score distribution
-        const rounded = Math.round(review.mergeScore);
-        if (rounded >= 1 && rounded <= 5) {
-          mergeScoreDistribution[rounded]++;
-        }
-      }
-
-      // Severity and category from findings
-      if (review.findings && Array.isArray(review.findings)) {
-        totalFindings += review.findings.length;
-        for (const finding of review.findings) {
-          if (finding.severity && severityBreakdown[finding.severity] !== undefined) {
-            severityBreakdown[finding.severity]++;
-          }
-          if (finding.category && categoryBreakdown[finding.category] !== undefined) {
-            categoryBreakdown[finding.category]++;
-          }
-        }
-      }
-
-      // Findings-per-review trend (only completed reviews)
-      if (review.createdAt && review.status === "complete") {
-        const date = review.createdAt.substring(0, 10);
-        const fc = review.findingCount ?? 0;
-        const entry = findingsByDate.get(date) ?? { sum: 0, count: 0 };
-        entry.sum += fc;
-        entry.count += 1;
-        findingsByDate.set(date, entry);
-      }
-
-      // Cost stats
-      if ((review as any).estimatedCostUsd != null && review.status === "complete") {
-        totalCostUsd += Number((review as any).estimatedCostUsd);
-        costCount += 1;
-      }
-
-      // Duration stats
-      if (review.durationMs != null && review.status === "complete") {
-        durations.push(review.durationMs);
-      }
-
-      // Repo breakdown
-      const repoCount = repoBreakdown.get(review.repoFullName) ?? 0;
-      repoBreakdown.set(review.repoFullName, repoCount + 1);
-    }
-
-    // Compute score trend sorted by date
-    const scoreTrend = Array.from(scoreByDate.entries())
-      .map(([date, { sum, count }]) => ({
-        date,
-        avgScore: Math.round((sum / count) * 100) / 100,
-        count,
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    // Duration statistics
-    durations.sort((a, b) => a - b);
-    const avgDuration = durations.length > 0
-      ? Math.round(durations.reduce((s, d) => s + d, 0) / durations.length)
-      : 0;
-    const p95Duration = durations.length > 0
-      ? durations[Math.floor(durations.length * 0.95)]
-      : 0;
-
-    const analytics = {
-      totalReviews: reviews.length,
-      totalFindings,
-      avgMergeScore: mergeScoreCount > 0
-        ? Math.round((mergeScoreSum / mergeScoreCount) * 100) / 100
-        : 0,
-      scoreTrend,
-      severityBreakdown,
-      durationStats: {
-        avgMs: avgDuration,
-        p95Ms: p95Duration,
-        count: durations.length,
-      },
-      repoBreakdown: Array.from(repoBreakdown.entries())
-        .map(([repo, count]) => ({ repo, count }))
-        .sort((a, b) => b.count - a.count),
-      categoryBreakdown,
-      statusCounts,
-      findingsPerReviewTrend: Array.from(findingsByDate.entries())
-        .map(([date, { sum, count }]) => ({
-          date,
-          avgFindings: Math.round((sum / count) * 100) / 100,
-          count,
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
-      mergeScoreDistribution,
-      costStats: {
-        totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
-        avgCostUsd: costCount > 0
-          ? Math.round((totalCostUsd / costCount) * 10000) / 10000
-          : 0,
-        costCount,
-      },
-    };
-
-    return NextResponse.json({ analytics, availableRepos: allRepos });
+    return NextResponse.json({
+      analytics,
+      availableRepos: allRepos,
+      // Only ever true at the safety bound. The UI must label the figures as
+      // partial when it is — a capped aggregate shown as a total is the bug.
+      truncated,
+    });
   } catch (err) {
     if (err instanceof TokenExpiredError) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });

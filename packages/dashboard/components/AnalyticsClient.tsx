@@ -336,6 +336,9 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
   );
 
   const [data, setData] = useState<AnalyticsData | null>(null);
+  // #333 — set when the API hit its safety bound and the figures below cover
+  // only part of the selected range.
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("7d");
@@ -396,6 +399,7 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
         const json = await res.json();
         if (!cancelled) {
           setData(json.analytics);
+          setTruncated(Boolean(json.truncated));
           if (json.availableRepos) {
             setAvailableRepos(json.availableRepos);
           }
@@ -588,11 +592,35 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
 
     return (
       <>
+        {/* #333 — never let a capped aggregate read as a total. */}
+        {truncated && (
+          <div
+            role="status"
+            className="mb-6 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4"
+          >
+            <p className="text-sm font-medium text-fg-primary">
+              Showing a partial view of this range
+            </p>
+            <p className="mt-1 text-sm text-fg-secondary">
+              This range contains more reviews than a single query returns, so
+              the figures below cover only part of it. Narrow the date range for
+              exact numbers.
+            </p>
+          </div>
+        )}
+
         {/* Stat cards — Overview only */}
         {activeTab === "overview" && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
-          <StatCard label="Total Reviews" value={data.totalReviews} />
-          <StatCard label="Total Findings" value={data.totalFindings} />
+          <StatCard
+            label={truncated ? "Reviews (partial)" : "Total Reviews"}
+            value={truncated ? `${data.totalReviews}+` : data.totalReviews}
+            subtext={truncated ? "Range exceeds the query limit" : undefined}
+          />
+          <StatCard
+            label={truncated ? "Findings (partial)" : "Total Findings"}
+            value={truncated ? `${data.totalFindings}+` : data.totalFindings}
+          />
           <StatCard
             label="Avg Merge Score"
             value={data.avgMergeScore > 0 ? `${data.avgMergeScore} / 5` : "N/A"}
