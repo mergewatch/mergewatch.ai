@@ -588,6 +588,31 @@ export type CreateReviewInput = Omit<ReviewItem, 'completedAt' | 'commentId'>;
  * review pipeline. Counters are monotonic — we never decrement (avoids the
  * need for an event-source table to reconcile reaction removals).
  */
+/**
+ * #334 — one UTC day's slice of the disposition counters. Every field is the
+ * count of that event on that day; a field is simply absent when the day saw
+ * none. Field names mirror the lifetime counters on the record (minus the
+ * `Count` suffix) so the mapping stays greppable.
+ */
+export interface PeriodCounterBucket {
+  surface?: number;
+  dispute?: number;
+  verified?: number;
+  unverified?: number;
+  silentDrop?: number;
+  agreement?: number;
+  resolve?: number;
+}
+
+/**
+ * #334 — the `periodCounts` day key for an ISO timestamp: the UTC calendar
+ * date, `YYYY-MM-DD`. Both storage backends and the rollup use this one
+ * helper so the bucket keys can never drift between writer and reader.
+ */
+export function periodDayKey(iso: string): string {
+  return iso.slice(0, 10);
+}
+
 export interface FindingDispositionRecord {
   installationId: string;
   repoFullName: string;
@@ -619,6 +644,17 @@ export interface FindingDispositionRecord {
    * Defaults to 0 on records written before this counter existed.
    */
   resolveCount: number;
+
+  /**
+   * #334 — sparse per-UTC-day counter buckets, keyed `YYYY-MM-DD`. Written
+   * alongside every lifetime-counter increment; a day key exists only when
+   * that day saw activity. This is what lets the FB-E rollup bound a window
+   * to the activity that actually happened inside it — the lifetime counters
+   * above cannot be retroactively sliced. Absent on records written before
+   * the buckets shipped; rollups treat missing buckets as zero in-window
+   * activity for records whose `firstSeen` predates the window.
+   */
+  periodCounts?: Record<string, PeriodCounterBucket>;
 
   /** Last-seen finding category for this key (the few seen are stable; we keep the most recent). */
   category?: 'security' | 'bug' | 'style' | 'errorHandling' | 'testCoverage' | 'commentAccuracy' | 'custom';

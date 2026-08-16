@@ -23,9 +23,28 @@ import type {
   IFindingDispositionStore,
   FindingDispositionAttribution,
   FindingDispositionRecord,
+  PeriodCounterBucket,
 } from '@mergewatch/core';
+import { periodDayKey } from '@mergewatch/core';
 
 export const DEFAULT_FINDING_DISPOSITIONS_TABLE = 'mergewatch-finding-dispositions';
+
+/**
+ * #334 — per-day counter buckets are stored FLATTENED as top-level numeric
+ * attributes named `pc#<YYYY-MM-DD>#<counter>` (e.g. `pc#2026-08-16#dispute`)
+ * rather than a nested `periodCounts` map. Rationale: DynamoDB cannot
+ * atomically create-and-increment a two-level nested map path in one
+ * UpdateExpression (intermediate path segments must already exist), which
+ * would force a read-or-retry dance on the review hot path. A flat attribute
+ * keeps every bucket bump the same single-call
+ * `if_not_exists(#a, :zero) + :one` idiom the lifetime counters use.
+ * `itemToRecord` folds them back into the typed `periodCounts` map on read.
+ */
+const PERIOD_ATTR_PREFIX = 'pc#';
+
+function periodAttr(day: string, counter: keyof PeriodCounterBucket): string {
+  return `${PERIOD_ATTR_PREFIX}${day}#${counter}`;
+}
 
 /** Compose the partition key from installation + repo. */
 function pk(installationId: string, repoFullName: string): string {
@@ -66,6 +85,8 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
       'firstSeen = if_not_exists(firstSeen, :now)',
       'lastSeen = :now',
       'surfaceCount = if_not_exists(surfaceCount, :zero) + :one',
+      // #334 — bump today's flattened surface bucket in the same call.
+      '#pcSurface = if_not_exists(#pcSurface, :zero) + :one',
       // Counter defaults so subsequent increment* calls don't have to
       // bootstrap. DynamoDB rejects ADD on a non-existent attribute when
       // the target type is unset; pre-seeding to 0 sidesteps that.
@@ -80,6 +101,9 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
       ':now': nowIso,
       ':zero': 0,
       ':one': 1,
+    };
+    const exprNames: Record<string, string> = {
+      '#pcSurface': periodAttr(periodDayKey(nowIso), 'surface'),
     };
     if (attribution?.category !== undefined) {
       setExprs.push('category = :category');
@@ -104,6 +128,7 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
         TableName: this.tableName,
         Key: { pk: pk(installationId, repoFullName), sk: findingMatchKey },
         UpdateExpression: 'SET ' + setExprs.join(', '),
+        ExpressionAttributeNames: exprNames,
         ExpressionAttributeValues: exprValues,
       }));
     } catch (err) {
@@ -116,13 +141,18 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
     repoFullName: string,
     findingMatchKey: string,
     attrName: 'disputeCount' | 'verifiedCount' | 'unverifiedCount' | 'silentDropCount' | 'agreementCount' | 'resolveCount',
+    periodKey: keyof PeriodCounterBucket,
+    nowIso?: string,
   ): Promise<void> {
     try {
+      const day = periodDayKey(nowIso ?? new Date().toISOString());
       await this.client.send(new UpdateCommand({
         TableName: this.tableName,
+        // #334 — the lifetime counter and its per-day bucket bump in ONE
+        // expression so they can never drift apart.
+        UpdateExpression: `SET #c = if_not_exists(#c, :zero) + :one, #p = if_not_exists(#p, :zero) + :one`,
         Key: { pk: pk(installationId, repoFullName), sk: findingMatchKey },
-        UpdateExpression: `SET #c = if_not_exists(#c, :zero) + :one`,
-        ExpressionAttributeNames: { '#c': attrName },
+        ExpressionAttributeNames: { '#c': attrName, '#p': periodAttr(day, periodKey) },
         ExpressionAttributeValues: { ':zero': 0, ':one': 1 },
       }));
     } catch (err) {
@@ -130,12 +160,12 @@ export class DynamoFindingDispositionStore implements IFindingDispositionStore {
     }
   }
 
-  incrementDispute(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'disputeCount'); }
-  incrementVerified(i: string, r: string, k: string)    { return this.incrementCounter(i, r, k, 'verifiedCount'); }
-  incrementUnverified(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount'); }
-  incrementSilentDrop(i: string, r: string, k: string)  { return this.incrementCounter(i, r, k, 'silentDropCount'); }
-  incrementAgreement(i: string, r: string, k: string)   { return this.incrementCounter(i, r, k, 'agreementCount'); }
-  incrementResolve(i: string, r: string, k: string)     { return this.incrementCounter(i, r, k, 'resolveCount'); }
+  incrementDispute(i: string, r: string, k: string, nowIso?: string)     { return this.incrementCounter(i, r, k, 'disputeCount', 'dispute', nowIso); }
+  incrementVerified(i: string, r: string, k: string, nowIso?: string)    { return this.incrementCounter(i, r, k, 'verifiedCount', 'verified', nowIso); }
+  incrementUnverified(i: string, r: string, k: string, nowIso?: string)  { return this.incrementCounter(i, r, k, 'unverifiedCount', 'unverified', nowIso); }
+  incrementSilentDrop(i: string, r: string, k: string, nowIso?: string)  { return this.incrementCounter(i, r, k, 'silentDropCount', 'silentDrop', nowIso); }
+  incrementAgreement(i: string, r: string, k: string, nowIso?: string)   { return this.incrementCounter(i, r, k, 'agreementCount', 'agreement', nowIso); }
+  incrementResolve(i: string, r: string, k: string, nowIso?: string)     { return this.incrementCounter(i, r, k, 'resolveCount', 'resolve', nowIso); }
 
   async appendRejectReason(
     installationId: string,
@@ -210,5 +240,20 @@ function itemToRecord(it: Record<string, unknown>): FindingDispositionRecord {
   if (it.severity) r.severity = it.severity as FindingDispositionRecord['severity'];
   if (Array.isArray(it.sigTokens)) r.sigTokens = it.sigTokens as string[];
   if (Array.isArray(it.rejectReasons)) r.rejectReasons = it.rejectReasons as FindingDispositionRecord['rejectReasons'];
+
+  // #334 — fold the flattened `pc#<day>#<counter>` attributes back into the
+  // typed periodCounts map. Attributes that don't parse cleanly are skipped
+  // (defensive: a malformed name should not poison the whole record).
+  let periodCounts: FindingDispositionRecord['periodCounts'];
+  for (const [attr, value] of Object.entries(it)) {
+    if (!attr.startsWith(PERIOD_ATTR_PREFIX)) continue;
+    const [day, counter] = attr.slice(PERIOD_ATTR_PREFIX.length).split('#');
+    if (!day || !counter) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) continue;
+    periodCounts ??= {};
+    (periodCounts[day] ??= {})[counter as keyof PeriodCounterBucket] = n;
+  }
+  if (periodCounts) r.periodCounts = periodCounts;
   return r;
 }

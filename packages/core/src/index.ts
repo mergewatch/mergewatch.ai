@@ -277,6 +277,7 @@ export type {
   CreateReviewInput,
   UpdateReviewInput,
   FindingDispositionRecord,
+  PeriodCounterBucket,
   InstallationFPInsight,
   CycleTimePercentiles,
   PRLifecycleRecord,
@@ -290,7 +291,7 @@ export type {
 
 export { resolveReviewModelId } from './config/model-resolution.js';
 export type { ModelResolutionInput, ModelSource, ResolvedModel } from './config/model-resolution.js';
-export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP } from './types/db.js';
+export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP, periodDayKey } from './types/db.js';
 export {
   sanitizeOrgCustomAgents,
   agentAppliesToRepo,

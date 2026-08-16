@@ -1,0 +1,1 @@
+ALTER TABLE "finding_dispositions" ADD COLUMN IF NOT EXISTS "period_counts" jsonb;
