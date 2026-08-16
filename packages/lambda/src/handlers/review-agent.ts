@@ -610,10 +610,15 @@ export async function handler(
       console.log(`Excluded ${excludedFiles.length} file(s) from diff: ${excludedFiles.join(', ')}`);
     }
 
-    // Model resolution (#264). Precedence, most specific first:
-    //   1. installation.modelId — per-repo admin override on the installation row
-    //   2. .mergewatch.yml `model:` — the documented per-repo key
-    //   3. DEFAULT_BEDROCK_MODEL_ID — the deploy-time default
+    // Model resolution (#264). Precedence, highest first:
+    //   1. .mergewatch.yml `model:`  — the repository's committed intent
+    //   2. installation.modelId      — per-repo override on the installation row
+    //   3. DEFAULT_BEDROCK_MODEL_ID  — the deploy-time default
+    //
+    // The committed yml outranks stored installation state, matching the
+    // configuration contract the runtimeConfig merge above follows since #306
+    // ("the .mergewatch.yml in the repository always wins"). These two adjacent
+    // paths previously disagreed about which source won.
     //
     // Read the RAW yamlConfig, never runtimeConfig.model: mergeConfig always
     // fills DEFAULT_CONFIG.model, so the merged value is truthy for every repo
@@ -622,8 +627,7 @@ export async function handler(
     //
     // Until #264 this line read `installation?.modelId ?? DEFAULT_...`, which
     // ignored `model:` entirely — while the very next line honored
-    // `lightModel:`. Self-hosted (review-processor.ts) already resolved both
-    // from config, so the two runtimes disagreed about a documented setting.
+    // `lightModel:`.
     const resolvedModel = resolveReviewModelId({
       installationModelId: installation?.modelId,
       repoConfigModel: yamlConfig?.model,

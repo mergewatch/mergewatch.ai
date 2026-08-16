@@ -300,9 +300,11 @@ pricing:
 
 `model:` is resolved against two other sources. Highest precedence first:
 
-1. **An installation-level override**, if one has been set on the repository's installation record.
-2. **`model:` in this file** — the per-repo setting documented above.
-3. **The deployment default.** On MergeWatch SaaS this is set per environment at deploy time. Self-hosted, it is the `LLM_MODEL` environment variable.
+1. **`model:` in this file** — the per-repo setting documented above. The committed `.mergewatch.yml` always wins, consistent with every other key on this page.
+2. **An installation-level override**, if one has been set on the repository's installation record.
+3. **The deployment default**, set per environment at deploy time.
+
+Self-hosted differs in one respect: the `LLM_MODEL` environment variable is an operator *pin* rather than a default, so it overrides everything above — including this file.
 
 Omitting `model:` therefore means "use whatever this deployment is configured with", not "use the value shown in the table above" — which is why the Default column reads *(deployment default)* rather than naming a model. The review log line records which source won:
 
