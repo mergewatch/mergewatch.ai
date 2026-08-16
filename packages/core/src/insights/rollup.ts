@@ -9,6 +9,7 @@
  */
 
 import type { FindingDispositionRecord, InstallationFPInsight } from '../types/db.js';
+import { periodDayKey } from '../types/db.js';
 
 /** Rolling window definitions: ISO 8601 duration → milliseconds. */
 export const WINDOW_LENGTH_MS: Record<InstallationFPInsight['window'], number> = {
@@ -24,7 +25,8 @@ const TOP_CLUSTERS_LIMIT = 10;
 /**
  * Compute one rolling-window insight from a set of disposition records.
  *
- *   1. Filter records to those whose `lastSeen` falls inside the window.
+ *   1. Compute each record's IN-WINDOW contribution (#334) and keep only
+ *      records with any in-window activity.
  *   2. Sum the global counters.
  *   3. Bucket by `category` and by `repoFullName`.
  *   4. Cluster by shared significant tokens (union-find on sigToken
@@ -32,6 +34,13 @@ const TOP_CLUSTERS_LIMIT = 10;
  *
  * Defensive defaults — rates are 0 when surfaceCount is 0; missing
  * sigTokens skip the cluster step but still feed the totals.
+ *
+ * #334 — the window bounds not just WHICH records count but HOW MUCH of
+ * each record counts. The previous version filtered by `lastSeen` and then
+ * summed lifetime counters, so one still-active long-lived finding injected
+ * its entire history into every window and all three windows converged
+ * toward all-time totals. Per-record windowing now guarantees
+ * 7d ≤ 30d ≤ 90d on any dataset.
  */
 export function buildInsightFromDispositions(
   installationId: string,
@@ -43,14 +52,26 @@ export function buildInsightFromDispositions(
   const windowStartMs = windowEndMs - WINDOW_LENGTH_MS[window];
   const windowStartIso = new Date(windowStartMs).toISOString();
 
-  // Filter to "active in window" — lastSeen inside [windowStart, windowEnd].
-  // We deliberately use lastSeen (most-recent surfacing) rather than
-  // firstSeen so a long-running finding contributes to its currently-
-  // active window rather than its first-discovered one.
-  const inWindow = records.filter((r) => {
-    const t = new Date(r.lastSeen).getTime();
-    return t >= windowStartMs && t <= windowEndMs;
-  });
+  // #334 — windowed view: substitute each record's counters with its
+  // in-window contribution and keep only records that actually had activity
+  // inside the window. Downstream (totals, per-* buckets, clusters) reads
+  // the substituted counters, so every derived number is window-bounded.
+  // Inclusion follows activity rather than `lastSeen`, which also captures
+  // a dispute/agreement landing after the finding's last surfacing.
+  const inWindow: FindingDispositionRecord[] = [];
+  for (const r of records) {
+    const w = windowedCounts(r, windowStartMs, windowEndMs);
+    if (w.surfaced + w.disputes + w.silentDrops + w.agreements === 0) continue;
+    // Only the four counters the insight derives from are substituted; the
+    // remaining lifetime fields ride along unread.
+    inWindow.push({
+      ...r,
+      surfaceCount: w.surfaced,
+      disputeCount: w.disputes,
+      silentDropCount: w.silentDrops,
+      agreementCount: w.agreements,
+    });
+  }
 
   // Global counters.
   let totalFindingsSurfaced = 0;
@@ -119,6 +140,64 @@ export function buildInsightFromDispositions(
     perRepo,
     topClusters,
   };
+}
+
+// ─── Internal: #334 per-record windowing ────────────────────────────────────
+
+/** One record's contribution to a window — the four counters the insight derives from. */
+interface WindowedCounts {
+  surfaced: number;
+  disputes: number;
+  silentDrops: number;
+  agreements: number;
+}
+
+/**
+ * How much of `r`'s activity falls inside [windowStart, windowEnd].
+ *
+ * Two regimes:
+ *   • `firstSeen` inside the window — the record's whole lifetime is
+ *     in-window, so the lifetime counters are exact. This also keeps recent
+ *     findings fully counted even when they predate the period buckets
+ *     shipping (#334 stage 1).
+ *   • `firstSeen` before the window — only the per-day buckets overlapping
+ *     the window count. Records written before buckets existed contribute
+ *     nothing here (an honest undercount that self-heals within one
+ *     window-length of stage 1 deploying — see the #334 backfill plan).
+ *
+ * Buckets are whole UTC days; a bucket on the window's start day is included
+ * wholesale (bounded overcount of < 1 day of activity, in exchange for never
+ * splitting a day the data can't split). Day keys are `YYYY-MM-DD`, so plain
+ * string comparison is chronological.
+ */
+function windowedCounts(
+  r: FindingDispositionRecord,
+  windowStartMs: number,
+  windowEndMs: number,
+): WindowedCounts {
+  const counts: WindowedCounts = { surfaced: 0, disputes: 0, silentDrops: 0, agreements: 0 };
+  const firstSeenMs = new Date(r.firstSeen).getTime();
+  if (firstSeenMs > windowEndMs) return counts;
+
+  if (firstSeenMs >= windowStartMs) {
+    counts.surfaced    = r.surfaceCount;
+    counts.disputes    = r.disputeCount;
+    counts.silentDrops = r.silentDropCount;
+    counts.agreements  = r.agreementCount;
+    return counts;
+  }
+
+  if (!r.periodCounts) return counts;
+  const startDay = periodDayKey(new Date(windowStartMs).toISOString());
+  const endDay   = periodDayKey(new Date(windowEndMs).toISOString());
+  for (const [day, bucket] of Object.entries(r.periodCounts)) {
+    if (day < startDay || day > endDay) continue;
+    counts.surfaced    += bucket.surface    ?? 0;
+    counts.disputes    += bucket.dispute    ?? 0;
+    counts.silentDrops += bucket.silentDrop ?? 0;
+    counts.agreements  += bucket.agreement  ?? 0;
+  }
+  return counts;
 }
 
 // ─── Internal: clustering ────────────────────────────────────────────────────
