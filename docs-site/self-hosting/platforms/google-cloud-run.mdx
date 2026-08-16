@@ -64,7 +64,7 @@ Deploy the MergeWatch container image with all required environment variables.
 
 ```bash Single command
 gcloud run deploy mergewatch \
-  --image ghcr.io/santthosh/mergewatch:latest \
+  --image ghcr.io/mergewatch/mergewatch:latest \
   --region us-central1 \
   --port 3000 \
   --allow-unauthenticated \
@@ -84,7 +84,7 @@ echo -n "YOUR_ANTHROPIC_KEY" | gcloud secrets create mergewatch-anthropic-key --
 
 # Deploy with secret references
 gcloud run deploy mergewatch \
-  --image ghcr.io/santthosh/mergewatch:latest \
+  --image ghcr.io/mergewatch/mergewatch:latest \
   --region us-central1 \
   --port 3000 \
   --allow-unauthenticated \

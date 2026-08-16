@@ -67,7 +67,7 @@ In an air-gapped environment, your GitHub Enterprise Server instance must be rea
 <Step title="Pull the required container images">
 
 ```bash
-docker pull ghcr.io/santthosh/mergewatch:latest
+docker pull ghcr.io/mergewatch/mergewatch:latest
 docker pull ollama/ollama:latest
 docker pull postgres:15-alpine
 ```
@@ -91,7 +91,7 @@ docker run --rm -v ollama-models:/root/.ollama ollama/ollama pull qwen2.5-coder:
 <Step title="Save images to tar files">
 
 ```bash
-docker save ghcr.io/santthosh/mergewatch:latest -o mergewatch.tar
+docker save ghcr.io/mergewatch/mergewatch:latest -o mergewatch.tar
 docker save ollama/ollama:latest -o ollama.tar
 docker save postgres:15-alpine -o postgres.tar
 ```
@@ -151,7 +151,7 @@ version: "3.8"
 
 services:
   mergewatch:
-    image: ghcr.io/santthosh/mergewatch:latest
+    image: ghcr.io/mergewatch/mergewatch:latest
     container_name: mergewatch
     restart: unless-stopped
     ports:
