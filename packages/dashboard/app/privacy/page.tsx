@@ -62,6 +62,13 @@ export default function PrivacyPolicyPage() {
           email, and any billing metadata required by our payment processor if
           you are on a paid plan.
         </li>
+        <li>
+          <strong>Waitlist signups:</strong> if you join a product waitlist we
+          store the name and email address you submit, and the date. We use it
+          only to contact you about that product. It is not sold, shared, or
+          added to any marketing list, and we delete it on request &mdash; email
+          the address in Section 9.
+        </li>
       </ul>
       <p>
         We do <strong>not</strong> persist raw pull request diffs, raw file

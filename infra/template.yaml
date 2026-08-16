@@ -833,6 +833,35 @@ Resources:
   # SK distinguishes helpful-vote rows (HV#repo#pr) from NPS rows (NPS#userId).
   # ReviewAgent writes helpful-vote deltas; the dashboard writes NPS responses;
   # the hourly InsightsRollup reads both for the engagement block.
+  # Adversarial Defense waitlist signups (#315 market test). Partitioned on the
+  # lowercased email so a repeat submission is an idempotent overwrite rather
+  # than a duplicate lead — and so the API can tell a new signup from a repeat
+  # and only alert on the former.
+  WaitlistTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-waitlist-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+
+      SSESpecification:
+        SSEEnabled: true
+
+      # No TTL: a lead should not silently expire.
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Environment
+          Value: !Ref Stage
+
   SatisfactionTable:
     Type: AWS::DynamoDB::Table
     Properties:
