@@ -29,10 +29,33 @@ describe('resolveReviewModelId', () => {
     })).toEqual({ modelId: REPO, source: 'repo-config' });
   });
 
-  it('lets an installation override beat the repo config', () => {
+  it('lets the committed yml beat the installation-row override', () => {
+    // Aligned with the configuration contract #306 established for the rest of
+    // the config merge: "the .mergewatch.yml in the repository always wins".
+    // Before that alignment these two adjacent paths in review-agent.ts
+    // disagreed about which source outranked the other.
     expect(resolveReviewModelId({
       installationModelId: INSTALL,
       repoConfigModel: REPO,
+      deployDefault: DEPLOY,
+      fallback: FALLBACK,
+    })).toEqual({ modelId: REPO, source: 'repo-config' });
+  });
+
+  it('uses the installation-row override when the yml is silent', () => {
+    expect(resolveReviewModelId({
+      installationModelId: INSTALL,
+      deployDefault: DEPLOY,
+      fallback: FALLBACK,
+    })).toEqual({ modelId: INSTALL, source: 'installation' });
+  });
+
+  it('does not let an installation override resurrect a blank yml model', () => {
+    // A blank `model:` is "unset", not "defer to the row above me" — it should
+    // fall through the whole chain the same way an absent key does.
+    expect(resolveReviewModelId({
+      repoConfigModel: '   ',
+      installationModelId: INSTALL,
       deployDefault: DEPLOY,
       fallback: FALLBACK,
     })).toEqual({ modelId: INSTALL, source: 'installation' });
@@ -69,24 +92,31 @@ describe('resolveReviewModelId', () => {
     })).toEqual({ modelId: REPO, source: 'repo-config' });
   });
 
-  it('skips an empty installation override and uses the repo config', () => {
+  it('skips an empty installation override', () => {
     expect(resolveReviewModelId({
       installationModelId: '',
-      repoConfigModel: REPO,
       deployDefault: DEPLOY,
       fallback: FALLBACK,
-    })).toEqual({ modelId: REPO, source: 'repo-config' });
+    })).toEqual({ modelId: DEPLOY, source: 'deploy-default' });
+  });
+
+  it('the full chain degrades in order as each source is removed', () => {
+    const all = { repoConfigModel: REPO, installationModelId: INSTALL, deployDefault: DEPLOY, fallback: FALLBACK };
+    expect(resolveReviewModelId(all).modelId).toBe(REPO);
+    expect(resolveReviewModelId({ ...all, repoConfigModel: undefined }).modelId).toBe(INSTALL);
+    expect(resolveReviewModelId({ ...all, repoConfigModel: undefined, installationModelId: undefined }).modelId).toBe(DEPLOY);
+    expect(resolveReviewModelId({ fallback: FALLBACK }).modelId).toBe(FALLBACK);
   });
 
   it('reports the winning source so an unexpected model is traceable', () => {
     // The #264 investigation cost real time precisely because nothing said
     // where the running model came from.
     const sources = [
-      resolveReviewModelId({ installationModelId: INSTALL, fallback: FALLBACK }).source,
       resolveReviewModelId({ repoConfigModel: REPO, fallback: FALLBACK }).source,
+      resolveReviewModelId({ installationModelId: INSTALL, fallback: FALLBACK }).source,
       resolveReviewModelId({ deployDefault: DEPLOY, fallback: FALLBACK }).source,
       resolveReviewModelId({ fallback: FALLBACK }).source,
     ];
-    expect(sources).toEqual(['installation', 'repo-config', 'deploy-default', 'fallback']);
+    expect(sources).toEqual(['repo-config', 'installation', 'deploy-default', 'fallback']);
   });
 });
