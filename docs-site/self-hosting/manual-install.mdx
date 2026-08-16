@@ -71,7 +71,7 @@ For most users, the recommended path is Docker Compose. See the [install guide](
       -e LLM_PROVIDER=anthropic \
       -e ANTHROPIC_API_KEY=sk-ant-your-key \
       -p 3000:3000 \
-      ghcr.io/santthosh/mergewatch:latest
+      ghcr.io/mergewatch/mergewatch:latest
     ```
 
     <Warning>
@@ -119,7 +119,7 @@ For most users, the recommended path is Docker Compose. See the [install guide](
       -e NEXTAUTH_SECRET=$(openssl rand -base64 32) \
       -e NEXTAUTH_URL=http://localhost:3001 \
       -p 3001:3001 \
-      ghcr.io/santthosh/mergewatch-dashboard:0.1.0
+      ghcr.io/mergewatch/mergewatch-dashboard:latest
     ```
 
     The dashboard reads directly from the MergeWatch Postgres database, so no `NEXT_PUBLIC_API_URL` is required.
@@ -164,12 +164,12 @@ For most users, the recommended path is Docker Compose. See the [install guide](
 | Restart server | `docker restart mergewatch` |
 | Stop all | `docker stop mergewatch dashboard postgres` |
 | Remove all | `docker rm mergewatch dashboard postgres` |
-| Pull latest images | `docker pull ghcr.io/santthosh/mergewatch:latest && docker pull ghcr.io/santthosh/mergewatch-dashboard:latest` |
+| Pull latest images | `docker pull ghcr.io/mergewatch/mergewatch:latest && docker pull ghcr.io/mergewatch/mergewatch-dashboard:latest` |
 
 To upgrade, pull the latest images and recreate the containers:
 
 ```bash
-docker pull ghcr.io/santthosh/mergewatch:latest
+docker pull ghcr.io/mergewatch/mergewatch:latest
 docker stop mergewatch && docker rm mergewatch
 # Re-run the docker run command from Step 3
 ```

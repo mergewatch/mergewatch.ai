@@ -11,7 +11,7 @@ Upgrading MergeWatch is a single command:
 docker compose pull && docker compose up -d
 ```
 
-This pulls the latest image (`ghcr.io/santthosh/mergewatch:latest`) and restarts the container. The Postgres sidecar is unaffected.
+This pulls the latest image (`ghcr.io/mergewatch/mergewatch:latest`) and restarts the container. The Postgres sidecar is unaffected.
 
 ## Database migrations
 
@@ -33,12 +33,22 @@ For true zero-downtime upgrades in production, consider running MergeWatch behin
 
 ## Rollback
 
-To roll back to a specific version, pin the image tag:
+To roll back, pin the image tag to a known-good build.
+
+Published tags today are `latest` plus the commit SHA of each build on `main`
+(for example `e24f5fa`). Semantic-version tags such as `0.1.0` are produced
+only when a `v*` git tag is pushed, so pin to a SHA unless a release tag exists:
 
 ```bash
-docker compose pull ghcr.io/santthosh/mergewatch:v0.1.0
+# Pin to a specific build by commit SHA
+docker compose pull ghcr.io/mergewatch/mergewatch:e24f5fa
 docker compose up -d
 ```
+
+<Tip>
+Browse the available tags at
+[ghcr.io/mergewatch/mergewatch](https://github.com/mergewatch/mergewatch.ai/pkgs/container/mergewatch).
+</Tip>
 
 <Warning>
 Rolling back to a version with an older database schema may cause issues if newer migrations have already run. Test rollbacks in a staging environment first.
