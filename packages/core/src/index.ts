@@ -3,6 +3,7 @@ export type { ILLMProvider, TokenUsage, LLMInvokeResult, LLMSamplingConfig } fro
 export { normalizeLLMResult } from './llm/types.js';
 export { TokenAccumulator, TrackingLLMProvider } from './llm/token-accumulator.js';
 export { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './llm/pricing.js';
+export { isThrottleError } from './llm/throttle.js';
 export type {
   IInstallationStore,
   IReviewStore,

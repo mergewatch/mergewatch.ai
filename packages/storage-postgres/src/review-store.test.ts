@@ -91,3 +91,23 @@ describe('PostgresReviewStore source + agentKind round-trip', () => {
     expect(got.agentKind).toBeUndefined();
   });
 });
+
+describe('PostgresReviewStore.claimReview (#355)', () => {
+  it("includes 'pending' in the retriable claim set so a parked throttled review can be re-claimed", async () => {
+    // claimReview goes through raw sql`` — capture the statement text.
+    const execute = vi.fn(async () => [] as unknown[]);
+    const store = new PostgresReviewStore({ execute } as any);
+    await store.claimReview({
+      repoFullName: 'octo/repo',
+      prNumberCommitSha: '7#abc1234',
+      status: 'pending',
+      createdAt: '2026-08-16T00:00:00.000Z',
+    } as ReviewItem);
+
+    const sqlArg = execute.mock.calls[0][0] as any;
+    const text = (sqlArg.queryChunks ?? [])
+      .map((c: any) => (typeof c === 'string' ? c : Array.isArray(c?.value) ? c.value.join('') : ''))
+      .join('');
+    expect(text).toContain("IN ('failed', 'skipped', 'complete', 'pending')");
+  });
+});
