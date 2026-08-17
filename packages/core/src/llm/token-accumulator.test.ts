@@ -132,3 +132,25 @@ describe('TrackingLLMProvider', () => {
     expect(acc.totalOutputTokens).toBe(75);
   });
 });
+
+describe('TrackingLLMProvider — argument forwarding (#350)', () => {
+  it('forwards maxTokens AND sampling to the inner provider', async () => {
+    // Found while wiring #350: the wrapper previously declared only 3 params
+    // and silently dropped the sampling argument, so pipeline calls that set
+    // a temperature ran at the provider default.
+    const calls: unknown[][] = [];
+    const inner = {
+      async invoke(...args: unknown[]) {
+        calls.push(args);
+        return 'ok';
+      },
+    } as any;
+    const tracking = new TrackingLLMProvider(inner, new TokenAccumulator());
+
+    await tracking.invoke('model-x', 'prompt', 2048, { temperature: 0.2 });
+    expect(calls[0]).toEqual(['model-x', 'prompt', 2048, { temperature: 0.2 }]);
+
+    await tracking.invoke('model-x', 'prompt');
+    expect(calls[1]).toEqual(['model-x', 'prompt', undefined, undefined]);
+  });
+});

@@ -55,6 +55,7 @@ import {
   runReviewPipeline, postReplyComment, fetchRepoConfig, handleInlineReply,
   addPRReaction, removePRReaction, submitPRReview, mergeScoreToReviewEvent,
   fetchTriageComments, computeDisputedKeys,
+  postReviewComment, updateReviewComment, findExistingBotComment,
 } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
@@ -1043,5 +1044,65 @@ describe('processReviewJob — org custom agents (#235)', () => {
     // No org-block override → event comes from the (mocked) score mapping.
     const reviewEvent = (submitPRReview as any).mock.calls[0][5];
     expect(reviewEvent).toBe('APPROVE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #350 — postSummaryOnClean gates the clean-PR comment
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — postSummaryOnClean (#350)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult); // zero findings
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  it('stays silent on a clean PR when postSummaryOnClean is false and no prior comment exists', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+
+    expect(postReviewComment).not.toHaveBeenCalled();
+    expect(updateReviewComment).not.toHaveBeenCalled();
+    // The review itself still completes — only the comment is withheld.
+    expect((deps.reviewStore.updateStatus as any).mock.calls.some(
+      (c: any[]) => c[2] === 'complete',
+    )).toBe(true);
+  });
+
+  it('still updates an existing comment on a clean PR (never leaves a stale review)', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    (findExistingBotComment as any).mockResolvedValue(42);
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+
+    expect(updateReviewComment).toHaveBeenCalledWith(mockOctokit, 'test', 'repo', 42, 'formatted comment');
+    expect(postReviewComment).not.toHaveBeenCalled();
+  });
+
+  it('posts normally on a dirty PR even when postSummaryOnClean is false', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult,
+      findings: [{ file: 'src/index.ts', line: 1, severity: 'warning', category: 'bug', title: 'T', description: 'D', suggestion: 'S' }],
+    });
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+
+    expect(postReviewComment).toHaveBeenCalled();
+  });
+
+  it('posts on a clean PR under the default (postSummaryOnClean: true)', async () => {
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+
+    expect(postReviewComment).toHaveBeenCalled();
   });
 });

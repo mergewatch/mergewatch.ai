@@ -1229,6 +1229,59 @@ describe('runReviewPipeline', () => {
     expect(result.findings[0].title).toBe('Odd tier');
   });
 
+  // ─── #350 — maxTokensPerAgent output cap ─────────────────────────────────
+
+  it('#350: maxTokensPerAgent becomes the default output cap for every pipeline invocation', async () => {
+    const maxTokensSeen: Array<number | undefined> = [];
+    const responses = makeResponses(9);
+    let idx = 0;
+    const llm: ILLMProvider = {
+      async invoke(_modelId: string, _prompt: string, maxTokens?: number) {
+        maxTokensSeen.push(maxTokens);
+        return responses[idx++] ?? responses[responses.length - 1];
+      },
+    };
+    await runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        maxTokensPerAgent: 2048,
+        enabledAgents: allAgentsEnabled,
+      },
+      { llm },
+    );
+    expect(maxTokensSeen.length).toBeGreaterThan(0);
+    // Every invocation that passed no explicit cap inherited the configured one.
+    expect(maxTokensSeen.every((t) => t === 2048)).toBe(true);
+  });
+
+  it('#350: without maxTokensPerAgent, invocations keep the provider default (undefined)', async () => {
+    const maxTokensSeen: Array<number | undefined> = [];
+    const responses = makeResponses(9);
+    let idx = 0;
+    const llm: ILLMProvider = {
+      async invoke(_modelId: string, _prompt: string, maxTokens?: number) {
+        maxTokensSeen.push(maxTokens);
+        return responses[idx++] ?? responses[responses.length - 1];
+      },
+    };
+    await runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        enabledAgents: allAgentsEnabled,
+      },
+      { llm },
+    );
+    expect(maxTokensSeen.every((t) => t === undefined)).toBe(true);
+  });
+
   it('forces mergeScore >= 3 (yellow) when net improvement: more resolved than new criticals', async () => {
     // Net improvement: 3 prior criticals resolved, but the LLM flagged 1 new
     // critical on the fix code (could be a real concern or an over-eager

@@ -1054,6 +1054,15 @@ export interface ReviewPipelineOptions {
    * Defaults to 'info' (report everything) when absent.
    */
   minSeverity?: 'info' | 'warning' | 'critical';
+  /**
+   * #350 — output-token cap applied to every LLM invocation this pipeline
+   * makes (agents, summary, diagram, orchestrator, verification). A call
+   * site that passes an explicit maxTokens keeps it; everything else
+   * defaults to this value instead of the provider's built-in 4096. Fed
+   * from `.mergewatch.yml` `maxTokensPerAgent:` (default 4096 — identical
+   * to the provider default, so unset configs see no change).
+   */
+  maxTokensPerAgent?: number;
   enabledAgents: {
     security: boolean;
     bugs: boolean;
@@ -2077,6 +2086,7 @@ export async function runReviewPipeline(
     customStyleRules = [],
     maxFindings,
     minSeverity = 'info',
+    maxTokensPerAgent,
     enabledAgents,
     fileFetchOptions,
     groundingFetch,
@@ -2093,7 +2103,14 @@ export async function runReviewPipeline(
 
   // Wrap the LLM provider to track token usage across all agents
   const accumulator = new TokenAccumulator();
-  const llm = new TrackingLLMProvider(deps.llm, accumulator);
+  const trackedLlm = new TrackingLLMProvider(deps.llm, accumulator);
+  // #350 — maxTokensPerAgent becomes the default output cap for every
+  // invocation in this pipeline (same decorator pattern as the tracking
+  // wrapper above). Call sites that pass an explicit maxTokens keep it;
+  // when unset, providers fall back to their built-in 4096 as before.
+  const llm: ILLMProvider = maxTokensPerAgent
+    ? { invoke: (m, p, t, s) => trackedLlm.invoke(m, p, t ?? maxTokensPerAgent, s) }
+    : trackedLlm;
 
   // Extract the changed-file set once, up front. Used for:
   //   - FP-D diagram path validation (passed into runDiagramAgent below).
