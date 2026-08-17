@@ -1,6 +1,6 @@
 # Time-bounded insight rollup windows
 
-**Status:** 🚧 In review
+**Status:** ✅ Shipped
 **Issue:** [#334](https://github.com/mergewatch/mergewatch.ai/issues/334)
 
 Make the 7d / 30d / 90d insight rollups mean what they say. The rollup previously selected records by window (`lastSeen` inside it) but summed **lifetime** counters, so one still-active long-lived finding injected its entire history into every window — all three windows converged toward all-time totals, and `disputeRate`, `perCategory`, `perSeverity`, `perRepo`, and the `topClusters` leverage ranking all inherited the distortion.

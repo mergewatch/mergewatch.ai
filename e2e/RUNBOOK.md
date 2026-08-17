@@ -2983,7 +2983,7 @@ Tracked deliberately so they are decisions rather than oversights. Each is a can
 
 ### E2E-84: #334 — Time-bounded insight rollup windows
 
-**Status:** 🚧 In review (#334) — fixture not yet run.
+**Status:** ✅ SHIPPED (#334, PRs #341 + #343) — fixture not yet run.
 
 **Behavior:** every disposition-counter increment (surface, dispute, verified, unverified, silentDrop, agreement, resolve) also bumps a sparse per-UTC-day bucket (`periodCounts`, keyed `YYYY-MM-DD`) on the `FindingDispositionRecord`, atomically with the lifetime counter, on both backends. The nightly rollup then derives every windowed number from in-window activity: a record first seen inside the window contributes its lifetime counters (exact by definition); an older record contributes only the day buckets overlapping the window. `7d ≤ 30d ≤ 90d` holds by construction. Records written before #334 shipped have no buckets and contribute nothing to windows that predate their `firstSeen` — they ramp up within one window-length of deploy instead of injecting lifetime history.
 
@@ -3006,7 +3006,7 @@ Trigger the rollup manually (same paths as E2E-41), then read the three insight 
 
 ### E2E-85: #335 — Time-ordered DynamoDB review listing
 
-**Status:** 🚧 In review (#335) — fixture not yet run.
+**Status:** ✅ SHIPPED (#335, PRs #344 + #345) — fixture not yet run.
 
 **Behavior:** the SaaS dashboard's `listReviews` queries the `ByRepoCreatedAt` GSI (PK `repoFullName`, SK `createdAt`) descending — true reverse-chronological order regardless of PR numbers (the base sort key orders `"9#…" > "42#…" > "100#…"` as strings). Date-range bounds sit in the `KeyConditionExpression`, so `Limit` applies to matching items and a narrow range can no longer silently discard matching rows beyond the first unfiltered page. `limit` bounds the merged cross-repo result; v2 cursors resume each repo from the last *returned* item, so rows fetched but dropped by the global slice are re-fetched, never lost. On a stack without the GSI, the store logs one warning and degrades to the legacy base-table path (sticky per instance); v1 cursors finish their sequence on the legacy path.
 
@@ -3028,7 +3028,7 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 
 ### E2E-86: #336 — p95 duration: nearest-rank + minimum sample
 
-**Status:** 🚧 In review (#336) — fixture not yet run.
+**Status:** ✅ SHIPPED (#336, PR #346) — fixture not yet run.
 
 **Behavior:** the analytics duration card computes p95 as the nearest-rank element (`⌈n × 0.95⌉`, clamped to a valid index) over completed reviews' durations. The old `floor(n × 0.95)` index returned the maximum for every n ≤ 20 — the slowest review wearing a percentile label, worst exactly when a new instance has little data. Below `MIN_P95_SAMPLE_SIZE` (20) completed reviews, `p95Ms` is `null` and the UI shows "—" with a "needs at least 20 completed reviews" tooltip and omits the P95 chart bar; Average and Completed still render.
 
@@ -3045,7 +3045,7 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 
 ### E2E-87: #337 — Date-only range bounds include their whole day
 
-**Status:** 🚧 In review (#337) — fixture not yet run.
+**Status:** ✅ SHIPPED (#337, PR #347) — fixture not yet run.
 
 **Behavior:** the stores filter `createdAt` by string comparison against full ISO timestamps, so a date-only bound used to misbehave at one edge (`'2026-08-16T09:31:00.000Z' <= '2026-08-16'` is false → the entire final day silently excluded). `/api/analytics` now normalizes at the boundary: date-only `start_date` expands to `T00:00:00.000Z`, date-only `end_date` to `T23:59:59.999Z`; full timestamps pass through untouched (the dashboard UI sends exact viewer-local-derived instants that must not be re-widened). Both backends receive the same expanded instants — identical by construction. Timezone decision documented in the route: date-only params and trend-bucket labels are UTC calendar days; viewer-zone bucketing deliberately deferred until edge-day attribution matters.
 
