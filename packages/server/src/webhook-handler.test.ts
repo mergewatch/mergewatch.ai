@@ -779,3 +779,45 @@ describe('createWebhookHandler — pull_request_review_comment bot filter', () =
     expect(mockProcessReviewJob.mock.calls[0][0].mode).toBe('inline_reply');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #355 — review jobs go through the durable queue when wired
+// ---------------------------------------------------------------------------
+
+describe('dispatch via review queue (#355)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindExistingBotComment.mockResolvedValue(null);
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+  });
+
+  it('enqueues instead of processing in-process when deps.reviewQueue is set', async () => {
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    const deps = makeDeps();
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    (deps as any).reviewQueue = { enqueue, claim: vi.fn(), complete: vi.fn(), retry: vi.fn(), kill: vi.fn() };
+
+    const handler = createWebhookHandler(deps);
+    const { req, res } = makeReqRes(JSON.stringify(makePullRequestEvent()));
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+    const job = enqueue.mock.calls[0][0];
+    expect(job.mode).toBe('review');
+    expect(job.prNumber).toBeDefined();
+  });
+
+  it('falls back to in-process dispatch when no queue is wired (legacy/test path)', async () => {
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    const deps = makeDeps();
+    const handler = createWebhookHandler(deps);
+    const { req, res } = makeReqRes(JSON.stringify(makePullRequestEvent()));
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+  });
+});

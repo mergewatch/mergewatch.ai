@@ -5,6 +5,7 @@ export { PostgresFPInsightStore } from './fp-insight-store.js';
 export { PostgresPRLifecycleStore } from './pr-lifecycle-store.js';
 export { PostgresSatisfactionStore } from './satisfaction-store.js';
 export { PostgresReviewCostStore } from './review-cost-store.js';
+export { PostgresReviewJobQueue } from './review-job-queue.js';
 export {
   installations, installationSettings, reviews, apiKeys, mcpSessions,
   findingDispositions, installationFpInsights, prLifecycle,

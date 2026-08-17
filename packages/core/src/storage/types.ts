@@ -17,6 +17,7 @@ import type {
   ReviewCostRecord,
   OrgCustomAgent,
 } from '../types/db.js';
+import type { ReviewJobPayload } from '../types/github.js';
 
 export interface IInstallationStore {
   get(installationId: string, repoFullName: string): Promise<InstallationItem | null>;
@@ -351,4 +352,47 @@ export interface IReviewCostStore {
     installationId: string,
     opts?: { limit?: number; cursor?: string },
   ): Promise<{ items: ReviewCostRecord[]; nextCursor?: string }>;
+}
+
+// ─── #355 — Review job queue (self-hosted admission control) ────────────────
+
+/** A claimed job: the payload plus the bookkeeping the worker needs. */
+export interface ClaimedReviewJob {
+  /** Queue-assigned identity, opaque to the worker. */
+  id: string;
+  payload: ReviewJobPayload;
+  /** Delivery attempts so far (1 on first claim). Drives retry backoff. */
+  attempts: number;
+}
+
+/**
+ * #355 — durable admission-control queue between the webhook and the review
+ * processor. The self-hosted implementation is a Postgres table consumed via
+ * `SELECT … FOR UPDATE SKIP LOCKED` (no new infrastructure — Postgres is
+ * already part of the deployment contract); SaaS uses SQS with an
+ * event-source concurrency cap instead of this interface's consumer side.
+ *
+ * Delivery is at-least-once: `claimReview` on the review store makes
+ * processing idempotent, so a job redelivered after a crash is safe.
+ */
+export interface IReviewJobQueue {
+  /** Durably enqueue a job. One INSERT — safe to await in the webhook path. */
+  enqueue(payload: ReviewJobPayload): Promise<void>;
+
+  /**
+   * Claim up to `max` due jobs (queued and past their `next_attempt_at`, or
+   * processing rows whose lock expired — crash recovery). Claimed rows are
+   * invisible to other claimers until `lockSeconds` elapses.
+   */
+  claim(max: number, lockSeconds: number): Promise<ClaimedReviewJob[]>;
+
+  /** Delivery finished (success OR a terminal, non-retriable outcome). */
+  complete(id: string): Promise<void>;
+
+  /** Redeliver after `delaySeconds` (throttle backoff). Increments nothing —
+   *  `attempts` advances on claim. */
+  retry(id: string, delaySeconds: number): Promise<void>;
+
+  /** Give up: park the job as dead for operator inspection (DLQ analogue). */
+  kill(id: string): Promise<void>;
 }

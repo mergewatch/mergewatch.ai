@@ -1,14 +1,40 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
-import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent } from '@mergewatch/core';
+import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, IReviewJobQueue } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
+
+/**
+ * #355 — route a review job through the durable queue when wired, else run
+ * it in-process (legacy/test path). Fire-and-forget either way: the webhook
+ * response must not wait on a review.
+ */
+function dispatchReviewJob(job: ReviewJobPayload, deps: WebhookDeps, label: string): void {
+  if (deps.reviewQueue) {
+    deps.reviewQueue.enqueue(job).catch((err) => {
+      console.error('Failed to enqueue %s:', label, err);
+    });
+    return;
+  }
+  processReviewJob(job, deps).catch((err) => {
+    console.error('%s failed:', label, err);
+  });
+}
+
 
 export interface WebhookDeps {
   webhookSecret: string;
   installationStore: IInstallationStore;
   reviewStore: IReviewStore;
+  /**
+   * #355 — durable admission-control queue. When set, review jobs are
+   * enqueued and drained by the bounded worker (startReviewWorker) instead
+   * of spawning an unbounded fire-and-forget pipeline per webhook. When
+   * unset (older wiring, unit tests), dispatch falls back to the direct
+   * in-process call.
+   */
+  reviewQueue?: IReviewJobQueue;
   /** FB-A — optional disposition store. Best-effort: when unset, writes are
    *  no-ops and the review pipeline runs unchanged. */
   dispositionStore?: IFindingDispositionStore;
@@ -229,10 +255,8 @@ async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
     ...ossRepoFields(repository),
   };
 
-  // Process in background
-  processReviewJob(job, deps).catch((err) => {
-    console.error('Review job failed for %s#%d:', repository.full_name, pull_request.number, err);
-  });
+  // Process in background (#355 — via the durable queue when wired)
+  dispatchReviewJob(job, deps, `review job ${repository.full_name}#${pull_request.number}`);
 }
 
 async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps) {
@@ -261,9 +285,7 @@ async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps)
     ...(userComment ? { userComment, userCommentAuthor: comment.user.login } : {}),
   };
 
-  processReviewJob(job, deps).catch((err) => {
-    console.error('Review job failed for %s#%d:', repository.full_name, issue.number, err);
-  });
+  dispatchReviewJob(job, deps, `review job ${repository.full_name}#${issue.number}`);
 }
 
 async function handleReviewComment(payload: PullRequestReviewCommentEvent, deps: WebhookDeps) {
@@ -282,9 +304,7 @@ async function handleReviewComment(payload: PullRequestReviewCommentEvent, deps:
     ...ossRepoFields(repository),
   };
 
-  processReviewJob(job, deps).catch((err) => {
-    console.error('Inline reply job failed for %s#%d:', repository.full_name, pull_request.number, err);
-  });
+  dispatchReviewJob(job, deps, `inline reply job ${repository.full_name}#${pull_request.number}`);
 }
 
 /**
@@ -355,9 +375,7 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
     ...ossRepoFields(payload.repository),
   };
 
-  processReviewJob(job, deps).catch((err) => {
-    console.error('Review job (check_run rerequested) failed for %s#%d:', payload.repository.full_name, prNumber, err);
-  });
+  dispatchReviewJob(job, deps, `review job (check_run rerequested) ${payload.repository.full_name}#${prNumber}`);
 }
 
 async function handleInstallation(payload: InstallationEvent, deps: WebhookDeps) {

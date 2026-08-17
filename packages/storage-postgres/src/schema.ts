@@ -1,4 +1,4 @@
-import { pgTable, text, integer, jsonb, boolean, timestamp, primaryKey, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, jsonb, boolean, timestamp, primaryKey, index, bigserial } from 'drizzle-orm/pg-core';
 
 export const installations = pgTable('installations', {
   installationId: text('installation_id').notNull(),
@@ -231,4 +231,25 @@ export const reviewCosts = pgTable('review_costs', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.installationId, t.repoFullName, t.prNumber, t.commitSha] }),
   installationIdx: index('review_costs_installation_idx').on(t.installationId),
+}));
+
+// #355 — durable review-job queue (self-hosted admission control). Consumed
+// via SELECT ... FOR UPDATE SKIP LOCKED by the in-process worker; survives
+// container restarts, supports multiple server replicas. See
+// PostgresReviewJobQueue for the lifecycle (queued → processing → done/dead).
+export const reviewJobs = pgTable('review_jobs', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  payload: jsonb('payload').notNull(),
+  // queued | processing | done | dead
+  status: text('status').notNull().default('queued'),
+  attempts: integer('attempts').notNull().default(0),
+  // Earliest time the job may be (re)claimed — throttle backoff target.
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  // Visibility-timeout analogue: a 'processing' row whose lock expired is
+  // reclaimable (crash recovery).
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  claimIdx: index('review_jobs_claim_idx').on(t.status, t.nextAttemptAt),
 }));

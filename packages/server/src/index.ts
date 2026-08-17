@@ -7,6 +7,7 @@ import { sql as drizzleSql } from 'drizzle-orm';
 import {
   PostgresInstallationStore,
   PostgresReviewStore,
+  PostgresReviewJobQueue,
   PostgresFindingDispositionStore,
   PostgresFPInsightStore,
   PostgresPRLifecycleStore,
@@ -18,6 +19,8 @@ import { EnvGitHubAuthProvider } from './github-auth-env.js';
 import { createLLMProvider } from './llm-factory.js';
 import { createWebhookHandler } from './webhook-handler.js';
 import { startInsightsCron } from './insights-cron.js';
+import { startReviewWorker } from './review-worker.js';
+import { processReviewJob } from './review-processor.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -121,8 +124,12 @@ async function main() {
     legacyHeaders: false,
   });
 
-  // Webhook endpoint
-  app.post('/webhook', webhookLimiter, createWebhookHandler({
+  // #355 — durable review-job queue + bounded worker. Webhooks enqueue;
+  // the worker drains at REVIEW_CONCURRENCY so a PR burst becomes a paced
+  // backlog instead of an unbounded fan-out against the LLM rate limit.
+  const reviewQueue = new PostgresReviewJobQueue(db);
+
+  const webhookDeps = {
     webhookSecret,
     installationStore,
     reviewStore,
@@ -134,7 +141,13 @@ async function main() {
     authProvider,
     llm,
     dashboardBaseUrl,
-  }));
+    reviewQueue,
+  };
+
+  startReviewWorker(reviewQueue, (payload) => processReviewJob(payload, webhookDeps));
+
+  // Webhook endpoint
+  app.post('/webhook', webhookLimiter, createWebhookHandler(webhookDeps));
 
   app.listen(port, () => {
     console.log(`MergeWatch server listening on port ${port}`);
