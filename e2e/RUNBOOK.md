@@ -2733,7 +2733,7 @@ curl -s "$MCP_URL" \
 
 ### E2E-78: Output shaping — `minSeverity`, `maxFindings`, `postSummaryOnClean`
 
-**Status:** ⬜ NOT YET COVERED. (All three knobs were documented-but-unwired at various points: `minSeverity` until #310, `maxTokensPerAgent` and `postSummaryOnClean` until #350 — all three now exist; fixture still to be run.)
+**Status:** ⬜ NOT YET COVERED. (All three knobs were documented-but-unwired at various points: `minSeverity` until #310, `maxTokensPerAgent` and `postSummaryOnClean` until #350 — all three now exist; fixture still to be run. #357: the default severity threshold is **Low** — info findings render out of the box; `Med`/`High` are explicit opt-ins, and wiring `minSeverity` with a `Med` default had silently suppressed every info-tier finding.)
 
 **Behavior:** Three independent knobs on what reaches the PR: `minSeverity` (`info` | `warning` | `critical`) drops lower-severity findings; `maxFindings` caps how many are posted; `postSummaryOnClean` decides whether a clean PR gets a comment at all.
 
