@@ -27,6 +27,7 @@ import {
   formatReviewComment,
   countBlockingCriticals,
   isThrottleError,
+  computeDiffStats,
   mergeConfig,
   shouldSkipPR,
   extractIncludePatterns,
@@ -830,11 +831,14 @@ export async function handler(
 
     const reviewDetailUrl = `${DASHBOARD_BASE_URL}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;
 
-    // Build work-done section from PR context stats
+    // Build work-done section from the FILTERED diff (#358) — the tallies
+    // must describe what the agents actually reviewed. Raw PR totals counted
+    // excludePatterns-removed files as "scanned".
+    const diffStats = computeDiffStats(filteredDiff);
     const workDone = buildWorkDoneSection(
-      prContext.files,
-      prContext.totalAdditions,
-      prContext.totalDeletions,
+      diffStats.files,
+      diffStats.additions,
+      diffStats.deletions,
       result.enabledAgentCount,
     );
 

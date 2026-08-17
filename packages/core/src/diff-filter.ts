@@ -149,3 +149,39 @@ export function isLineNearChange(
   }
   return false;
 }
+
+/** #358 — stats of a (possibly already-filtered) unified diff. */
+export interface DiffStats {
+  /** Files present in the diff, in order of appearance. */
+  files: string[];
+  additions: number;
+  deletions: number;
+}
+
+/**
+ * #358 — compute file/line stats from the diff itself.
+ *
+ * The work-done header ("N files scanned · M lines reviewed") previously came
+ * from raw PR-level totals, so files removed by `excludePatterns` were still
+ * counted as scanned — on a fully-excluded PR the header claimed real work.
+ * Deriving the stats from the FILTERED diff makes the tallies describe
+ * exactly what the agents saw.
+ *
+ * Counting matches GitHub's additions/deletions semantics: `+`/`-` content
+ * lines, excluding the `+++`/`---` file-header lines. Binary files appear in
+ * `files` (they have a `diff --git` section) with zero line counts.
+ */
+export function computeDiffStats(diff: string): DiffStats {
+  if (!diff) return { files: [], additions: 0, deletions: 0 };
+
+  const sections = splitDiffByFile(diff);
+  let additions = 0;
+  let deletions = 0;
+  for (const { section } of sections) {
+    for (const line of section.split('\n')) {
+      if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+      else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+    }
+  }
+  return { files: sections.map((s) => s.file), additions, deletions };
+}

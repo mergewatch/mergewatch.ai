@@ -1290,3 +1290,51 @@ describe('processReviewJob — severityThreshold → minSeverity mapping (#357)'
     expect(pipelineMinSeverity()).toBe('info');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #358 — work-done tallies come from the FILTERED diff
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — work-done stats from filtered diff (#358)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue({
+      ...basePRContext,
+      // Raw PR stats deliberately DISAGREE with the filtered diff below —
+      // the tallies must follow the diff, not these.
+      files: [{ filename: 'src/handler.ts' }, { filename: 'src/api.generated.ts' }],
+      totalAdditions: 30,
+      totalDeletions: 1,
+    });
+    (getPRDiff as any).mockResolvedValue('raw diff');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  it('builds the work-done section from the post-filter diff, not raw PR totals', async () => {
+    const filteredDiff = [
+      'diff --git a/src/handler.ts b/src/handler.ts',
+      '--- a/src/handler.ts',
+      '+++ b/src/handler.ts',
+      '@@ -1,2 +1,3 @@',
+      '+const a = 1;',
+      '+const b = 2;',
+      '-const c = 3;',
+    ].join('\n');
+    const { filterDiff, buildWorkDoneSection } = await import('@mergewatch/core');
+    (filterDiff as any).mockReturnValue({ filteredDiff, excludedFiles: ['src/api.generated.ts'] });
+
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(buildWorkDoneSection).toHaveBeenCalledWith(
+      ['src/handler.ts'], // excluded file absent from "files scanned"
+      2,                  // additions from the filtered diff, not the raw 30
+      1,
+      expect.any(Number),
+    );
+  });
+});
