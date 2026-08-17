@@ -665,6 +665,8 @@ export async function processReviewJob(
         lightModelId: config.lightModel || config.model,
         customStyleRules: config.customStyleRules,
         maxFindings: config.maxFindings,
+        // #310 — merged from yml `minSeverity:` + dashboard severityThreshold.
+        minSeverity: config.minSeverity,
         enabledAgents: {
           ...config.agents,
           diagram: instSettings.summary?.diagram !== false,

@@ -805,6 +805,8 @@ export async function handler(
       lightModelId,
       customStyleRules: runtimeConfig.customStyleRules,
       maxFindings: runtimeConfig.maxFindings,
+      // #310 — merged from yml `minSeverity:` + dashboard severityThreshold.
+      minSeverity: runtimeConfig.minSeverity,
       enabledAgents: mode === 'summary'
         ? { security: false, bugs: false, style: false, summary: true, diagram: false, errorHandling: false, testCoverage: false, commentAccuracy: false }
         : { ...runtimeConfig.agents, diagram: instSettings.summary.diagram },
