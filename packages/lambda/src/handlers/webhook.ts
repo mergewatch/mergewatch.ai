@@ -12,6 +12,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { LambdaClient, InvokeCommand, InvocationType } from "@aws-sdk/client-lambda";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import {
@@ -46,6 +47,7 @@ import { SSMGitHubAuthProvider, getWebhookSecret } from '../github-auth-ssm.js';
 // ---------------------------------------------------------------------------
 
 const lambda = new LambdaClient({});
+const sqs = new SQSClient({});
 const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const authProvider = new SSMGitHubAuthProvider();
 
@@ -120,6 +122,21 @@ function ossRepoFields(repository: { id: number; private: boolean }) {
 }
 
 async function enqueueReviewJob(payload: ReviewJobPayload): Promise<void> {
+  // #355 — review jobs go through SQS so the ReviewAgent's event-source
+  // MaximumConcurrency bounds the burst that reaches Bedrock. Direct async
+  // invoke remains as the fallback for a stack deployed without the queue
+  // (deploy-order safety, same pattern as the #335 GSI fallback).
+  const queueUrl = process.env.REVIEW_QUEUE_URL;
+  if (queueUrl) {
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify(payload),
+      })
+    );
+    return;
+  }
+
   const functionName =
     process.env.REVIEW_AGENT_FUNCTION_NAME ?? "mergewatch-review-agent";
 

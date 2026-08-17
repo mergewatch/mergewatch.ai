@@ -219,7 +219,12 @@ Resources:
       Environment:
         Variables:
           # The ReviewAgent function ARN — needed to invoke it asynchronously
+          # (legacy fallback path when the queue URL is unset).
           REVIEW_AGENT_FUNCTION_NAME: !Ref ReviewAgent
+          # #355 — review jobs go through SQS for admission control; the
+          # webhook falls back to direct async invoke if this is unset
+          # (deploy-order safety on stacks that predate the queue).
+          REVIEW_QUEUE_URL: !Ref ReviewQueue
 
     # Build with esbuild for TypeScript support and tree-shaking
     Metadata:
@@ -263,8 +268,22 @@ Resources:
 
       Role: !GetAtt LambdaExecutionRole.Arn
 
-      # No API Gateway event — this function is invoked programmatically
-      # by WebhookHandler using the Lambda Invoke API
+      # #355 — reviews arrive via SQS with a hard concurrency cap. Lambda
+      # concurrency is elastic but the Bedrock on-demand quota is not: a
+      # 57-PR burst used to fan out into ~57 concurrent reviews, exhaust the
+      # model quota, and terminally fail 32 of them. The queue turns bursts
+      # into a paced backlog; MaximumConcurrency bounds the sustained request
+      # rate Bedrock sees. BatchSize 1 keeps one review per invocation so a
+      # throttle-rethrow returns exactly that review to the queue (redrive
+      # x3 → DLQ — bounded, visible, never silent).
+      Events:
+        ReviewJobs:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ReviewQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 8
 
     Metadata:
       BuildMethod: esbuild
@@ -274,6 +293,41 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - handlers/review-agent.ts
+
+  # ===========================================================================
+  # SQS: Review job queue (#355)
+  # ===========================================================================
+  # Admission control between WebhookHandler and ReviewAgent. Visibility
+  # timeout must exceed the ReviewAgent Timeout (Lambda/SQS requirement, and
+  # it doubles as the retry delay when a throttled review is rethrown).
+
+  ReviewQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'mergewatch-review-queue-${Stage}'
+      VisibilityTimeout: 360
+      # A review job older than a day is stale — the PR has moved on.
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ReviewDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+  ReviewDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'mergewatch-review-dlq-${Stage}'
+      # 14 days — long enough for an operator to notice and redrive.
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
 
   # ===========================================================================
   # Lambda Function: BillingHandler
@@ -1066,6 +1120,16 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:mergewatch-review-agent-${Stage}'
+              # #355 — the webhook sends review jobs to the queue; the
+              # ReviewAgent's SQS event source polls it (custom-role
+              # functions don't get these attached automatically by SAM).
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ReviewQueue.Arn
 
   # ===========================================================================
   # AWS Amplify Hosting — Next.js Dashboard

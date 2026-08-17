@@ -22,6 +22,17 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
   };
 });
 
+const mockSqsSend = vi.fn().mockResolvedValue({});
+vi.mock('@aws-sdk/client-sqs', () => ({
+  SQSClient: class {
+    send(cmd: unknown) { return mockSqsSend(cmd); }
+  },
+  SendMessageCommand: class {
+    input: unknown;
+    constructor(input: unknown) { this.input = input; }
+  },
+}));
+
 vi.mock('@aws-sdk/client-lambda', () => ({
   LambdaClient: class {
     send(cmd: unknown) { return mockEnqueue(cmd); }
@@ -602,5 +613,41 @@ describe('handler — OSS repo identity on the job payload (#261)', () => {
     await handler(makeApiGatewayEvent(body));
 
     expect(enqueuedPayload().repoId).toBe(987654);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #355 — review jobs go through SQS when the queue is configured
+// ---------------------------------------------------------------------------
+
+describe('enqueueReviewJob transport (#355)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetInstallationOctokit.mockResolvedValue({});
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    delete process.env.REVIEW_QUEUE_URL;
+  });
+
+  it('sends the job to SQS when REVIEW_QUEUE_URL is set — never a direct invoke', async () => {
+    process.env.REVIEW_QUEUE_URL = 'https://sqs.us-west-2.amazonaws.com/1/mergewatch-review-queue-test';
+    const body = JSON.stringify(makePullRequestEvent());
+    await handler(makeApiGatewayEvent(body));
+
+    expect(mockSqsSend).toHaveBeenCalledTimes(1);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    const input = (mockSqsSend.mock.calls[0][0] as { input: { QueueUrl: string; MessageBody: string } }).input;
+    expect(input.QueueUrl).toContain('mergewatch-review-queue-test');
+    const payload = JSON.parse(input.MessageBody);
+    expect(payload.mode).toBe('review');
+    expect(payload.prNumber).toBeDefined();
+  });
+
+  it('falls back to direct async invoke when the queue URL is unset (deploy-order safety)', async () => {
+    const body = JSON.stringify(makePullRequestEvent());
+    await handler(makeApiGatewayEvent(body));
+
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    expect(mockSqsSend).not.toHaveBeenCalled();
   });
 });
