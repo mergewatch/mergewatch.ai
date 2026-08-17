@@ -6,7 +6,7 @@
  * The wrapped provider is transparent to callers — agents still receive strings.
  */
 
-import type { ILLMProvider, TokenUsage, LLMInvokeResult } from './types.js';
+import type { ILLMProvider, TokenUsage, LLMInvokeResult, LLMSamplingConfig } from './types.js';
 import { normalizeLLMResult } from './types.js';
 import { estimateCost } from './pricing.js';
 
@@ -82,8 +82,18 @@ export class TrackingLLMProvider implements ILLMProvider {
     private accumulator: TokenAccumulator,
   ) {}
 
-  async invoke(modelId: string, prompt: string, maxTokens?: number): Promise<string> {
-    const raw = await this.inner.invoke(modelId, prompt, maxTokens);
+  // The full 4-param ILLMProvider signature. Found while wiring #350: this
+  // wrapper previously declared only 3 params and silently DROPPED the
+  // sampling argument, so every pipeline call that passed a temperature
+  // (diagram, summary, delta caption, verification) ran at the provider
+  // default instead.
+  async invoke(
+    modelId: string,
+    prompt: string,
+    maxTokens?: number,
+    sampling?: LLMSamplingConfig,
+  ): Promise<string> {
+    const raw = await this.inner.invoke(modelId, prompt, maxTokens, sampling);
     const result = normalizeLLMResult(raw);
     this.accumulator.add(modelId, result.usage);
     return result.text;

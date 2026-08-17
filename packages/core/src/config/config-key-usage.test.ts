@@ -41,15 +41,12 @@ const DEFINITION_FILES = new Set([
 ]);
 
 /**
- * Known-dead keys this tripwire flagged on its FIRST run — two more
- * instances of the #310 class, found exactly as its remaining-key audit
- * predicted. Tracked in #350; wiring each requires a product decision
- * (comment-gating behavior / per-model token defaults), so they are
- * allowlisted rather than scope-crept into #310's cleanup. Removing an
- * entry here is the definition of done for wiring that key. Do NOT add to
- * this list — wire or remove new keys instead.
+ * Keys with a tracked wiring decision pending. This list held
+ * `maxTokensPerAgent` and `postSummaryOnClean` between the tripwire's first
+ * run (#310) and their wiring (#350); it is now empty and should stay that
+ * way — wire or remove new keys instead of adding entries.
  */
-const KNOWN_DEAD_KEYS = new Set(['maxTokensPerAgent', 'postSummaryOnClean']); // #350
+const KNOWN_DEAD_KEYS = new Set<string>();
 
 function walk(dir: string, out: string[] = []): string[] {
   let entries: string[];

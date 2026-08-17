@@ -665,6 +665,8 @@ export async function processReviewJob(
         maxFindings: config.maxFindings,
         // #310 — merged from yml `minSeverity:` + dashboard severityThreshold.
         minSeverity: config.minSeverity,
+        // #350 — per-invocation output-token cap from yml `maxTokensPerAgent:`.
+        maxTokensPerAgent: config.maxTokensPerAgent,
         enabledAgents: {
           ...config.agents,
           diagram: instSettings.summary?.diagram !== false,
@@ -791,14 +793,22 @@ export async function processReviewJob(
       || (prevReviewsResult.find((r) => r.commentId && r.prNumberCommitSha !== prNumberCommitSha)?.commentId as number | undefined)
       || (await findExistingBotComment(octokit, owner, repo, prNumber)) || undefined;
 
-    if (targetCommentId) {
+    // #350 — postSummaryOnClean: false means a clean PR gets no comment. Only
+    // the INITIAL post is gated: an existing MergeWatch comment is always
+    // updated, so a previously-dirty PR that comes back clean never keeps a
+    // stale review claiming old findings.
+    const stayingSilent =
+      result.findings.length === 0 && config.postSummaryOnClean === false && !targetCommentId;
+    if (stayingSilent) {
+      console.log('[post-summary] clean PR and postSummaryOnClean=false — staying silent on %s#%d', repoFullName, prNumber);
+    } else if (targetCommentId) {
       await updateReviewComment(octokit, owner, repo, targetCommentId, comment);
       commentId = targetCommentId;
     } else {
       commentId = await postReviewComment(octokit, owner, repo, prNumber, comment);
     }
 
-    if (!commentId) {
+    if (!commentId && !stayingSilent) {
       throw new Error('Failed to create or update issue comment');
     }
 
