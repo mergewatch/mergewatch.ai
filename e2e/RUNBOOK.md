@@ -214,6 +214,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 |
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
+| [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
 
 ---
 
@@ -3062,6 +3063,26 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 - [ ] Full-timestamp bounds honored exactly, never re-widened
 - [ ] Postgres and DynamoDB return identical results for the same parameters
 - [ ] Invalid date forms are ignored (no 500, no partial filter)
+
+---
+
+### E2E-88: #355 — PR-burst resilience
+
+**Status:** 🚧 In review (#355) — fixture = the full-suite burst itself.
+
+**Behavior:** a provider throttle is retriable work, never a terminal failure. Both runtimes classify throttles (`isThrottleError`), park the review at `pending` (claimable), keep the check run `in_progress` ("Review queued — rate limited"), and rethrow so the transport retries: Lambda async retry → SQS redrive (×3 → DLQ) on SaaS; the Postgres worker's exponential backoff (60s × 2^attempt, 5 attempts → `status='dead'`) on self-hosted. Admission control bounds what the provider sees in the first place: SQS event source `MaximumConcurrency: 8` (SaaS) / `REVIEW_CONCURRENCY` worker slots (self-hosted, default 3).
+
+**How to run.**
+1. `scripts/run-suite.sh` on mergewatch/fixtures with default pacing (~57 PRs / 15 min) — the original #355 repro.
+2. Watch the review checks: bursty PRs may sit `in_progress`/queued longer, but **no** check may land at FAILURE with "Too many requests".
+3. Self-hosted variant: same burst against a docker-compose instance with a low provider rate limit; restart the container mid-burst — queued reviews must survive and drain.
+
+**Expected outcomes.**
+- [ ] 57/57 PRs reviewed — zero terminal "Too many requests" failures (vs 32/57 lost in the #355 run)
+- [ ] Throttled PRs show "Review queued — rate limited" in_progress checks while waiting, then complete
+- [ ] SaaS: review Lambda concurrency stays ≤ the event-source cap; DLQ empty at end of run
+- [ ] Self-hosted: `review_jobs` drains to `done`; no `dead` rows; a mid-burst restart loses nothing
+- [ ] A genuinely failing review (non-throttle) still fails its check exactly as before
 
 ---
 

@@ -14,6 +14,8 @@ export type {
   IPRLifecycleStore,
   ISatisfactionStore,
   IReviewCostStore,
+  IReviewJobQueue,
+  ClaimedReviewJob,
   PRLifecycleOpenInput,
   PRLifecycleCloseInput,
   FindingDispositionAttribution,
