@@ -291,6 +291,26 @@ describe("aggregateReviews — missing and malformed optional fields", () => {
     expect(r.costStats.totalCostUsd).toBe(0);
   });
 
+  it("excludes a complete review with no durationMs from the duration stats (#338)", () => {
+    const r = aggregateReviews([
+      review({ durationMs: 4000 }),
+      review({ durationMs: undefined }),
+    ]);
+    expect(r.durationStats.count).toBe(1);
+    expect(r.durationStats.avgMs).toBe(4000);
+    expect(r.totalReviews).toBe(2); // still counted everywhere else
+  });
+
+  it("excludes a complete review with no estimatedCostUsd from the cost stats (#338)", () => {
+    const r = aggregateReviews([
+      review({ estimatedCostUsd: 0.05 }),
+      review({ estimatedCostUsd: undefined }),
+    ]);
+    expect(r.costStats.costCount).toBe(1);
+    expect(r.costStats.totalCostUsd).toBe(0.05);
+    expect(r.totalReviews).toBe(2);
+  });
+
   it("skips reviews with no createdAt in the trends but still counts them", () => {
     const r = aggregateReviews([
       review({ createdAt: undefined, mergeScore: 4, findingCount: 3 }),
