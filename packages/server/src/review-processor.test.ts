@@ -333,7 +333,8 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4]).toMatchObject({
         status: 'completed',
         conclusion: 'success',
-        title: '2 findings (no critical)',
+        // #240 — "blocking" qualifier: unverified criticals no longer count.
+        title: '2 findings (no blocking critical)',
         summary: 'Found: 1 warning, 1 info',
       });
     });
@@ -1104,5 +1105,80 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
     await processReviewJob(makeJob(), deps);
 
     expect(postReviewComment).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #240 — unverified-only criticals keep the check advisory
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — check conclusion vs verification (#240)', () => {
+  const critical = (verification?: 'verified' | 'unverified') => ({
+    file: 'src/index.ts', line: 1, severity: 'critical', category: 'security',
+    title: 'Race', description: 'D', suggestion: 'S',
+    ...(verification ? { verification } : {}),
+  });
+
+  function completionCheckRun() {
+    // The completion check run is the last createCheckRun call with status 'completed'.
+    const calls = (createCheckRun as any).mock.calls.filter((c: any[]) => c[4]?.status === 'completed');
+    return calls[calls.length - 1]?.[4];
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  it('unverified-only critical → check stays advisory (success), title never claims a critical', async () => {
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult, findings: [critical('unverified')], mergeScore: 3,
+    });
+    await processReviewJob(makeJob(), makeDeps());
+
+    const check = completionCheckRun();
+    expect(check.conclusion).toBe('success');
+    expect(check.title).not.toContain('critical issue');
+    expect(check.title).toContain('no blocking critical');
+    expect(check.summary).toContain('1 unverified');
+  });
+
+  it('verified critical → check still fails with the critical title (no regression)', async () => {
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult, findings: [critical('verified')], mergeScore: 2,
+    });
+    await processReviewJob(makeJob(), makeDeps());
+
+    const check = completionCheckRun();
+    expect(check.conclusion).toBe('failure');
+    expect(check.title).toBe('1 critical issue found');
+  });
+
+  it('a critical with no verification field (pre-W2 record) still fails the check', async () => {
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult, findings: [critical()], mergeScore: 2,
+    });
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(completionCheckRun().conclusion).toBe('failure');
+  });
+
+  it('mixed verified + unverified → fails on the verified one, discloses the unverified one', async () => {
+    (runReviewPipeline as any).mockResolvedValue({
+      ...basePipelineResult, findings: [critical('verified'), critical('unverified')], mergeScore: 2,
+    });
+    await processReviewJob(makeJob(), makeDeps());
+
+    const check = completionCheckRun();
+    expect(check.conclusion).toBe('failure');
+    expect(check.title).toBe('1 critical issue found');
+    expect(check.summary).toContain('1 critical');
+    expect(check.summary).toContain('1 unverified');
   });
 });

@@ -1060,6 +1060,8 @@ Push a small commit on the PR branch to trigger a re-review.
 
 ### E2E-25: W7 score guardrail — unverified-only Criticals don't block
 
+> **#240 fixed a gap in this scenario's "check stays advisory" claim:** the check-run conclusion previously counted RAW criticals, so an unverified-only critical failed the check ("1 critical issue found") while the score sat clamped at 3 — and the comment printed "All clear!" above "Unverified concerns". Both runtimes now count only verified criticals for the check (shared `countBlockingCriticals` helper), and the all-clear line defers to the unverified-concerns section.
+
 **Behavior**: when the orchestrator emits Critical(s) but the W2 verification pass can't confirm any of them against the file contents (LLM error, unparseable response, no clear verdict, etc.), the bot:
 - keeps the findings (fail-safe, never silently drops a real Critical),
 - tags each survivor with `verification: 'unverified'`,
