@@ -149,7 +149,6 @@ async function storeInstallation(event: InstallationEvent): Promise<void> {
           installationId: String(event.installation.id),
           repoFullName: event.installation.account.login,
           installedAt: event.installation.created_at,
-          config: {},
         },
       })
     );
@@ -164,7 +163,6 @@ async function storeInstallation(event: InstallationEvent): Promise<void> {
           installationId: String(event.installation.id),
           repoFullName: repo.full_name,
           installedAt: event.installation.created_at,
-          config: {},
         },
       })
     );

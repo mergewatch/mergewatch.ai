@@ -6,7 +6,6 @@ import {
   Search,
   GitBranch,
   Clock,
-  Settings as SettingsIcon,
   Loader2,
 } from "lucide-react";
 import RelativeTime from "@/components/RelativeTime";
@@ -19,7 +18,6 @@ export interface RepositoryView {
   reviewCount: number;
   issueCount: number;
   lastReviewedAt: string | null;
-  hasConfig: boolean;
   installationId: string;
 }
 
@@ -345,14 +343,6 @@ function RepoCard({
 
       {/* Status */}
       <RepoStatus repo={repo} />
-
-      {/* Config badge */}
-      {repo.hasConfig && (
-        <div className="flex items-center gap-1.5 mt-3">
-          <SettingsIcon size={11} className="text-fg-muted" />
-          <span className="text-fg-muted text-xs font-mono">.mergewatch.yml</span>
-        </div>
-      )}
     </div>
   );
 }
