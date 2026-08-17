@@ -383,17 +383,19 @@ export async function submitPRReview(
 ): Promise<void> {
   // W6 — single authoritative review comment. The paired upserted issue
   // comment (carrying `BOT_COMMENT_MARKER`) is the canonical place for the
-  // verdict, findings, diagram, etc. The formal PR Review object only
-  // exists to carry (a) the APPROVE / REQUEST_CHANGES / COMMENT event and
-  // (b) the inline comments. Its body should add NO duplicate content.
+  // verdict, findings, diagram, etc. The formal PR Review object carries
+  // (a) the APPROVE / REQUEST_CHANGES / COMMENT event, (b) the inline
+  // comments, and (c) — since #356 — a ONE-LINE POINTER to the summary
+  // comment. The pointer replaced W6's original HTML-comment-only stub:
+  // GitHub strips HTML comments when rendering, so the stub produced a
+  // review that looked bodyless/broken in the UI (E2E-03's failure-mode
+  // clause). The full review content still lives only in the summary
+  // comment — the pointer duplicates nothing.
   //
   // GitHub's API constraints differ by event:
-  //   - APPROVE        → body is optional. Omit the field entirely.
-  //   - REQUEST_CHANGES / COMMENT → body is REQUIRED. We pass an HTML-
-  //     comment-only stub (`<!-- mergewatch-review -->`); GitHub's markdown
-  //     renderer strips HTML comments, so the Review object renders with
-  //     no visible body text and the timeline shows only the event label
-  //     ("requested changes" / "left a comment") plus the inline comments.
+  //   - APPROVE        → body is optional. Omit the field entirely (the
+  //     timeline's "approved these changes" says everything needed).
+  //   - REQUEST_CHANGES / COMMENT → body is REQUIRED → marker + pointer.
   //
   // A caller may still pass real body text — we pass it through unchanged
   // for forward-compatibility (e.g., a future tier that genuinely wants a
@@ -404,8 +406,10 @@ export async function submitPRReview(
     effectiveBody = body;
   } else if (event === 'APPROVE') {
     effectiveBody = undefined;
+  } else if (event === 'REQUEST_CHANGES') {
+    effectiveBody = '<!-- mergewatch-review -->\n🔴 Critical issues found — see the full review in the summary comment above.';
   } else {
-    effectiveBody = '<!-- mergewatch-review -->';
+    effectiveBody = '<!-- mergewatch-review -->\n📝 Review feedback — see the full review in the summary comment above.';
   }
 
   await octokit.pulls.createReview({
