@@ -53,7 +53,8 @@ interface AnalyticsData {
   avgMergeScore: number;
   scoreTrend: ScoreTrendPoint[];
   severityBreakdown: Record<string, number>;
-  durationStats: { avgMs: number; p95Ms: number; count: number };
+  // #336 — p95Ms is null below the aggregator's minimum sample size.
+  durationStats: { avgMs: number; p95Ms: number | null; count: number };
   repoBreakdown: RepoBreakdownItem[];
   categoryBreakdown: Record<string, number>;
   statusCounts: Record<string, number>;
@@ -537,7 +538,10 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
 
   const durationData = [
     { name: "Average", value: Math.round(data.durationStats.avgMs / 1000), fill: CHART_COLORS.blue },
-    { name: "P95", value: Math.round(data.durationStats.p95Ms / 1000), fill: CHART_COLORS.purple },
+    // #336 — no P95 bar below the minimum sample size (p95Ms is null).
+    ...(data.durationStats.p95Ms != null
+      ? [{ name: "P95", value: Math.round(data.durationStats.p95Ms / 1000), fill: CHART_COLORS.purple }]
+      : []),
   ];
 
   // Review success rate
@@ -707,9 +711,20 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
               </div>
               <div>
                 <p className="text-xs text-fg-tertiary">P95</p>
-                <p className="text-lg font-semibold text-fg-primary">
-                  {formatDuration(data.durationStats.p95Ms)}
-                </p>
+                {/* #336 — a p95 over a handful of reviews is just the maximum
+                    wearing a percentile label; show insufficient-data instead. */}
+                {data.durationStats.p95Ms != null ? (
+                  <p className="text-lg font-semibold text-fg-primary">
+                    {formatDuration(data.durationStats.p95Ms)}
+                  </p>
+                ) : (
+                  <p
+                    className="text-lg font-semibold text-fg-tertiary"
+                    title="Needs at least 20 completed reviews for a meaningful p95"
+                  >
+                    —
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-xs text-fg-tertiary">Completed</p>

@@ -212,6 +212,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
 | [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 |
 | [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 |
+| [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 
 ---
 
@@ -3021,6 +3022,23 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 - [ ] `limit` bounds the merged result; full pagination is loss-free and duplicate-free
 - [ ] GSI-absent stack degrades to legacy with a single warning, no hard failure
 - [ ] Read cost on a date-filtered query scales with matching rows, not with rows read-and-discarded
+
+---
+
+### E2E-86: #336 — p95 duration: nearest-rank + minimum sample
+
+**Status:** 🚧 In review (#336) — fixture not yet run.
+
+**Behavior:** the analytics duration card computes p95 as the nearest-rank element (`⌈n × 0.95⌉`, clamped to a valid index) over completed reviews' durations. The old `floor(n × 0.95)` index returned the maximum for every n ≤ 20 — the slowest review wearing a percentile label, worst exactly when a new instance has little data. Below `MIN_P95_SAMPLE_SIZE` (20) completed reviews, `p95Ms` is `null` and the UI shows "—" with a "needs at least 20 completed reviews" tooltip and omits the P95 chart bar; Average and Completed still render.
+
+**How to run.**
+1. On an instance with < 20 completed reviews (or a date filter narrowing to that), open `/dashboard/analytics` → Activity tab: the P95 stat shows "—" (hover for the tooltip), the duration chart has only the Average bar.
+2. With ≥ 20 completed reviews: P95 renders a number that is **not** the slowest review unless the distribution genuinely puts it there (seed 20 distinct durations: p95 must equal the second-highest, rank 19).
+
+**Expected outcomes.**
+- [ ] n ≤ 19 → "—" + tooltip, no P95 bar, no fabricated number
+- [ ] n = 20 with distinct durations → p95 = second-highest value (not the maximum)
+- [ ] Average / Completed unaffected in both states
 
 ---
 

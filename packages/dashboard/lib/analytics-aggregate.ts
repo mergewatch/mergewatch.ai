@@ -54,7 +54,12 @@ export interface AnalyticsAggregate {
   avgMergeScore: number;
   scoreTrend: ScoreTrendPoint[];
   severityBreakdown: Record<string, number>;
-  durationStats: { avgMs: number; p95Ms: number; count: number };
+  /**
+   * #336 — `p95Ms` is `null` when there are fewer than
+   * {@link MIN_P95_SAMPLE_SIZE} completed reviews with a duration; the UI
+   * renders an insufficient-data state instead of a number.
+   */
+  durationStats: { avgMs: number; p95Ms: number | null; count: number };
   repoBreakdown: Array<{ repo: string; count: number }>;
   categoryBreakdown: Record<string, number>;
   statusCounts: Record<string, number>;
@@ -62,6 +67,14 @@ export interface AnalyticsAggregate {
   mergeScoreDistribution: Record<number, number>;
   costStats: { totalCostUsd: number; avgCostUsd: number; costCount: number };
 }
+
+/**
+ * #336 — minimum completed-review count before a p95 is reported. 20 is the
+ * smallest n where nearest-rank p95 stops degenerating to the maximum
+ * (⌈20 × 0.95⌉ = rank 19 of 20 — the second-highest value); below it the
+ * "percentile" would just be the slowest review wearing a percentile label.
+ */
+export const MIN_P95_SAMPLE_SIZE = 20;
 
 /**
  * Reduce a set of reviews into the analytics payload.
@@ -173,11 +186,15 @@ export function aggregateReviews(
   const avgDuration = durations.length > 0
     ? Math.round(durations.reduce((s, d) => s + d, 0) / durations.length)
     : 0;
-  // NOTE: this index is off by one and returns the maximum for n <= 20.
-  // Preserved as-is by the #333 extraction; fixed under #336.
-  const p95Duration = durations.length > 0
-    ? durations[Math.floor(durations.length * 0.95)]
-    : 0;
+  // #336 — nearest-rank p95 (rank ⌈n × 0.95⌉, clamped to a valid index).
+  // The old `floor(n × 0.95)` index returned the MAXIMUM for every n ≤ 20
+  // and sat one rank high beyond that. Below the sample threshold the
+  // figure is withheld entirely: a "p95" that still equals the maximum is
+  // not a percentile, and it is most misleading on exactly the small
+  // datasets a new instance starts with.
+  const p95Duration = durations.length >= MIN_P95_SAMPLE_SIZE
+    ? durations[Math.min(durations.length - 1, Math.max(0, Math.ceil(durations.length * 0.95) - 1))]
+    : null;
 
   return {
     totalReviews: reviews.length,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   aggregateReviews,
+  MIN_P95_SAMPLE_SIZE,
   type AggregatableReview,
 } from "./analytics-aggregate";
 
@@ -25,7 +26,8 @@ describe("aggregateReviews — empty input", () => {
     expect(result.totalFindings).toBe(0);
     // Guards the division-by-zero paths: every average must be 0, not NaN.
     expect(result.avgMergeScore).toBe(0);
-    expect(result.durationStats).toEqual({ avgMs: 0, p95Ms: 0, count: 0 });
+    // #336 — p95Ms is null (insufficient data), never a fabricated 0.
+    expect(result.durationStats).toEqual({ avgMs: 0, p95Ms: null, count: 0 });
     expect(result.costStats).toEqual({ totalCostUsd: 0, avgCostUsd: 0, costCount: 0 });
     expect(result.scoreTrend).toEqual([]);
     expect(result.findingsPerReviewTrend).toEqual([]);
@@ -37,7 +39,14 @@ describe("aggregateReviews — empty input", () => {
   });
 
   it("has no NaN anywhere in the zero state", () => {
-    const json = JSON.stringify(aggregateReviews([]));
+    const result = aggregateReviews([]);
+    // p95Ms is the one field that is LEGITIMATELY null (#336 insufficient
+    // data); mask it so the stringify check below catches NaN → null
+    // conversions everywhere else.
+    const json = JSON.stringify({
+      ...result,
+      durationStats: { ...result.durationStats, p95Ms: 0 },
+    });
     // JSON.stringify turns NaN into null — either would be a bug here.
     expect(json).not.toContain("null");
     expect(json).not.toContain("NaN");
@@ -294,29 +303,40 @@ describe("aggregateReviews — missing and malformed optional fields", () => {
   });
 });
 
-describe("aggregateReviews — percentile behavior (see #336)", () => {
-  // These assertions pin the CURRENT, KNOWN-WRONG behavior so the #333
-  // extraction is provably a no-op. #336 fixes the index and must update them.
-  it("currently returns the maximum for small samples (off-by-one)", () => {
+describe("aggregateReviews — percentile behavior (#336 fixed)", () => {
+  // #333 pinned the old off-by-one behavior here so the extraction was
+  // provably a no-op; #336 fixed the index, and these now assert the fix.
+  it("returns nearest-rank p95, not the maximum, at the sample threshold", () => {
     const durations = Array.from({ length: 20 }, (_, i) =>
       review({ durationMs: (i + 1) * 100 }),
     );
     const r = aggregateReviews(durations);
 
-    // Correct nearest-rank p95 of 1..20 hundreds would be 1900; index 19 gives 2000.
-    expect(r.durationStats.p95Ms).toBe(2000);
+    // Nearest-rank p95 of 1..20 hundreds = rank 19 = 1900. The old
+    // floor(20 × 0.95) = index 19 returned 2000 — the maximum.
+    expect(r.durationStats.p95Ms).toBe(1900);
   });
 
   it("sorts durations numerically, not lexicographically", () => {
-    // A default .sort() would order [1000, 200, 30] and corrupt every percentile.
-    const r = aggregateReviews([
+    // A default .sort() would order [1000, 200, 30] and corrupt every
+    // percentile. Below the #336 sample threshold p95 is withheld, so the
+    // numeric-sort guarantee is asserted through avgMs + a threshold-size run.
+    const small = aggregateReviews([
       review({ durationMs: 1000 }),
       review({ durationMs: 200 }),
       review({ durationMs: 30 }),
     ]);
+    expect(small.durationStats.avgMs).toBe(410);
+    expect(small.durationStats.p95Ms).toBeNull();
 
-    expect(r.durationStats.avgMs).toBe(410);
-    expect(r.durationStats.p95Ms).toBe(1000);
+    // 100..1900 plus a duplicate 1000: lexicographic order would misplace
+    // "1000" before "200" and surface the wrong rank. Sorted numerically the
+    // 20 values are 100..900, 1000, 1000, 1100..1900 → rank 19 = 1800.
+    const atThreshold = aggregateReviews([
+      ...Array.from({ length: 19 }, (_, i) => review({ durationMs: (i + 1) * 100 })),
+      review({ durationMs: 1000 }),
+    ]);
+    expect(atThreshold.durationStats.p95Ms).toBe(1800);
   });
 });
 
@@ -388,5 +408,61 @@ describe("aggregateReviews — no ceiling (#333 regression)", () => {
     const r = aggregateReviews(many);
     expect(r.costStats.costCount).toBe(COUNT);
     expect(r.costStats.totalCostUsd).toBeCloseTo(COUNT * 0.01, 4);
+  });
+});
+
+// ─── #336 — p95 nearest-rank + minimum sample size ──────────────────────────
+
+describe("aggregateReviews — p95 duration (#336)", () => {
+  /** n completed reviews with durations 1000, 2000, …, n×1000 ms (shuffled). */
+  function withDurations(n: number): AggregatableReview[] {
+    const ms = Array.from({ length: n }, (_, i) => (i + 1) * 1000);
+    // Deterministic shuffle — p95 must not depend on input order.
+    ms.sort((a, b) => (a * 7919) % 104729 - (b * 7919) % 104729);
+    return ms.map((durationMs) => review({ durationMs }));
+  }
+
+  /** Nearest-rank expectation over 1000..n×1000: rank ⌈n × 0.95⌉. */
+  function nearestRank95(n: number): number {
+    return Math.ceil(n * 0.95) * 1000;
+  }
+
+  it(`withholds p95 below MIN_P95_SAMPLE_SIZE (${MIN_P95_SAMPLE_SIZE})`, () => {
+    for (const n of [1, 5, 19]) {
+      const r = aggregateReviews(withDurations(n));
+      expect(r.durationStats.p95Ms, `n=${n}`).toBeNull();
+      expect(r.durationStats.count, `n=${n}`).toBe(n);
+    }
+  });
+
+  it("returns the nearest-rank element for n = 20, 21, 100", () => {
+    // n=20 → rank 19 → 19000: the SECOND-highest, where the old floor()
+    // index returned 20000 (the maximum wearing a percentile label).
+    expect(aggregateReviews(withDurations(20)).durationStats.p95Ms).toBe(19_000);
+    expect(nearestRank95(20)).toBe(19_000);
+    // n=21 → rank ⌈19.95⌉ = 20 → 20000 (old index: also 20000 — one rank
+    // high relative to nearest-rank only at some n; equal here).
+    expect(aggregateReviews(withDurations(21)).durationStats.p95Ms).toBe(nearestRank95(21));
+    // n=100 → rank 95 → 95000 (old index: 96000, one rank high).
+    expect(aggregateReviews(withDurations(100)).durationStats.p95Ms).toBe(95_000);
+  });
+
+  it("never exceeds the maximum and stays a valid element", () => {
+    for (const n of [20, 33, 47, 100]) {
+      const p95 = aggregateReviews(withDurations(n)).durationStats.p95Ms!;
+      expect(p95).toBeLessThanOrEqual(n * 1000);
+      expect(p95 % 1000).toBe(0); // an actual sample, not an interpolation
+    }
+  });
+
+  it("counts only completed reviews with a duration toward the sample size", () => {
+    // 19 complete + 5 failed-with-duration must stay below the threshold.
+    const rows = [
+      ...withDurations(19),
+      ...Array.from({ length: 5 }, () => review({ status: "failed", durationMs: 99_000 })),
+    ];
+    const r = aggregateReviews(rows);
+    expect(r.durationStats.count).toBe(19);
+    expect(r.durationStats.p95Ms).toBeNull();
   });
 });
