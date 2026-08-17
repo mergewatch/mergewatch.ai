@@ -431,22 +431,20 @@ export async function processReviewJob(
       : [],
   };
 
-  // Merge config. Precedence: defaults < dashboard settings < stored
-  // installation config < the repo's committed .mergewatch.yml < LLM_MODEL env
-  // (global model pin for self-hosted). The committed yml wins over dashboard
-  // settings per the documented configuration contract ("the .mergewatch.yml
-  // in the repository always wins"); dashboard values apply only where the
-  // yml is silent.
+  // Merge config. Precedence: defaults < dashboard settings < the repo's
+  // committed .mergewatch.yml < LLM_MODEL env (global model pin for
+  // self-hosted). The committed yml wins over dashboard settings per the
+  // documented configuration contract ("the .mergewatch.yml in the
+  // repository always wins"); dashboard values apply only where the yml is
+  // silent. (#310 removed the `storedConfig` tier that used to sit between
+  // dashboard settings and the yml — nothing ever populated it.)
   // yamlConfig was fetched earlier for the smart-skip includePatterns override; reuse it here.
   const modelOverride = process.env.LLM_MODEL;
-  const storedConfig = (installation?.config || {}) as Partial<MergeWatchConfig>;
   const config = mergeConfig({
     ...settingsOverrides,
-    ...storedConfig,
     ...(yamlConfig ?? {}),
     agents: {
       ...settingsOverrides.agents,
-      ...(storedConfig.agents ?? {}),
       ...(yamlConfig?.agents ?? {}),
     },
     ...(modelOverride ? { model: modelOverride, lightModel: modelOverride } : {}),

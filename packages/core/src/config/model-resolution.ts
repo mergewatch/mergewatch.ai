@@ -10,15 +10,12 @@
  * Precedence, highest first:
  *
  *   1. `.mergewatch.yml` `model:`      — the repository's committed intent
- *   2. `installation.modelId`          — per-repo override on the installation row
- *   3. `DEFAULT_BEDROCK_MODEL_ID`      — the deploy-time default
- *   4. hardcoded fallback
+ *   2. `DEFAULT_BEDROCK_MODEL_ID`      — the deploy-time default
+ *   3. hardcoded fallback
  *
- * The committed yml outranks stored installation state, matching the
- * configuration contract the rest of the config merge follows since #306
- * ("the .mergewatch.yml in the repository always wins") — see
- * `packages/server/src/review-processor.ts`. Before that alignment these two
- * adjacent code paths disagreed about which source won.
+ * (#310 removed the `installation.modelId` tier that sat between the yml and
+ * the deploy default — nothing ever wrote it and 0 of 525 production rows
+ * carried it. The supported per-repo model override is `model:` in the yml.)
  *
  * Note the deploy default sits at the BOTTOM here, unlike self-hosted's
  * `LLM_MODEL`, which overrides everything including the yml. That asymmetry is
@@ -38,12 +35,6 @@ export interface ModelResolutionInput {
    * everywhere — turning a per-repo opt-in into a global change.
    */
   repoConfigModel?: string;
-  /**
-   * Per-repo override stored on the installation row. Nothing writes this
-   * today (see `InstallationItem.modelId`); read so a hand-set row keeps
-   * working. Outranked by the committed yml.
-   */
-  installationModelId?: string;
   /** Deploy-time default (`DEFAULT_BEDROCK_MODEL_ID`). */
   deployDefault?: string;
   /** Last-resort fallback when the deploy default is unset. */
@@ -51,7 +42,6 @@ export interface ModelResolutionInput {
 }
 
 export type ModelSource =
-  | 'installation'
   | 'repo-config'
   | 'deploy-default'
   | 'fallback';
@@ -65,15 +55,13 @@ export interface ResolvedModel {
 /**
  * Resolve the model a review should run on.
  *
- * Precedence: `.mergewatch.yml` → installation override → deploy default →
- * hardcoded fallback. Empty and whitespace-only values are treated as unset,
- * so a `model:` key left blank in YAML falls through instead of resolving to
- * an empty model ID.
+ * Precedence: `.mergewatch.yml` → deploy default → hardcoded fallback.
+ * Empty and whitespace-only values are treated as unset, so a `model:` key
+ * left blank in YAML falls through instead of resolving to an empty model ID.
  */
 export function resolveReviewModelId(input: ModelResolutionInput): ResolvedModel {
   const candidates: Array<[ModelSource, string | undefined]> = [
     ['repo-config', input.repoConfigModel],
-    ['installation', input.installationModelId],
     ['deploy-default', input.deployDefault],
   ];
 

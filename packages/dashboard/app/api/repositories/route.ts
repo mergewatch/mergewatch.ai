@@ -49,22 +49,6 @@ export async function GET(req: NextRequest) {
 
     const store = await getDashboardStore();
 
-    // Fetch config flags from store
-    const configMap = new Map<string, boolean>();
-
-    try {
-      const items = await store.installations.listByInstallation(installationIdParam);
-      for (const item of items) {
-        const cfg = item.config;
-        configMap.set(
-          item.repoFullName,
-          cfg != null && typeof cfg === "object" && Object.keys(cfg).length > 0,
-        );
-      }
-    } catch {
-      // Store error — defaults apply
-    }
-
     // Fetch review stats for this page's repos
     const repoNames = ghRepos.map((r) => r.repoFullName);
     const statsMap = await store.reviews.getRepoStats(repoNames);
@@ -80,7 +64,6 @@ export async function GET(req: NextRequest) {
         reviewCount: stats?.reviewCount ?? 0,
         issueCount: stats?.issueCount ?? 0,
         lastReviewedAt: stats?.lastReviewedAt ?? null,
-        hasConfig: configMap.get(r.repoFullName) ?? false,
         installationId: installationIdParam,
       };
     });

@@ -104,32 +104,19 @@ export interface InstallationItem {
    */
   installedAt: string;
 
-  /**
-   * Parsed contents of the repository's `.mergewatch.yml` configuration file.
-   * This is fetched from the repo's default branch during installation and
-   * updated when the config file changes.
-   *
-   * Stored as a DynamoDB Map type. If the repo has no config file, this
-   * will be an empty object (defaults are applied at review time).
-   */
-  config: RepoConfig;
-
-  /**
-   * Amazon Bedrock model ID override for this specific repository.
-   *
-   * Precedence (#264): this wins over `.mergewatch.yml` `model:`, which in turn
-   * wins over the deploy-time `DEFAULT_BEDROCK_MODEL_ID`.
-   *
-   * NOTE: nothing in the codebase currently *writes* this field — there is no
-   * dashboard control or API that sets it, so in practice it is only ever
-   * present if someone edited the row by hand. The supported way to pick a
-   * per-repo model is `model:` in `.mergewatch.yml`. It is read (not removed)
-   * so any hand-set row keeps working; if a dashboard control is added later,
-   * this is where it should land.
-   *
-   * Example: "us.anthropic.claude-sonnet-4-20250514-v1:0"
-   */
-  modelId?: string;
+  // #310 — two fields removed from this interface rather than documented:
+  //   • `config` — typed as the parsed `.mergewatch.yml`, documented as
+  //     populated on installation, and merged into the effective config by
+  //     both runtimes. Nothing ever wrote it (both webhooks stored a literal
+  //     `{}`; 0 of 525 production rows had a non-empty map), so the
+  //     documented `storedConfig` precedence tier was always empty — and it
+  //     caused a wrong measurement when `config.model` was scanned to size
+  //     #268's impact. The committed `.mergewatch.yml` (fetched at review
+  //     time) and the dashboard settings are the real config surfaces.
+  //   • `modelId` — per-repo model override, read by the SaaS handler but
+  //     written by nothing (0 of 525 production rows). The supported way to
+  //     pick a per-repo model is `model:` in `.mergewatch.yml` (#264/#268).
+  // The underlying DB columns remain in place, inert, so no migration.
 
   /** Deprecated — retained for backward compatibility. The pipeline reviews all installed repos regardless of this flag. */
   monitored?: boolean;

@@ -22,8 +22,9 @@ export class PostgresInstallationStore implements IInstallationStore {
       installationId: row.installationId,
       repoFullName: row.repoFullName,
       installedAt: row.installedAt,
-      config: row.config as any,
-      ...(row.modelId ? { modelId: row.modelId } : {}),
+      // #310 — the config/model_id columns still exist but are no longer
+      // surfaced: nothing ever wrote config, and modelId's read tier was
+      // removed with it.
       monitored: row.monitored,
     };
   }
@@ -53,16 +54,12 @@ export class PostgresInstallationStore implements IInstallationStore {
         installationId: item.installationId,
         repoFullName: item.repoFullName,
         installedAt: item.installedAt,
-        config: item.config as any,
-        modelId: item.modelId ?? null,
         monitored: item.monitored ?? true,
       })
       .onConflictDoUpdate({
         target: [installations.installationId, installations.repoFullName],
         set: {
           installedAt: item.installedAt,
-          config: item.config as any,
-          modelId: item.modelId ?? null,
           monitored: item.monitored ?? true,
         },
       });

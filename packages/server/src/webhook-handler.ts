@@ -369,7 +369,6 @@ async function handleInstallation(payload: InstallationEvent, deps: WebhookDeps)
       installationId: String(installation.id),
       repoFullName: repo.full_name as string,
       installedAt: new Date().toISOString(),
-      config: {},
     });
   }
 }

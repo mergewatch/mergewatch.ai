@@ -4,6 +4,10 @@
  * The regression these guard against: `.mergewatch.yml` `model:` documented as
  * functional but never read, and a merged-config value accidentally overriding
  * the deploy-time default for every repository at once.
+ *
+ * #310 removed the `installation.modelId` tier (nothing ever wrote it; 0 of
+ * 525 production rows carried it), so the chain is now
+ * repo-config → deploy-default → fallback.
  */
 import { describe, it, expect } from 'vitest';
 import { resolveReviewModelId } from './model-resolution';
@@ -11,7 +15,6 @@ import { resolveReviewModelId } from './model-resolution';
 const FALLBACK = 'us.anthropic.claude-opus-4-6-v1';
 const DEPLOY = 'us.anthropic.claude-sonnet-4-20250514-v1:0';
 const REPO = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
-const INSTALL = 'us.anthropic.claude-opus-4-8-v1';
 
 describe('resolveReviewModelId', () => {
   it('uses the deploy default when nothing else is set', () => {
@@ -27,38 +30,6 @@ describe('resolveReviewModelId', () => {
       deployDefault: DEPLOY,
       fallback: FALLBACK,
     })).toEqual({ modelId: REPO, source: 'repo-config' });
-  });
-
-  it('lets the committed yml beat the installation-row override', () => {
-    // Aligned with the configuration contract #306 established for the rest of
-    // the config merge: "the .mergewatch.yml in the repository always wins".
-    // Before that alignment these two adjacent paths in review-agent.ts
-    // disagreed about which source outranked the other.
-    expect(resolveReviewModelId({
-      installationModelId: INSTALL,
-      repoConfigModel: REPO,
-      deployDefault: DEPLOY,
-      fallback: FALLBACK,
-    })).toEqual({ modelId: REPO, source: 'repo-config' });
-  });
-
-  it('uses the installation-row override when the yml is silent', () => {
-    expect(resolveReviewModelId({
-      installationModelId: INSTALL,
-      deployDefault: DEPLOY,
-      fallback: FALLBACK,
-    })).toEqual({ modelId: INSTALL, source: 'installation' });
-  });
-
-  it('does not let an installation override resurrect a blank yml model', () => {
-    // A blank `model:` is "unset", not "defer to the row above me" — it should
-    // fall through the whole chain the same way an absent key does.
-    expect(resolveReviewModelId({
-      repoConfigModel: '   ',
-      installationModelId: INSTALL,
-      deployDefault: DEPLOY,
-      fallback: FALLBACK,
-    })).toEqual({ modelId: INSTALL, source: 'installation' });
   });
 
   it('falls back when the deploy default is unset', () => {
@@ -92,19 +63,10 @@ describe('resolveReviewModelId', () => {
     })).toEqual({ modelId: REPO, source: 'repo-config' });
   });
 
-  it('skips an empty installation override', () => {
-    expect(resolveReviewModelId({
-      installationModelId: '',
-      deployDefault: DEPLOY,
-      fallback: FALLBACK,
-    })).toEqual({ modelId: DEPLOY, source: 'deploy-default' });
-  });
-
   it('the full chain degrades in order as each source is removed', () => {
-    const all = { repoConfigModel: REPO, installationModelId: INSTALL, deployDefault: DEPLOY, fallback: FALLBACK };
+    const all = { repoConfigModel: REPO, deployDefault: DEPLOY, fallback: FALLBACK };
     expect(resolveReviewModelId(all).modelId).toBe(REPO);
-    expect(resolveReviewModelId({ ...all, repoConfigModel: undefined }).modelId).toBe(INSTALL);
-    expect(resolveReviewModelId({ ...all, repoConfigModel: undefined, installationModelId: undefined }).modelId).toBe(DEPLOY);
+    expect(resolveReviewModelId({ ...all, repoConfigModel: undefined }).modelId).toBe(DEPLOY);
     expect(resolveReviewModelId({ fallback: FALLBACK }).modelId).toBe(FALLBACK);
   });
 
@@ -113,10 +75,9 @@ describe('resolveReviewModelId', () => {
     // where the running model came from.
     const sources = [
       resolveReviewModelId({ repoConfigModel: REPO, fallback: FALLBACK }).source,
-      resolveReviewModelId({ installationModelId: INSTALL, fallback: FALLBACK }).source,
       resolveReviewModelId({ deployDefault: DEPLOY, fallback: FALLBACK }).source,
       resolveReviewModelId({ fallback: FALLBACK }).source,
     ];
-    expect(sources).toEqual(['repo-config', 'installation', 'deploy-default', 'fallback']);
+    expect(sources).toEqual(['repo-config', 'deploy-default', 'fallback']);
   });
 });
