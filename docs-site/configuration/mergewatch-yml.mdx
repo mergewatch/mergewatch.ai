@@ -126,7 +126,7 @@ ux:
 | `maxTokensPerAgent` | `number` | `4096` | Maximum output tokens per agent invocation. Increase for large PRs; decrease to reduce cost. |
 | `minSeverity` | `string` | `info` | Minimum severity level to report. One of `info`, `warning`, `critical`. Findings below this threshold are suppressed. |
 | `maxFindings` | `number` | `25` | Maximum number of findings posted per review. Prevents noisy reviews on large PRs. |
-| `postSummaryOnClean` | `boolean` | `true` | When `true`, MergeWatch posts a summary comment even when no findings are detected. Set to `false` to stay silent on clean PRs. |
+| `postSummaryOnClean` | `boolean` | `true` | When `true`, MergeWatch posts a summary comment even when no findings are detected. Set to `false` to stay silent on clean PRs. If an earlier review already posted a comment on the PR, it is still updated — a previously-flagged PR that comes back clean never keeps a stale review. |
 | `codebaseAwareness` | `boolean` | `true` | Enable agentic file fetching for cross-file context. When `true`, agents can request additional files from the repository. |
 | `maxFileRequestRounds` | `number` | `1` | Maximum rounds of file fetching per agent (1--2). Each round lets the agent request more files based on what it learned. |
 | `maxContextKB` | `number` | `256` | Maximum total context size in KB for fetched files per agent. Prevents runaway context expansion. |

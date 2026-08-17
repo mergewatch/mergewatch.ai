@@ -1,6 +1,6 @@
 # Time-ordered review listing (SaaS / DynamoDB)
 
-**Status:** 🚧 In review
+**Status:** ✅ Shipped
 **Issue:** [#335](https://github.com/mergewatch/mergewatch.ai/issues/335)
 
 Fix the three `listReviews` defects that made SaaS analytics numbers unreliable: candidate rows ordered by PR-number **string** (`"9#…" > "42#…" > "100#…"`), `Limit` applied per repo instead of to the result set, and `Limit` applied to items *read* before the date `FilterExpression` ran — silently losing matching rows the narrower the date range got.
