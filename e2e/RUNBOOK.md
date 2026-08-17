@@ -211,6 +211,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 |
 | [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
 | [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 |
+| [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 |
 
 ---
 
@@ -2998,6 +2999,28 @@ Trigger the rollup manually (same paths as E2E-41), then read the three insight 
 - [ ] `7d ≤ 30d ≤ 90d` for `totalFindingsSurfaced` and `totalDisputes`
 - [ ] `perCategory` / `perSeverity` / `perRepo` / `topClusters` reflect windowed counts (spot-check the long-lived record's category bucket shows 1, not 200)
 - [ ] New reviews after deploy write `periodCounts` buckets on both backends (inspect a row: Postgres `period_counts` jsonb / Dynamo `pc#<day>#<counter>` attributes)
+
+---
+
+### E2E-85: #335 — Time-ordered DynamoDB review listing
+
+**Status:** 🚧 In review (#335) — fixture not yet run.
+
+**Behavior:** the SaaS dashboard's `listReviews` queries the `ByRepoCreatedAt` GSI (PK `repoFullName`, SK `createdAt`) descending — true reverse-chronological order regardless of PR numbers (the base sort key orders `"9#…" > "42#…" > "100#…"` as strings). Date-range bounds sit in the `KeyConditionExpression`, so `Limit` applies to matching items and a narrow range can no longer silently discard matching rows beyond the first unfiltered page. `limit` bounds the merged cross-repo result; v2 cursors resume each repo from the last *returned* item, so rows fetched but dropped by the global slice are re-fetched, never lost. On a stack without the GSI, the store logs one warning and degrades to the legacy base-table path (sticky per instance); v1 cursors finish their sequence on the legacy path.
+
+**How to run.**
+Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR numbers 9, 42, 100, and 1000 whose `createdAt` order deliberately disagrees with PR-number order (e.g. 100 newest, then 1000, 42, 9), plus a second repo with interleaved timestamps and a batch of rows older than 30 days.
+1. `/dashboard/reviews` (SaaS): confirm the list renders in `createdAt` order — 100, 1000, 42, 9 — not 9, 42, 1000, 100.
+2. Apply a "last 7 days" date filter on `/dashboard/analytics`: confirm the totals equal the seeded in-range row count exactly (previously: whatever survived the first unfiltered 500-item read).
+3. Page through `/api/reviews?limit=4` across both repos to exhaustion: confirm every seeded row appears exactly once.
+4. On a stack without the GSI (dev before infra deploy): confirm the one-time `ByRepoCreatedAt index not found` warning and that the list still renders (legacy order).
+
+**Expected outcomes.**
+- [ ] Time order across PR numbers 9 / 42 / 100 / 1000 (never PR-number-string order)
+- [ ] Date-filtered totals count all matching rows, independent of how many out-of-range rows precede them
+- [ ] `limit` bounds the merged result; full pagination is loss-free and duplicate-free
+- [ ] GSI-absent stack degrades to legacy with a single warning, no hard failure
+- [ ] Read cost on a date-filtered query scales with matching rows, not with rows read-and-discarded
 
 ---
 
