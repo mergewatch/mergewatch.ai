@@ -30,13 +30,17 @@ export class DynamoReviewStore implements IReviewStore {
         new PutCommand({
           TableName: this.tableName,
           Item: { ...review, status: 'in_progress' },
+          // #355 — 'pending' is claimable: a throttled review is parked back
+          // at 'pending' before the retry redelivers, and the retry must be
+          // able to re-claim it. 'in_progress' stays unclaimable (dedup).
           ConditionExpression:
-            'attribute_not_exists(repoFullName) OR #s IN (:failed, :skipped, :complete)',
+            'attribute_not_exists(repoFullName) OR #s IN (:failed, :skipped, :complete, :pending)',
           ExpressionAttributeNames: { '#s': 'status' },
           ExpressionAttributeValues: {
             ':failed': 'failed',
             ':skipped': 'skipped',
             ':complete': 'complete',
+            ':pending': 'pending',
           },
         }),
       );

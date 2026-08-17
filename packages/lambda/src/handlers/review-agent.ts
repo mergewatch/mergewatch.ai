@@ -26,6 +26,7 @@ import {
   runReviewPipeline,
   formatReviewComment,
   countBlockingCriticals,
+  isThrottleError,
   mergeConfig,
   shouldSkipPR,
   extractIncludePatterns,
@@ -1151,6 +1152,29 @@ export async function handler(
       }),
     };
   } catch (error) {
+    // #355 — a provider throttle is retriable work, not a failure. Park the
+    // review back at 'pending' (claimable — see claimReview), keep the check
+    // run advisory-in-progress instead of terminally red, and RETHROW so the
+    // async invocation is retried by Lambda (returning without throwing is
+    // what suppressed every retry and silently lost 32/57 burst reviews).
+    if (isThrottleError(error)) {
+      console.warn(`Review throttled for ${repoFullName}#${prNumber} — parking for retry`);
+
+      await reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'pending').catch((updateErr) => {
+        console.error('Failed to park throttled review as pending:', updateErr);
+      });
+
+      await createCheckRun(octokit, owner, repo, headSha, {
+        status: 'in_progress',
+        title: 'Review queued — rate limited',
+        summary: 'The model provider is rate limiting requests. MergeWatch will retry this review shortly.',
+      }).catch((checkErr) => {
+        console.error('Failed to post rate-limited check run:', checkErr);
+      });
+
+      throw error;
+    }
+
     console.error(`Review failed for ${repoFullName}#${prNumber}:`, error);
 
     await reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'failed', {

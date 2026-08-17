@@ -1182,3 +1182,62 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
     expect(check.summary).toContain('1 unverified');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #355 — a provider throttle is parked for retry, not terminally failed
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — throttle handling (#355)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+  });
+
+  it('parks a throttled review as pending with an in_progress "rate limited" check — never FAILURE', async () => {
+    (runReviewPipeline as any).mockRejectedValue(
+      Object.assign(new Error('Too many requests, please wait before trying again.'), { name: 'ThrottlingException' }),
+    );
+    const deps = makeDeps();
+    await expect(processReviewJob(makeJob(), deps)).rejects.toThrow('Too many requests');
+
+    // Status parked at pending — claimable by the retry — not failed.
+    const statusCalls = (deps.reviewStore.updateStatus as any).mock.calls;
+    expect(statusCalls.some((c: any[]) => c[2] === 'pending')).toBe(true);
+    expect(statusCalls.some((c: any[]) => c[2] === 'failed')).toBe(false);
+
+    // The completion check is in_progress/queued, never a failure conclusion.
+    const checkCalls = (createCheckRun as any).mock.calls.map((c: any[]) => c[4]);
+    expect(checkCalls.some((c: any) => c.conclusion === 'failure')).toBe(false);
+    expect(checkCalls.some((c: any) => c.status === 'in_progress' && /rate limited/i.test(c.title))).toBe(true);
+  });
+
+  it('a non-throttle pipeline error still fails the review and the check (no regression)', async () => {
+    (runReviewPipeline as any).mockRejectedValue(
+      Object.assign(new Error('model exploded'), { name: 'ValidationException' }),
+    );
+    const deps = makeDeps();
+    await expect(processReviewJob(makeJob(), deps)).rejects.toThrow('model exploded');
+
+    const statusCalls = (deps.reviewStore.updateStatus as any).mock.calls;
+    expect(statusCalls.some((c: any[]) => c[2] === 'failed')).toBe(true);
+
+    const checkCalls = (createCheckRun as any).mock.calls.map((c: any[]) => c[4]);
+    expect(checkCalls.some((c: any) => c.conclusion === 'failure' && c.title === 'Review failed')).toBe(true);
+  });
+
+  it('a 429 from a non-Bedrock provider (Anthropic/LiteLLM shape) is also parked', async () => {
+    (runReviewPipeline as any).mockRejectedValue(
+      Object.assign(new Error('rate_limit_error'), { status: 429 }),
+    );
+    const deps = makeDeps();
+    await expect(processReviewJob(makeJob(), deps)).rejects.toThrow();
+
+    const statusCalls = (deps.reviewStore.updateStatus as any).mock.calls;
+    expect(statusCalls.some((c: any[]) => c[2] === 'pending')).toBe(true);
+    expect(statusCalls.some((c: any[]) => c[2] === 'failed')).toBe(false);
+  });
+});

@@ -2,7 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
-  formatReviewComment, countBlockingCriticals, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
+  formatReviewComment, countBlockingCriticals, isThrottleError, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
@@ -981,6 +981,22 @@ export async function processReviewJob(
 
     console.log(`Review complete: ${repoFullName}#${prNumber} — score ${result.mergeScore}/5, ${result.findings.length} findings, ${durationMs}ms`);
   } catch (err) {
+    // #355 — a provider throttle (429 / ThrottlingException) is retriable
+    // work, not a failure. Park the review back at 'pending' (claimable —
+    // see claimReview) and keep the check advisory-in-progress instead of
+    // terminally red; the queue worker (#355 phase 2b) redelivers it.
+    if (isThrottleError(err)) {
+      console.warn(`Review throttled for ${repoFullName}#${prNumber} — parking for retry`);
+      await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'pending')
+        .catch((updateErr) => console.warn('Failed to park throttled review as pending:', updateErr));
+      await createCheckRun(octokit, owner, repo, headSha, {
+        status: 'in_progress',
+        title: 'Review queued — rate limited',
+        summary: 'The model provider is rate limiting requests. MergeWatch will retry this review shortly.',
+      }).catch((checkErr) => console.warn('Failed to post rate-limited check run:', checkErr));
+      throw err;
+    }
+
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'failed', {
       completedAt: new Date().toISOString(),
     });
