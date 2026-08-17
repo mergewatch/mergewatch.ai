@@ -18,7 +18,9 @@ interface InstallationSettings {
 }
 
 const DEFAULT_SETTINGS: InstallationSettings = {
-  severityThreshold: "Med",
+  // #357 — 'Low' reports every tier; saving untouched settings must not
+  // silently opt an installation into info-suppression.
+  severityThreshold: "Low",
   commentTypes: { syntax: true, logic: true, style: true },
   maxComments: 10,
   summary: {

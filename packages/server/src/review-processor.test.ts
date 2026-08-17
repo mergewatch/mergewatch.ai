@@ -1241,3 +1241,52 @@ describe('processReviewJob — throttle handling (#355)', () => {
     expect(statusCalls.some((c: any[]) => c[2] === 'failed')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #357 — the default severity threshold must not suppress info findings
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — severityThreshold → minSeverity mapping (#357)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  function pipelineMinSeverity() {
+    return (runReviewPipeline as any).mock.calls[0][0].minSeverity;
+  }
+
+  it("default settings map to 'info' — info-tier findings render out of the box", async () => {
+    // E2E-02's regression: the old 'Med' default became minSeverity 'warning'
+    // the moment #310 wired the key, silently dropping every info finding.
+    await processReviewJob(makeJob(), makeDeps());
+    expect(pipelineMinSeverity()).toBe('info');
+  });
+
+  it("an explicit 'Med' threshold maps to 'warning' (opt-in suppression works)", async () => {
+    const deps = makeDeps();
+    (deps.installationStore.getSettings as any).mockResolvedValue({
+      ...DEFAULT_INSTALLATION_SETTINGS,
+      severityThreshold: 'Med',
+    });
+    await processReviewJob(makeJob(), deps);
+    expect(pipelineMinSeverity()).toBe('warning');
+  });
+
+  it("an unknown threshold value falls back to 'info', never suppression", async () => {
+    const deps = makeDeps();
+    (deps.installationStore.getSettings as any).mockResolvedValue({
+      ...DEFAULT_INSTALLATION_SETTINGS,
+      severityThreshold: 'Extreme',
+    });
+    await processReviewJob(makeJob(), deps);
+    expect(pipelineMinSeverity()).toBe('info');
+  });
+});

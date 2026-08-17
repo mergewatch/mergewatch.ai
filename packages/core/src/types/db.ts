@@ -147,7 +147,13 @@ export interface InstallationSettings {
 }
 
 export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
-  severityThreshold: 'Med',
+  // #357 — 'Low' (→ minSeverity 'info'), NOT 'Med'. This default was inert
+  // until #310 wired minSeverity; the moment it went live, 'Med' meant every
+  // default-settings installation silently dropped all info-tier findings
+  // (E2E-02: no "Info (N)" section, "no issues" verdict on an info-only PR).
+  // Out-of-the-box behavior must report everything; Med/High are explicit
+  // opt-ins. Matches the Postgres settings column default ('Low').
+  severityThreshold: 'Low',
   commentTypes: { syntax: true, logic: true, style: true },
   maxComments: 10,
   summary: {

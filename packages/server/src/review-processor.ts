@@ -414,7 +414,9 @@ export async function processReviewJob(
   // Severity: Low → info, Med → warning, High → critical
   const severityMap: Record<string, 'info' | 'warning' | 'critical'> = { Low: 'info', Med: 'warning', High: 'critical' };
   const settingsOverrides: Partial<MergeWatchConfig> = {
-    minSeverity: severityMap[instSettings.severityThreshold] ?? 'warning',
+    // #357 — unknown values fall back to 'info' (report everything): a
+    // malformed threshold must never silently suppress findings.
+    minSeverity: severityMap[instSettings.severityThreshold] ?? 'info',
     maxFindings: instSettings.maxComments,
     agents: {
       security: instSettings.commentTypes?.logic ?? true,
