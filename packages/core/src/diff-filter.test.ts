@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterDiff, extractChangedLines, isLineNearChange } from './diff-filter.js';
+import { filterDiff, extractChangedLines, isLineNearChange, computeDiffStats } from './diff-filter.js';
 
 const makeDiff = (...files: string[]) =>
   files
@@ -238,5 +238,55 @@ describe('isLineNearChange', () => {
   it('returns false for empty changed set', () => {
     const empty = new Map([['src/index.ts', new Set<number>()]]);
     expect(isLineNearChange(empty, 'src/index.ts', 10, 3)).toBe(false);
+  });
+});
+
+// ─── #358 — computeDiffStats ─────────────────────────────────────────────────
+
+describe('computeDiffStats (#358)', () => {
+  const twoFileDiff = [
+    'diff --git a/src/handler.ts b/src/handler.ts',
+    'index 111..222 100644',
+    '--- a/src/handler.ts',
+    '+++ b/src/handler.ts',
+    '@@ -1,3 +1,4 @@',
+    ' const a = 1;',
+    '+const sql = `SELECT * FROM users WHERE id = ${id}`;',
+    '+run(sql);',
+    '-const old = true;',
+    'diff --git a/src/api.generated.ts b/src/api.generated.ts',
+    'index 333..444 100644',
+    '--- a/src/api.generated.ts',
+    '+++ b/src/api.generated.ts',
+    '@@ -1,2 +1,3 @@',
+    '+// generated',
+    '+export const x = 1;',
+  ].join('\n');
+
+  it('counts files and +/- lines, excluding the +++/--- file headers', () => {
+    const stats = computeDiffStats(twoFileDiff);
+    expect(stats.files).toEqual(['src/handler.ts', 'src/api.generated.ts']);
+    expect(stats.additions).toBe(4);
+    expect(stats.deletions).toBe(1);
+  });
+
+  it('reflects the filter: stats of a filtered diff omit the excluded file entirely', () => {
+    // The E2E-77 regression: raw PR totals counted excluded files as scanned.
+    const { filteredDiff } = filterDiff(twoFileDiff, ['**/*.generated.ts']);
+    const stats = computeDiffStats(filteredDiff);
+    expect(stats.files).toEqual(['src/handler.ts']);
+    expect(stats.additions).toBe(2);
+    expect(stats.deletions).toBe(1);
+  });
+
+  it('a fully-excluded diff yields zero everything (77b: no more "2 files scanned")', () => {
+    const { filteredDiff } = filterDiff(twoFileDiff, ['**/*.ts']);
+    expect(computeDiffStats(filteredDiff)).toEqual({ files: [], additions: 0, deletions: 0 });
+  });
+
+  it('handles empty input and binary-file sections', () => {
+    expect(computeDiffStats('')).toEqual({ files: [], additions: 0, deletions: 0 });
+    const binary = 'diff --git a/logo.png b/logo.png\nindex 111..222 100644\nBinary files a/logo.png and b/logo.png differ\n';
+    expect(computeDiffStats(binary)).toEqual({ files: ['logo.png'], additions: 0, deletions: 0 });
   });
 });

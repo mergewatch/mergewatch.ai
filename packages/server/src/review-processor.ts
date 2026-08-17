@@ -2,7 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
-  formatReviewComment, countBlockingCriticals, isThrottleError, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
+  formatReviewComment, countBlockingCriticals, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
@@ -692,11 +692,14 @@ export async function processReviewJob(
 
     const durationMs = Date.now() - startTime;
 
-    // Build work-done section from PR context stats
+    // Build work-done section from the FILTERED diff (#358) — the tallies
+    // must describe what the agents actually reviewed. Raw PR totals counted
+    // excludePatterns-removed files as "scanned".
+    const diffStats = computeDiffStats(filteredDiff);
     const workDone = buildWorkDoneSection(
-      prContext.files,
-      prContext.totalAdditions,
-      prContext.totalDeletions,
+      diffStats.files,
+      diffStats.additions,
+      diffStats.deletions,
       result.enabledAgentCount,
     );
 

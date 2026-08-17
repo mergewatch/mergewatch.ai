@@ -241,7 +241,8 @@ export type { AgentKind, ClassificationResult } from './agent-detection.js';
 export { isBotActor } from './bot-actor.js';
 
 // ─── Diff filtering ─────────────────────────────────────────────────────────
-export { filterDiff, extractChangedLines, isLineNearChange } from './diff-filter.js';
+export { filterDiff, extractChangedLines, isLineNearChange, computeDiffStats } from './diff-filter.js';
+export type { DiffStats } from './diff-filter.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type {
