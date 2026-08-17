@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -440,5 +440,61 @@ describe('buildWorkDoneSection', () => {
       3,
     );
     expect(result.hasDependencyFiles).toBe(false);
+  });
+});
+
+// ─── #240 — all-clear vs unverified concerns coherence ───────────────────────
+
+describe('formatReviewComment — unverified-only criticals (#240)', () => {
+  const unverifiedCritical = () => makeFinding({ verification: 'unverified', title: 'Possible race in cache' });
+
+  it('never shows "All clear!" alongside an "Unverified concerns" section', () => {
+    const result = formatReviewComment(baseOptions({ findings: [unverifiedCritical()] }));
+    expect(result).toContain('Unverified concerns (1)');
+    expect(result).not.toContain('All clear!');
+    expect(result).toContain('No blocking issues — see unverified concerns below.');
+  });
+
+  it('uses the advisory line even when allClearMessage is disabled', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [unverifiedCritical()],
+      ux: { allClearMessage: false },
+    }));
+    expect(result).not.toContain('looking good');
+    expect(result).toContain('No blocking issues — see unverified concerns below.');
+  });
+
+  it('keeps "All clear!" for a genuinely clean review', () => {
+    const result = formatReviewComment(baseOptions());
+    expect(result).toContain('All clear!');
+    expect(result).not.toContain('No blocking issues');
+  });
+
+  it('keeps "All clear!" when only info findings exist (no unverified criticals)', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'info', title: 'Nit' })],
+    }));
+    expect(result).toContain('All clear!');
+  });
+
+  it('a verified critical still renders the attention table, never all-clear', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ verification: 'verified' })],
+    }));
+    expect(result).toContain('Requires your attention');
+    expect(result).not.toContain('All clear!');
+  });
+});
+
+describe('countBlockingCriticals (#240)', () => {
+  it('excludes unverified criticals and counts the rest', () => {
+    expect(countBlockingCriticals([])).toBe(0);
+    expect(countBlockingCriticals([makeFinding({ verification: 'unverified' })])).toBe(0);
+    expect(countBlockingCriticals([
+      makeFinding({ verification: 'unverified' }),
+      makeFinding({ verification: 'verified' }),
+      makeFinding({}), // no verification field — pre-W2 record, counts as blocking
+      makeFinding({ severity: 'warning' }),
+    ])).toBe(2);
   });
 });

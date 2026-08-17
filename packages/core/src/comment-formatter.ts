@@ -38,6 +38,23 @@ export interface WorkDoneSection {
   hasDependencyFiles: boolean;
 }
 
+/**
+ * #240 — criticals that may legitimately block a PR: severity 'critical' AND
+ * not tagged `verification: 'unverified'` by the W2 pass. The W7 score clamp
+ * and FP-L rendering already treat unverified criticals as advisory; this is
+ * the shared count both runtimes use for the check-run conclusion so the
+ * check can never fail on a critical the score refuses to block on. A
+ * finding with no `verification` field is a pre-W2 record and counts as
+ * blocking (unchanged behavior).
+ */
+export function countBlockingCriticals(
+  findings: ReadonlyArray<Pick<Finding, 'severity' | 'verification'>>,
+): number {
+  return findings.filter(
+    (f) => f.severity === 'critical' && f.verification !== 'unverified',
+  ).length;
+}
+
 interface FormatOptions {
   /** Markdown summary text from the summary agent */
   summary: string;
@@ -342,6 +359,27 @@ export function formatReviewComment(options: FormatOptions): string {
     lines.push('');
   }
 
+  // #240 — computed up front so the all-clear branches below can defer to
+  // the "Unverified concerns" section instead of contradicting it.
+  const unverifiedCriticalCount = findings.filter(
+    (f) => f.severity === 'critical' && f.verification === 'unverified',
+  ).length;
+
+  // #240 — the all-clear celebration is only honest when nothing below will
+  // render an unverified-concerns section. With unverified criticals present
+  // the score is W7-clamped to advisory, so say that instead.
+  const pushAllClearOrAdvisory = () => {
+    if (unverifiedCriticalCount > 0) {
+      lines.push('No blocking issues \u2014 see unverified concerns below.');
+      lines.push('');
+    } else if (ux?.allClearMessage !== false) {
+      lines.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
+      lines.push('');
+    } else {
+      lines.push('No issues found \u2014 looking good! \u2705');
+    }
+  };
+
   // 7. Action items — critical + warning findings as checkboxes (single appearance)
   // FP-L — unverified criticals are excluded from the action-items table. They
   // render below under "Unverified concerns" instead, so the top-of-comment
@@ -355,12 +393,7 @@ export function formatReviewComment(options: FormatOptions): string {
   const infoFindings = grouped.get('info') ?? [];
 
   if (findings.length === 0) {
-    if (ux?.allClearMessage !== false) {
-      lines.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
-      lines.push('');
-    } else {
-      lines.push('No issues found \u2014 looking good! \u2705');
-    }
+    pushAllClearOrAdvisory();
   } else if (!showIssuesTable) {
     lines.push(`${findings.length} issue${findings.length !== 1 ? 's' : ''} found.`);
   } else if (actionFindings.length > 0) {
@@ -375,13 +408,9 @@ export function formatReviewComment(options: FormatOptions): string {
     }
     lines.push('');
   } else {
-    // Only info findings — show "all clear" for action items
-    if (ux?.allClearMessage !== false) {
-      lines.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
-      lines.push('');
-    } else {
-      lines.push('No issues found \u2014 looking good! \u2705');
-    }
+    // No action items (info-only, or #240: only unverified criticals) —
+    // all-clear, unless unverified concerns render below.
+    pushAllClearOrAdvisory();
   }
 
   // 8. Detailed findings — critical uncollapsed, warning/info collapsed

@@ -2,7 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
-  formatReviewComment, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
+  formatReviewComment, countBlockingCriticals, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
@@ -946,10 +946,17 @@ export async function processReviewJob(
 
     // Create structured check run (matches Lambda pattern). #235 — a blocking
     // org agent fails the check too, even if (hypothetically) nothing else did.
-    const hasCritical = criticalCount > 0;
+    // #240 — only VERIFIED criticals fail the check. Unverified ones are
+    // advisory everywhere else (W7 clamps the score, FP-L renders them under
+    // "Unverified concerns"); the check must agree instead of going red on a
+    // critical the review event refuses to block on.
+    const blockingCriticalCount = countBlockingCriticals(result.findings);
+    const unverifiedCriticalCount = criticalCount - blockingCriticalCount;
+    const hasCritical = blockingCriticalCount > 0;
     const checkConclusion = (hasCritical || orgBlocked) ? 'failure' as const : 'success' as const;
     const findingSummaryParts: string[] = [];
-    if (criticalCount) findingSummaryParts.push(`${criticalCount} critical`);
+    if (blockingCriticalCount) findingSummaryParts.push(`${blockingCriticalCount} critical`);
+    if (unverifiedCriticalCount) findingSummaryParts.push(`${unverifiedCriticalCount} unverified`);
     if (warningCount) findingSummaryParts.push(`${warningCount} warning`);
     if (infoCount) findingSummaryParts.push(`${infoCount} info`);
     if (orgBlocked) findingSummaryParts.push(`blocked by org agent: ${orgBlockedBy.join(', ')}`);
@@ -960,9 +967,9 @@ export async function processReviewJob(
       title: orgBlocked
         ? `Blocked by org agent: ${orgBlockedBy.join(', ')}`
         : hasCritical
-          ? `${criticalCount} critical issue${criticalCount > 1 ? 's' : ''} found`
+          ? `${blockingCriticalCount} critical issue${blockingCriticalCount > 1 ? 's' : ''} found`
           : result.findings.length > 0
-            ? `${result.findings.length} finding${result.findings.length > 1 ? 's' : ''} (no critical)`
+            ? `${result.findings.length} finding${result.findings.length > 1 ? 's' : ''} (no blocking critical)`
             : 'No issues found',
       summary: findingSummaryParts.length > 0
         ? `Found: ${findingSummaryParts.join(', ')}`
