@@ -681,19 +681,25 @@ describe('submitPRReview body handling (W6)', () => {
     expect(calls[0].event).toBe('APPROVE');
   });
 
-  it('REQUEST_CHANGES with empty body → HTML-comment stub (GitHub requires body for this event)', async () => {
+  it('REQUEST_CHANGES with empty body → marker + one-line critical pointer (#356)', async () => {
+    // The original HTML-comment-only stub rendered as an EMPTY review body
+    // in the GitHub UI (HTML comments are stripped) — E2E-03's failure mode.
     const { octokit, calls } = captureCall();
     await submitPRReview(octokit, 'o', 'r', 1, '', 'REQUEST_CHANGES');
     expect(calls).toHaveLength(1);
-    expect(calls[0].body).toBe('<!-- mergewatch-review -->');
+    expect(calls[0].body).toBe(
+      '<!-- mergewatch-review -->\n🔴 Critical issues found — see the full review in the summary comment above.',
+    );
     expect(calls[0].event).toBe('REQUEST_CHANGES');
   });
 
-  it('COMMENT with empty body → HTML-comment stub (GitHub requires body for this event)', async () => {
+  it('COMMENT with empty body → marker + one-line feedback pointer (#356)', async () => {
     const { octokit, calls } = captureCall();
     await submitPRReview(octokit, 'o', 'r', 1, '', 'COMMENT');
     expect(calls).toHaveLength(1);
-    expect(calls[0].body).toBe('<!-- mergewatch-review -->');
+    expect(calls[0].body).toBe(
+      '<!-- mergewatch-review -->\n📝 Review feedback — see the full review in the summary comment above.',
+    );
     expect(calls[0].event).toBe('COMMENT');
   });
 
@@ -709,7 +715,7 @@ describe('submitPRReview body handling (W6)', () => {
     await submitPRReview(octokit, 'o', 'r', 1, '   \n\t  ', 'APPROVE');
     await submitPRReview(octokit, 'o', 'r', 1, '   ', 'REQUEST_CHANGES');
     expect('body' in calls[0]).toBe(false);
-    expect(calls[1].body).toBe('<!-- mergewatch-review -->');
+    expect(calls[1].body).toContain('Critical issues found');
   });
 
   it('passes inline comments through unchanged, batched in one API call', async () => {
