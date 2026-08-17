@@ -91,6 +91,7 @@ import {
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe, isLapsedOssGrant } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
+import { payloadFromEvent, type ReviewAgentEvent } from './review-agent-event.js';
 
 // -- Singletons (re-used across warm invocations) ----------------------------
 
@@ -362,8 +363,11 @@ async function handleInlineReplyMode(
 // -- Lambda handler ----------------------------------------------------------
 
 export async function handler(
-  event: ReviewJobPayload,
+  rawEvent: ReviewAgentEvent,
 ): Promise<{ statusCode: number; body: string }> {
+  // #355 — jobs arrive via the SQS queue (Records-wrapped) or legacy direct
+  // invoke; normalize before anything touches the payload.
+  const event = payloadFromEvent(rawEvent);
   const { installationId, owner, repo, prNumber, mode, existingCommentId, userComment, userCommentAuthor } = event;
   const repoFullName = `${owner}/${repo}`;
 

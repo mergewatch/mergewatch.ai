@@ -16,6 +16,7 @@
     "@mergewatch/llm-bedrock": "workspace:*",
     "@aws-sdk/client-dynamodb": "^3.721.0",
     "@aws-sdk/client-lambda": "^3.721.0",
+    "@aws-sdk/client-sqs": "^3.721.0",
     "@aws-sdk/client-ssm": "^3.721.0",
     "@aws-sdk/lib-dynamodb": "^3.721.0",
     "@octokit/auth-app": "^7.1.0",
