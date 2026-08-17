@@ -95,7 +95,7 @@ describe('PostgresReviewStore source + agentKind round-trip', () => {
 describe('PostgresReviewStore.claimReview (#355)', () => {
   it("includes 'pending' in the retriable claim set so a parked throttled review can be re-claimed", async () => {
     // claimReview goes through raw sql`` — capture the statement text.
-    const execute = vi.fn(async () => [] as unknown[]);
+    const execute = vi.fn(async (_stmt: unknown) => [] as unknown[]);
     const store = new PostgresReviewStore({ execute } as any);
     await store.claimReview({
       repoFullName: 'octo/repo',
