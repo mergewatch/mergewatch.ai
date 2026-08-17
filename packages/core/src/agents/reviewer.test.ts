@@ -1141,6 +1141,94 @@ describe('runReviewPipeline', () => {
     expect(result.mergeScoreReason).toContain('no new criticals');
   });
 
+  // ─── #310 — minSeverity threshold filter ─────────────────────────────────
+
+  /**
+   * Orchestrator returns one finding per severity tier, all on a changed line
+   * (line 3 of sampleDiff) with distinct titles/descriptions so the W10
+   * clustering step cannot merge them. Shared by the threshold tests below.
+   */
+  function mixedSeverityResponses(): string[] {
+    const mixedFindings = [
+      { file: 'foo.ts', line: 3, severity: 'info',     category: 'style',    title: 'Rename variable',     description: 'Cosmetic naming.',    suggestion: '…' },
+      { file: 'foo.ts', line: 3, severity: 'warning',  category: 'bug',      title: 'Possible race',       description: 'Concurrent access.',  suggestion: '…' },
+      { file: 'foo.ts', line: 3, severity: 'critical', category: 'security', title: 'Credential exposure', description: 'Secret in payload.',  suggestion: '…' },
+    ];
+    const emptyAgent = JSON.stringify({ findings: [] });
+    const summaryResponse = JSON.stringify({ summary: 'Refactor.' });
+    const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+    const orchestratorResponse = JSON.stringify({
+      findings: mixedFindings,
+      mergeScore: 2,
+      mergeScoreReason: 'Critical present.',
+    });
+    return [
+      // The security agent emits the raw findings so `totalRawFindings` is
+      // non-zero and the suppression math can register the dropped tiers.
+      JSON.stringify({ findings: mixedFindings }),
+      emptyAgent, emptyAgent, emptyAgent, emptyAgent, emptyAgent,
+      summaryResponse, diagramResponse, orchestratorResponse,
+    ];
+  }
+
+  function pipelineOptions(minSeverity?: 'info' | 'warning' | 'critical'): ReviewPipelineOptions {
+    return {
+      diff: sampleDiff,
+      context: sampleContext,
+      modelId: 'heavy-model',
+      lightModelId: 'light-model',
+      maxFindings: 25,
+      enabledAgents: allAgentsEnabled,
+      // Forces the orchestrator to run even though the agent responses are
+      // empty — same trick as the mergeScore-reconciliation tests above.
+      previousFindings: [
+        { file: 'foo.ts', line: 100, title: 'Prior note', severity: 'info' as const, category: 'style' },
+      ],
+      ...(minSeverity ? { minSeverity } : {}),
+    };
+  }
+
+  it('#310: minSeverity warning drops info findings and counts them as suppressed', async () => {
+    const llm = createMockLLM(mixedSeverityResponses());
+    const result = await runReviewPipeline(pipelineOptions('warning'), { llm });
+
+    expect(result.findings.map((f) => f.severity).sort()).toEqual(['critical', 'warning']);
+    expect(result.findings.some((f) => f.severity === 'info')).toBe(false);
+    expect(result.suppressedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('#310: minSeverity critical keeps only critical findings', async () => {
+    const llm = createMockLLM(mixedSeverityResponses());
+    const result = await runReviewPipeline(pipelineOptions('critical'), { llm });
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].severity).toBe('critical');
+  });
+
+  it('#310: the info default reports every tier (no filtering)', async () => {
+    const llm = createMockLLM(mixedSeverityResponses());
+    const result = await runReviewPipeline(pipelineOptions(), { llm });
+
+    expect(result.findings.map((f) => f.severity).sort()).toEqual(['critical', 'info', 'warning']);
+    expect(result.suppressedCount).toBe(0);
+  });
+
+  it('#310: a finding without a recognized severity is kept under a threshold (no surprise suppression)', async () => {
+    const responses = mixedSeverityResponses();
+    responses[8] = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'bogus', category: 'bug', title: 'Odd tier', description: 'Unknown severity.', suggestion: '…' },
+      ],
+      mergeScore: 3,
+      mergeScoreReason: 'One finding.',
+    });
+    const llm = createMockLLM(responses);
+    const result = await runReviewPipeline(pipelineOptions('critical'), { llm });
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe('Odd tier');
+  });
+
   it('forces mergeScore >= 3 (yellow) when net improvement: more resolved than new criticals', async () => {
     // Net improvement: 3 prior criticals resolved, but the LLM flagged 1 new
     // critical on the fix code (could be a real concern or an over-eager

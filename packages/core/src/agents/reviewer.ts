@@ -1046,6 +1046,14 @@ export interface ReviewPipelineOptions {
   lightModelId: string;
   customStyleRules?: string[];
   maxFindings: number;
+  /**
+   * #310 — minimum severity a finding needs to be reported. Findings below
+   * the threshold are dropped by a deterministic post-orchestrator filter
+   * (rolling into `suppressedCount`). Fed from `.mergewatch.yml`
+   * `minSeverity:` merged with the dashboard's severity-threshold setting.
+   * Defaults to 'info' (report everything) when absent.
+   */
+  minSeverity?: 'info' | 'warning' | 'critical';
   enabledAgents: {
     security: boolean;
     bugs: boolean;
@@ -2068,6 +2076,7 @@ export async function runReviewPipeline(
     lightModelId,
     customStyleRules = [],
     maxFindings,
+    minSeverity = 'info',
     enabledAgents,
     fileFetchOptions,
     groundingFetch,
@@ -2212,6 +2221,30 @@ export async function runReviewPipeline(
         dropped,
         dropped === 1 ? '' : 's',
         CONFIDENCE_FLOOR,
+      );
+    }
+  }
+
+  // #310 — minSeverity threshold filter. The key was documented, parsed,
+  // merged, and fed by the dashboard's severity-threshold control for months
+  // without anything reading it; this is the read. Same deterministic-post-
+  // orchestrator shape as the confidence floor above. A finding with no
+  // severity is kept (no surprise suppression), mirroring the confidence
+  // default. Drops roll into `suppressedCount` downstream.
+  if (minSeverity !== 'info') {
+    const severityRank: Record<string, number> = { info: 0, warning: 1, critical: 2 };
+    const threshold = severityRank[minSeverity];
+    const before = orchestratorResult.findings.length;
+    orchestratorResult.findings = orchestratorResult.findings.filter(
+      (f) => (severityRank[f.severity] ?? threshold) >= threshold,
+    );
+    const dropped = before - orchestratorResult.findings.length;
+    if (dropped > 0) {
+      console.warn(
+        '[min-severity] dropped %d finding%s below the %s threshold',
+        dropped,
+        dropped === 1 ? '' : 's',
+        minSeverity,
       );
     }
   }
