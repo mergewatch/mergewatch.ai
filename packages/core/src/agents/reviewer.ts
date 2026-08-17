@@ -1566,10 +1566,19 @@ export async function fetchFindingFileContents(
  * The verifier prompt asks the LLM the same question (FP-I Layer 1), but a
  * deterministic short-circuit catches the unambiguous cases without a model
  * call. Specifically: when the finding's `suggestion` field contains
- * code-shaped chunks (backticked inline OR fenced blocks) and one of those
- * chunks — after whitespace normalisation — already appears in the file
+ * code-shaped chunks (backticked inline OR fenced blocks) and EVERY such
+ * chunk — after whitespace normalisation — already appears in the file
  * within ±5 lines of the cited line, the suggestion is byte-redundant and
  * the finding must be dropped.
+ *
+ * ALL chunks, not ANY (#359): suggestions routinely QUOTE the offending
+ * code before proposing the fix — "Replace `var x = 3;` with `let x = 3;`".
+ * The quoted problem code trivially appears at the cited line (that is why
+ * it was quoted), so an any-chunk rule executed the finding on its own
+ * evidence — every convention citation in E2E-80 died this way. Under the
+ * all-chunks rule the proposal chunk fails to match and the finding
+ * survives to the LLM verdict (Layer 1), which still catches true
+ * redundancy this cheap check now skips.
  *
  * Returns `false` (cannot conclude redundant) when:
  *   • the suggestion has no code-shaped content (pure prose),
@@ -1605,14 +1614,18 @@ export function suggestionMatchesExistingCode(
   const windowText = allLines.slice(startLine, endLine).join('\n');
   const normalisedWindow = windowText.replace(/\s+/g, ' ').trim();
 
+  let qualifying = 0;
   for (const chunk of codeChunks) {
     const normalised = chunk.replace(/\s+/g, ' ').trim();
     // Too-generic chunks risk false-positive — a bare `;` would match
     // almost any file. Require ≥10 characters of non-whitespace content.
     if (normalised.length < 10) continue;
-    if (normalisedWindow.includes(normalised)) return true;
+    qualifying++;
+    // #359 — one non-matching chunk means the suggestion proposes something
+    // NOT already at the location; redundancy cannot be concluded.
+    if (!normalisedWindow.includes(normalised)) return false;
   }
-  return false;
+  return qualifying > 0;
 }
 
 export async function verifyFindings(

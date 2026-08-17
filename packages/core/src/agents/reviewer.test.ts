@@ -2952,3 +2952,50 @@ describe('reconcileMergeScore', () => {
     });
   });
 });
+
+// ─── #359 — quote-then-propose suggestions must survive FP-I L2 ─────────────
+
+describe('suggestionMatchesExistingCode — quote-then-propose (#359)', () => {
+  const baitFile = [
+    '// conventions bait',
+    'var maxRetries = 3;',      // line 2 — violates the AGENTS.md `let` rule
+    'connect(maxRetries);',
+  ].join('\n');
+
+  it('keeps a suggestion that quotes the offending code before proposing the fix (E2E-80 shape)', () => {
+    // The quoted PROBLEM chunk (`var maxRetries = 3;`) is at the cited line —
+    // that is why it was quoted. Under the old any-chunk rule this executed
+    // the finding on its own evidence.
+    expect(suggestionMatchesExistingCode(
+      'Replace `var maxRetries = 3;` with `let maxRetries = 3;` per AGENTS.md.',
+      baitFile,
+      2,
+    )).toBe(false);
+  });
+
+  it('still drops a suggestion whose only chunk already exists at the location (original #169 catch)', () => {
+    expect(suggestionMatchesExistingCode(
+      'Add a retry cap: `var maxRetries = 3;`',
+      baitFile,
+      2,
+    )).toBe(true);
+  });
+
+  it('drops when EVERY qualifying chunk is already present (multi-chunk redundancy)', () => {
+    expect(suggestionMatchesExistingCode(
+      'Ensure `var maxRetries = 3;` and then `connect(maxRetries);` are in place.',
+      baitFile,
+      2,
+    )).toBe(true);
+  });
+
+  it('short chunks below the 10-char floor neither qualify nor rescue', () => {
+    // Only qualifying chunk is the existing line → redundant, despite the
+    // short `let x;` chunk that would not match.
+    expect(suggestionMatchesExistingCode(
+      'Use `let x;` style; keep `var maxRetries = 3;` for now.',
+      baitFile,
+      2,
+    )).toBe(true);
+  });
+});
