@@ -543,6 +543,28 @@ Resources:
           AttributeType: S
         - AttributeName: prNumberCommitSha
           AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+
+      # #335 — time-ordered per-repo review listing. The base sort key
+      # (prNumberCommitSha) orders by PR-number STRING, so "newest N" walks
+      # lexicographic PR numbers ("9#…" > "42#…" > "100#…"), not time. The
+      # dashboard's listReviews queries this index descending on createdAt,
+      # and puts date-range bounds in the key condition so `Limit` applies
+      # to matching items (the base-table path filtered AFTER the read).
+      # Every review row carries createdAt (required on ReviewItem), so the
+      # index covers the full table. IAM index access is already granted
+      # (`${ReviewsTable.Arn}/index/*` below; Amplify policy covers
+      # `table/mergewatch-*/index/*`).
+      GlobalSecondaryIndexes:
+        - IndexName: ByRepoCreatedAt
+          KeySchema:
+            - AttributeName: repoFullName
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
