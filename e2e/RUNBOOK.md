@@ -213,6 +213,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 |
 | [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 |
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
+| [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 
 ---
 
@@ -3039,6 +3040,26 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 - [ ] n ≤ 19 → "—" + tooltip, no P95 bar, no fabricated number
 - [ ] n = 20 with distinct durations → p95 = second-highest value (not the maximum)
 - [ ] Average / Completed unaffected in both states
+
+---
+
+### E2E-87: #337 — Date-only range bounds include their whole day
+
+**Status:** 🚧 In review (#337) — fixture not yet run.
+
+**Behavior:** the stores filter `createdAt` by string comparison against full ISO timestamps, so a date-only bound used to misbehave at one edge (`'2026-08-16T09:31:00.000Z' <= '2026-08-16'` is false → the entire final day silently excluded). `/api/analytics` now normalizes at the boundary: date-only `start_date` expands to `T00:00:00.000Z`, date-only `end_date` to `T23:59:59.999Z`; full timestamps pass through untouched (the dashboard UI sends exact viewer-local-derived instants that must not be re-widened). Both backends receive the same expanded instants — identical by construction. Timezone decision documented in the route: date-only params and trend-bucket labels are UTC calendar days; viewer-zone bucketing deliberately deferred until edge-day attribution matters.
+
+**How to run.**
+1. Seed reviews across three consecutive days, including one mid-morning on the last day. Call `/api/analytics?end_date=<last-day>` (date-only): the last day's reviews are included in totals and trends.
+2. Same call with `end_date=<last-day>T00:00:00.000Z`: last day excluded except midnight — full timestamps are honored verbatim.
+3. `start_date=<first-day>` date-only: the whole first day is included.
+4. Repeat 1 on self-hosted (Postgres): identical totals.
+
+**Expected outcomes.**
+- [ ] Date-only `end_date` includes the whole final day; date-only `start_date` the whole first day
+- [ ] Full-timestamp bounds honored exactly, never re-widened
+- [ ] Postgres and DynamoDB return identical results for the same parameters
+- [ ] Invalid date forms are ignored (no 500, no partial filter)
 
 ---
 

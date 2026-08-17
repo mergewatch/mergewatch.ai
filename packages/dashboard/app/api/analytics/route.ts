@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { aggregateReviews } from "@/lib/analytics-aggregate";
 import { collectAllReviews, ANALYTICS_PAGE_SIZE } from "@/lib/analytics-collect";
+import { normalizeDateParam } from "@/lib/date-range";
 import {
   fetchUserInstallations,
   fetchAccessibleRepoNames,
@@ -32,12 +33,23 @@ export async function GET(req: NextRequest) {
   const installationIdParam = sp.get("installation_id");
   const repoParam = sp.get("repo") ?? undefined;
 
-  // Validate date parameters
-  const isoDateRegex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z)?$/;
-  const rawStart = sp.get("start_date");
-  const rawEnd = sp.get("end_date");
-  const startDate = rawStart && isoDateRegex.test(rawStart) ? rawStart : undefined;
-  const endDate = rawEnd && isoDateRegex.test(rawEnd) ? rawEnd : undefined;
+  // #337 — validate + normalize date parameters. The stores compare
+  // `createdAt` as strings against full ISO timestamps, so a date-only bound
+  // is expanded to the edge instant of that UTC day here at the boundary
+  // (`end_date=2026-08-16` → `…T23:59:59.999Z`); previously it silently
+  // excluded the whole final day. Both backends receive the same expanded
+  // instants, so behavior is identical by construction.
+  //
+  // Timezone decision (#337): date-only parameters mean UTC calendar days,
+  // and the trend buckets computed downstream (aggregateReviews' substring
+  // day-keys) are likewise UTC days labeled by UTC date. The dashboard UI
+  // never sends date-only values — it converts the viewer's local day range
+  // to exact instants, so its FILTER honors local days while bucket labels
+  // remain UTC. Bucketing in the viewer's zone would need a tz parameter
+  // threaded through the API; deliberately not done until edge-day
+  // attribution proves to matter in practice.
+  const startDate = normalizeDateParam(sp.get("start_date"), "start");
+  const endDate = normalizeDateParam(sp.get("end_date"), "end");
 
   try {
     const userInstallations = await fetchUserInstallations(accessToken);
