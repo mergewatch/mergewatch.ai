@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, escapeUserContent, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -539,5 +539,41 @@ describe('escapeUserContent + injection sites (#369)', () => {
   it('the default wordmark header (no custom header) is untouched', () => {
     const result = formatReviewComment(baseOptions());
     expect(result).toContain('mergewatch-wordmark.svg');
+  });
+});
+
+// ─── buildCheckTitle (#380) ─────────────────────────────────────────────────
+
+describe('buildCheckTitle', () => {
+  it('leads every title with the merge score', () => {
+    expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0 }))
+      .toBe('5/5 \u2014 No issues found');
+    expect(buildCheckTitle({ mergeScore: 3, findingCount: 1, blockingCriticalCount: 0 }))
+      .toBe('3/5 \u2014 1 finding (no blocking critical)');
+    expect(buildCheckTitle({ mergeScore: 4, findingCount: 2, blockingCriticalCount: 0 }))
+      .toBe('4/5 \u2014 2 findings (no blocking critical)');
+    expect(buildCheckTitle({ mergeScore: 1, findingCount: 2, blockingCriticalCount: 2 }))
+      .toBe('1/5 \u2014 2 critical issues found');
+  });
+
+  it('prefixes the org-blocked title too', () => {
+    expect(buildCheckTitle({
+      mergeScore: 2, findingCount: 1, blockingCriticalCount: 0,
+      orgBlocked: true, orgBlockedBy: ['sec-gate'],
+    })).toBe('2/5 \u2014 Blocked by org agent: sec-gate');
+  });
+
+  it('clamps out-of-range scores like the comment verdict does', () => {
+    expect(buildCheckTitle({ mergeScore: 7, findingCount: 0, blockingCriticalCount: 0 }))
+      .toBe('5/5 \u2014 No issues found');
+    expect(buildCheckTitle({ mergeScore: 0, findingCount: 0, blockingCriticalCount: 0 }))
+      .toBe('1/5 \u2014 No issues found');
+  });
+
+  it('falls back to the unprefixed pre-#380 title when no score exists', () => {
+    expect(buildCheckTitle({ findingCount: 0, blockingCriticalCount: 0 }))
+      .toBe('No issues found');
+    expect(buildCheckTitle({ findingCount: 1, blockingCriticalCount: 1 }))
+      .toBe('1 critical issue found');
   });
 });
