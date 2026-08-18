@@ -79,6 +79,46 @@ describe('startReviewWorker (#355)', () => {
     worker.stop();
   });
 
+  it('logs (not swallows) a queue.retry failure and frees the slot', async () => {
+    const queue = makeQueue([[{ id: '1', payload, attempts: 2 }], [{ id: '2', payload, attempts: 1 }]]);
+    vi.mocked(queue.retry).mockRejectedValueOnce(new Error('connection reset'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Only the first job throttles; the second must still get its slot.
+    const processJob = vi.fn(async () => {
+      if (vi.mocked(queue.claim).mock.calls.length === 1) {
+        throw Object.assign(new Error('x'), { status: 429 });
+      }
+    });
+    const worker = startReviewWorker(queue, processJob, { pollIntervalMs: 60_000, concurrency: 1 });
+
+    await worker.tick();
+    await flush();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('queue.retry failed'), '1', expect.any(Error));
+
+    await worker.tick(); // slot must be free again despite the retry failure
+    await flush();
+    expect(queue.complete).toHaveBeenCalledWith('2');
+    errSpy.mockRestore();
+    worker.stop();
+  });
+
+  it('logs (not swallows) a queue.kill failure', async () => {
+    const queue = makeQueue([[{ id: '9', payload, attempts: 5 }]]);
+    vi.mocked(queue.kill).mockRejectedValueOnce(new Error('connection reset'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const processJob = vi.fn(async () => {
+      throw Object.assign(new Error('x'), { status: 429 });
+    });
+    const worker = startReviewWorker(queue, processJob, { pollIntervalMs: 60_000, maxAttempts: 5 });
+
+    await worker.tick();
+    await flush();
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('queue.kill failed'), '9', expect.any(Error));
+    errSpy.mockRestore();
+    worker.stop();
+  });
+
   it('claims only the free concurrency slots', async () => {
     // Two slow jobs occupy both slots; the next tick must claim 0.
     let release!: () => void;

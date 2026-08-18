@@ -68,16 +68,22 @@ export function startReviewWorker(
             '[review-worker] job %s dead after %d throttled attempts — inspect review_jobs (status=dead)',
             job.id, job.attempts,
           );
-          await queue.kill(job.id).catch(() => {});
+          await queue.kill(job.id).catch((qErr) => {
+            console.error('[review-worker] queue.kill failed for job %s — row stays processing until lock expiry:', job.id, qErr);
+          });
         } else {
           const delay = backoffBaseSeconds * 2 ** (job.attempts - 1);
           console.warn('[review-worker] job %s throttled (attempt %d) — retrying in %ds', job.id, job.attempts, delay);
-          await queue.retry(job.id, delay).catch(() => {});
+          await queue.retry(job.id, delay).catch((qErr) => {
+            console.error('[review-worker] queue.retry failed for job %s — row stays processing until lock expiry:', job.id, qErr);
+          });
         }
       } else {
         // The processor already recorded the terminal failure (status +
         // failure check run) — delivery is complete from the queue's view.
-        await queue.complete(job.id).catch(() => {});
+        await queue.complete(job.id).catch((qErr) => {
+          console.error('[review-worker] queue.complete failed for job %s — expect a duplicate delivery at lock expiry:', job.id, qErr);
+        });
       }
     } finally {
       active--;
