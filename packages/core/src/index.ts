@@ -98,6 +98,7 @@ export {
   TONE_PLACEHOLDER,
   AGENT_MODE_SUFFIX,
   AGENT_MODE_PLACEHOLDER,
+  INTENT_CLAIMS_DIRECTIVE,
 } from './agents/prompts.js';
 
 // ─── GitHub client (portable Octokit ops) ───────────────────────────────────
