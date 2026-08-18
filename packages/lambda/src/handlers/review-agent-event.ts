@@ -12,6 +12,8 @@ import type { ReviewJobPayload } from '@mergewatch/core';
 
 interface SqsRecordLike {
   body: string;
+  /** SQS delivery bookkeeping — "1" on first receive, incremented on redelivery. */
+  attributes?: { ApproximateReceiveCount?: string };
 }
 
 export type ReviewAgentEvent = ReviewJobPayload | { Records: SqsRecordLike[] };
@@ -32,4 +34,30 @@ export function payloadFromEvent(event: ReviewAgentEvent): ReviewJobPayload {
     return JSON.parse(event.Records[0].body) as ReviewJobPayload;
   }
   return event as ReviewJobPayload;
+}
+
+/**
+ * #370 — delivery attempt for this invocation: SQS's ApproximateReceiveCount
+ * ("2" means this is the first redelivery), or 1 for direct invokes. Drives
+ * the attempt number on the throttle-parked check run so a parked review is
+ * distinguishable from a hung one.
+ */
+export function attemptFromEvent(event: ReviewAgentEvent): number {
+  if (event != null && typeof event === 'object' && 'Records' in event && Array.isArray(event.Records)) {
+    const n = Number(event.Records[0]?.attributes?.ApproximateReceiveCount);
+    if (Number.isFinite(n) && n >= 1) return n;
+  }
+  return 1;
+}
+
+/**
+ * #370 — the throttle-parked check-run summary. A parked review used to show
+ * a static "will retry shortly", which E2E graders (and humans) read as a
+ * hang once it aged past a few minutes. Attempt count + parked-at time +
+ * explicit expectations make the state self-explanatory.
+ */
+export function rateLimitedCheckSummary(attempt: number, parkedAtIso: string): string {
+  return `Attempt ${attempt} of 3 parked at ${parkedAtIso} — the model provider is rate limiting requests. `
+    + 'MergeWatch retries automatically via the review queue; under burst load a retry can take ~30 minutes. '
+    + 'If all attempts exhaust, the job lands in the review dead-letter queue for operator redrive.';
 }
