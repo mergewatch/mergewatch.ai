@@ -3080,7 +3080,7 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 
 **Expected outcomes.**
 - [ ] 57/57 PRs reviewed — zero terminal "Too many requests" failures (vs 32/57 lost in the #355 run)
-- [ ] Throttled PRs show "Review queued — rate limited" in_progress checks while waiting, then complete
+- [ ] Throttled PRs show "Review queued — rate limited (attempt N)" in_progress checks with parked-at time + retry/DLQ expectations in the summary (#370), then complete — a parked check is distinguishable from a hang at a glance
 - [ ] SaaS: review Lambda concurrency stays ≤ the event-source cap; DLQ empty at end of run
 - [ ] Self-hosted: `review_jobs` drains to `done`; no `dead` rows; a mid-burst restart loses nothing
 - [ ] A genuinely failing review (non-throttle) still fails its check exactly as before

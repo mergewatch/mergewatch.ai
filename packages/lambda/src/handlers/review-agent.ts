@@ -92,7 +92,7 @@ import {
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe, isLapsedOssGrant } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
-import { payloadFromEvent, type ReviewAgentEvent } from './review-agent-event.js';
+import { payloadFromEvent, attemptFromEvent, rateLimitedCheckSummary, type ReviewAgentEvent } from './review-agent-event.js';
 
 // -- Singletons (re-used across warm invocations) ----------------------------
 
@@ -367,8 +367,10 @@ export async function handler(
   rawEvent: ReviewAgentEvent,
 ): Promise<{ statusCode: number; body: string }> {
   // #355 — jobs arrive via the SQS queue (Records-wrapped) or legacy direct
-  // invoke; normalize before anything touches the payload.
+  // invoke; normalize before anything touches the payload. #370 — the SQS
+  // receive count numbers the throttle-parked check's attempts.
   const event = payloadFromEvent(rawEvent);
+  const deliveryAttempt = attemptFromEvent(rawEvent);
   const { installationId, owner, repo, prNumber, mode, existingCommentId, userComment, userCommentAuthor } = event;
   const repoFullName = `${owner}/${repo}`;
 
@@ -1174,8 +1176,10 @@ export async function handler(
 
       await createCheckRun(octokit, owner, repo, headSha, {
         status: 'in_progress',
-        title: 'Review queued — rate limited',
-        summary: 'The model provider is rate limiting requests. MergeWatch will retry this review shortly.',
+        title: `Review queued — rate limited (attempt ${deliveryAttempt})`,
+        // #370 — attempt + parked-at + expectations: a parked review must be
+        // distinguishable from a hung one at a glance.
+        summary: rateLimitedCheckSummary(deliveryAttempt, new Date().toISOString()),
       }).catch((checkErr) => {
         console.error('Failed to post rate-limited check run:', checkErr);
       });
