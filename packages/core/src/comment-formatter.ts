@@ -39,6 +39,29 @@ export interface WorkDoneSection {
 }
 
 /**
+ * #369 — render repo/installation-controlled text as LITERAL text.
+ *
+ * `ux.commentHeader` (from `.mergewatch.yml` — anyone with repo write
+ * access) and the dashboard's comment header/footer setting are injected
+ * into every review comment the bot posts. Unescaped, they are an
+ * org-wide markdown/HTML injection surface (live headings, links, <img>
+ * tags — the E2E-79 payload). HTML metacharacters become entities and
+ * markdown-active punctuation is backslash-escaped, so GitHub renders
+ * exactly the characters the author typed, styling none of them.
+ */
+export function escapeUserContent(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Backslash-escape markdown punctuation. Valid CommonMark: an escaped
+    // punctuation char renders as the bare char. Covers headings (#),
+    // emphasis (*_~), code (`), links/images ([]()!), tables (|), block
+    // quotes handled via > above, and list/rule starters (+-.).
+    .replace(/[\\`*_{}[\]()#+\-.!|~=]/g, '\\$&');
+}
+
+/**
  * #240 — criticals that may legitimately block a PR: severity 'critical' AND
  * not tagged `verification: 'unverified'` by the W2 pass. The W7 score clamp
  * and FP-L rendering already treat unverified criticals as advisory; this is
@@ -280,7 +303,8 @@ export function formatReviewComment(options: FormatOptions): string {
 
   // 1. Header — custom or default logo wordmark
   if (ux?.commentHeader) {
-    lines.push(ux.commentHeader);
+    // #369 — repo-controlled: renders as literal text, never live markup.
+    lines.push(escapeUserContent(ux.commentHeader));
   } else {
     lines.push('<img src="https://raw.githubusercontent.com/mergewatch/mergewatch.ai/main/assets/mergewatch-wordmark.svg" alt="mergewatch" height="48" />');
   }
@@ -561,7 +585,8 @@ export function formatReviewComment(options: FormatOptions): string {
     footerParts.push(`[View full details](${reviewDetailUrl})`);
   }
   if (commentFooter) {
-    footerParts.push(commentFooter);
+    // #369 — installation-controlled: same escaping contract as the header.
+    footerParts.push(escapeUserContent(commentFooter));
   }
   if (footerParts.length > 0) {
     lines.push(`<sub>${footerParts.join(' \u00B7 ')}</sub>`);
