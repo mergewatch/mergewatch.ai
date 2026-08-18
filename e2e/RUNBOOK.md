@@ -162,7 +162,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
-| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Repos with detected linters (eslint / ruff / clippy / biome) get a stricter STYLE_REVIEWER_PROMPT that defers lint-equivalent findings (FP-G) | 2m | 60s | FP-G |
+| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Lint-equivalent nits (semicolons, import order) are NEVER bot findings — the style prompt's anti-noise hard list excludes them unconditionally (#376 decision); `detectLinters` still injects the reinforcing directive when linters exist; the style agent stays alive for concrete-impact findings | 2m | 60s | FP-G, #376 |
 | [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
@@ -1498,38 +1498,28 @@ Branch: `fixture/35-inline-resolve`. Two-commit sequence:
 
 ### E2E-36: FP-G — linter-aware style agent
 
-**Status:** ✅ SHIPPED. See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--shipped).
+**Status:** ✅ SHIPPED, contract revised per the **#376 decision (Option 1)**. See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--shipped).
 
-**Behavior:** `detectLinters` (in `packages/core/src/config/conventions.ts`) runs in parallel with `fetchConventions` on both handlers. It performs a single root-listing GitHub API call (`repos.getContent` with `path: ''`), matches the returned entries against the marker tables for `eslint` / `biome` / `ruff` / `flake8` / `clippy` / `golangci` / `stylelint`, and (when `pyproject.toml` is present without a `ruff.toml` already matching) does one extra fetch to inspect for a `[tool.ruff]` (or `[tool.ruff.lint]`, etc.) section. The detected set is sorted lexicographically and passed into `ReviewPipelineOptions.detectedLinters`, which threads through to `runStyleAgent`. `STYLE_REVIEWER_PROMPT` has a new `LINTER_AWARE_PLACEHOLDER` (`{{LINTERS_DETECTED}}`) — `buildLinterAwareDirective` renders a directive listing the linters and telling the model to defer formatting / lint-equivalent findings (semicolons, quote style, import order, unused imports, prefer-const, no-var, eqeqeq, etc.). Code-smell and architecture findings (god functions, deep nesting, duplicate logic, misleading names, perf anti-patterns) stay in scope.
+**Behavior (revised):** `STYLE_REVIEWER_PROMPT`'s anti-noise hard list ("DO NOT report … regardless of confidence") excludes lint-equivalent nits **unconditionally** — semicolons/formatting, import ordering, and anything a linter would enforce are never bot findings, linter or no linter. That supersedes FP-G's original arm-differentiation: the linter-aware directive (`detectLinters` root-listing → `buildLinterAwareDirective`) still injects when linters are detected, but is reinforcement of the base list, not the deciding mechanism. The style agent's remaining in-scope set is deliberately narrow: performance anti-patterns with concrete impact, actively misleading names, incorrect TypeScript types, and bug-prone duplication. Structural preferences (god functions, deep nesting, magic numbers) are also on the hard list and are NOT findings.
 
-The directive is **style-agent-specific** — the security, bug, error-handling, and test-coverage agents are unaffected. Best-effort: any API error in `detectLinters` returns `[]` (caught + logged), so the prompt falls back to its pre-FP-G shape with the placeholder stripped.
+The directive remains **style-agent-specific** — security, bug, error-handling, and test-coverage agents are unaffected. Best-effort: any `detectLinters` API error returns `[]` (caught + logged) and the placeholder is stripped.
 
 **Setup**
 
-Branch: `fixture/36-linter-aware`. Two micro-fixtures, one per "linter present / absent":
+Branch: `fixture/36-linter-aware`. Two arms (linter present / absent) sharing a diff that plants (a) lint-equivalent nits AND (b) one finding from the in-scope set (e.g. an actively-misleading function name or a concrete-impact perf anti-pattern) as the aliveness control.
 
-- **Linter-present fixture**: a PR in a repo that has `eslint.config.mjs` at the root. The diff introduces missing-semicolon or unused-import style violations — things eslint catches.
-- **No-linter fixture**: same diff, but the eslint config is removed. The style agent should still report.
+**Expected outcomes — BOTH arms (identical by design)**
 
-**Expected outcomes — linter-present**
-
-- [x] The style agent prompt (visible in agent logs / dashboard "view full details") includes the `LINTER_AWARE_DIRECTIVE` block listing `eslint`
-- [x] Agent log includes `[fp-g] detected linters: eslint`
-- [x] The rendered comment has **no** semicolon / unused-import / formatting-style findings — the style agent deferred to the (assumed) linter
-- [x] Code-smell findings (god functions, deep nesting, magic numbers) DO still appear — only lint-equivalent ones are deferred
-
-**Expected outcomes — no-linter**
-
-- [x] No `LINTER_AWARE_DIRECTIVE` in the prompt (placeholder stripped)
-- [x] No `[fp-g] detected linters:` log line emitted
-- [x] Style findings (including lint-equivalent ones) are emitted as before
-- [x] **Regression check**: the security / bug / error-handling / test-coverage agent prompts are byte-identical regardless of linter detection (style-only injection)
+- [ ] **No** semicolon / unused-import / formatting / import-order findings in either arm — the hard list, not linter detection, is the mechanism
+- [ ] The in-scope control finding (misleading name / concrete-impact perf) **does** appear in both arms — proves the style agent is alive, not over-suppressed
+- [ ] Linter-present arm only: prompt includes the `LINTER_AWARE_DIRECTIVE` block and the `[fp-g] detected linters:` log line; no-linter arm: placeholder stripped, no log line
+- [ ] Regression check: security / bug / error-handling / test-coverage prompts byte-identical regardless of linter detection
 
 **Failure modes**
-- ❌ Linter-present repo still gets *"missing semicolon"* / *"unused import"* findings
-- ❌ Code-smell findings (god functions, nesting) are also suppressed (over-defer — only lint-equivalent should defer)
-- ❌ Detection false-positive: a `.eslintrc.json` in a `node_modules/` subdirectory triggers the directive (the scan must be repo-root only — confirmed by reading `path: ''` from the root only, not recursive)
-- ❌ A `pyproject.toml` without `[tool.ruff]` triggers `ruff` (regex must require the explicit table header)
+- ❌ Lint-equivalent nits appear in either arm (the hard list stopped being honored)
+- ❌ The in-scope control finding is missing in either arm (over-suppression — the agent is dead, not restrained; this is what separates #376's intended behavior from a real defect)
+- ❌ Detection false-positive: a linter config outside the repo root triggers the directive (scan is root-only)
+- ❌ A `pyproject.toml` without `[tool.ruff]` triggers `ruff`
 
 ---
 
