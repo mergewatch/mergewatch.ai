@@ -916,6 +916,14 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     if (typeof parsed.minSeverity === 'string' && ['info', 'warning', 'critical'].includes(parsed.minSeverity)) {
       config.minSeverity = parsed.minSeverity as 'info' | 'warning' | 'critical';
     }
+    // FP-A floor override — only a sane 1-100 number is accepted; anything
+    // else keeps the default (75) rather than silently disabling the filter.
+    if (
+      typeof parsed.minConfidence === 'number' && Number.isFinite(parsed.minConfidence)
+      && parsed.minConfidence >= 1 && parsed.minConfidence <= 100
+    ) {
+      config.minConfidence = parsed.minConfidence;
+    }
     if (typeof parsed.maxFindings === 'number') config.maxFindings = parsed.maxFindings;
     if (typeof parsed.postSummaryOnClean === 'boolean') config.postSummaryOnClean = parsed.postSummaryOnClean;
     if (typeof parsed.conventions === 'string' && parsed.conventions.trim()) {

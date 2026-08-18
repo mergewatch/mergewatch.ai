@@ -12,6 +12,7 @@ import {
   TONE_DIRECTIVES,
   TONE_PLACEHOLDER,
   CUSTOM_AGENT_RESPONSE_FORMAT,
+  applyConfidenceFloor,
 } from './prompts.js';
 
 // ─── Prompt constants are non-empty strings ─────────────────────────────────
@@ -221,5 +222,39 @@ describe('ORCHESTRATOR_PROMPT — anti-pedantry pass', () => {
 
   it('explicitly argues for fewer-but-substantive findings over a longer list with nits', () => {
     expect(ORCHESTRATOR_PROMPT).toMatch(/0-3 substantive findings beats a 6-finding review with 4 nits/i);
+  });
+});
+
+// ─── applyConfidenceFloor (configurable FP-A floor) ─────────────────────────
+
+describe('applyConfidenceFloor', () => {
+  it('returns the prompt unchanged at the default floor (75)', () => {
+    expect(applyConfidenceFloor(ORCHESTRATOR_PROMPT, 75)).toBe(ORCHESTRATOR_PROMPT);
+    expect(applyConfidenceFloor(SECURITY_REVIEWER_PROMPT, 75)).toBe(SECURITY_REVIEWER_PROMPT);
+  });
+
+  it('rewrites the agent self-filter rule to the configured floor', () => {
+    const rewritten = applyConfidenceFloor(SECURITY_REVIEWER_PROMPT, 50);
+    expect(rewritten).toContain('If you are less than 50% confident');
+    expect(rewritten).not.toContain('If you are less than 75% confident');
+  });
+
+  it('rewrites the orchestrator drop rule to the configured floor', () => {
+    const rewritten = applyConfidenceFloor(ORCHESTRATOR_PROMPT, 90);
+    expect(rewritten).toContain('Drop any finding with confidence below 90.');
+    expect(rewritten).not.toContain('Drop any finding with confidence below 75.');
+  });
+
+  it('leaves prompts without the targeted sentences untouched', () => {
+    const noRules = 'Summarise what changed on the latest commit.';
+    expect(applyConfidenceFloor(noRules, 50)).toBe(noRules);
+  });
+
+  // Aliveness tripwire: applyConfidenceFloor targets these EXACT sentences.
+  // If a prompt rewording changes them, the floor override silently stops
+  // working — this test makes that failure loud instead.
+  it('aliveness — the exact source sentences still exist in the prompts', () => {
+    expect(SECURITY_REVIEWER_PROMPT).toContain('If you are less than 75% confident');
+    expect(ORCHESTRATOR_PROMPT).toContain('Drop any finding with confidence below 75.');
   });
 });

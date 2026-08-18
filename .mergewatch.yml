@@ -55,6 +55,10 @@ excludePatterns:
 # Minimum severity to report: info | warning | critical
 minSeverity: info
 
+# Minimum self-reported confidence (1-100) a finding needs to be reported.
+# Lower to see more speculative findings; raise for near-certain defects only.
+minConfidence: 75
+
 # Maximum findings posted per review.
 maxFindings: 25
 

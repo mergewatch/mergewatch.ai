@@ -273,6 +273,20 @@ describe('parseRepoConfigYaml', () => {
     expect(result?.model).toBeUndefined();
   });
 
+  it('parses a valid minConfidence (FP-A floor override)', () => {
+    expect(parseRepoConfigYaml('minConfidence: 50')?.minConfidence).toBe(50);
+    expect(parseRepoConfigYaml('minConfidence: 100')?.minConfidence).toBe(100);
+    expect(parseRepoConfigYaml('minConfidence: 1')?.minConfidence).toBe(1);
+  });
+
+  it('ignores out-of-range or non-numeric minConfidence (keeps the default downstream)', () => {
+    expect(parseRepoConfigYaml('minConfidence: 0')?.minConfidence).toBeUndefined();
+    expect(parseRepoConfigYaml('minConfidence: 150')?.minConfidence).toBeUndefined();
+    expect(parseRepoConfigYaml('minConfidence: -5')?.minConfidence).toBeUndefined();
+    expect(parseRepoConfigYaml('minConfidence: "80"')?.minConfidence).toBeUndefined();
+    expect(parseRepoConfigYaml('minConfidence: high')?.minConfidence).toBeUndefined();
+  });
+
   it('parses a valid pricing override (#231)', () => {
     const yaml = `
 pricing:
