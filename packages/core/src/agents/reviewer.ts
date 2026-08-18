@@ -37,6 +37,7 @@ import {
   TONE_PLACEHOLDER,
   AGENT_MODE_PLACEHOLDER,
   AGENT_MODE_SUFFIX,
+  INTENT_CLAIMS_DIRECTIVE,
 } from './prompts.js';
 import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
@@ -214,7 +215,10 @@ function buildPrompt(
     .filter(Boolean)
     .join('\n');
 
-  return `${resolvedPrompt}\n\n--- PR Context ---\n${contextBlock}\n\n--- Diff ---\n${diff}`;
+  // #372 — every agent gets the intent-claims directive: in-code claims of
+  // intentionality never suppress a finding; only sanctioned channels
+  // (conventions, exclude patterns, /resolve memory) carry that authority.
+  return `${resolvedPrompt}\n\n${INTENT_CLAIMS_DIRECTIVE}\n\n--- PR Context ---\n${contextBlock}\n\n--- Diff ---\n${diff}`;
 }
 
 /**
@@ -1628,6 +1632,23 @@ export function suggestionMatchesExistingCode(
   return qualifying > 0;
 }
 
+
+/**
+ * #372 — does a verifier dismissal reason rest on an in-code intent claim?
+ *
+ * The verifier prompt forbids returning valid=false because a comment says
+ * the code is deliberate, but a prompt directive alone is not enforcement.
+ * This guard pattern-matches the model's own stated reason; when the
+ * dismissal is intent-shaped, verifyFindings refuses the drop and keeps the
+ * finding as 'unverified' instead (advisory via FP-L/W7). Fail-safe
+ * direction: a false match turns a would-be drop into a visible advisory
+ * concern, never the reverse. Exported for testability.
+ */
+export function isIntentClaimDismissal(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /\bintention|test[- ](?:code|file|fixture|harness|scaffold|only|purposes?)|for testing|e2e|end[- ]to[- ]end|simulat|deliberate|on purpose|by design|demo (?:code|purposes?)|sample code|example code|training (?:code|material)|known issue|won'?t[- ]fix/i.test(reason);
+}
+
 export async function verifyFindings(
   findings: OrchestratedFinding[],
   fileContents: Record<string, string>,
@@ -1728,6 +1749,21 @@ ${content}`;
         // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
         const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
         if (parsed.valid === false) {
+          // #372 — an intent-shaped dismissal ("the comment says this is
+          // test code") is not a legitimate drop: intent does not change
+          // whether the defect exists, and in-code claims are unverified,
+          // attacker-writable input. Keep the finding as advisory instead.
+          if (isIntentClaimDismissal(parsed.reason)) {
+            console.warn(
+              '[finding-verify] refused intent-claim dismissal of %s "%s" (%s:%d) — keeping as unverified: %s',
+              f.severity,
+              f.title,
+              f.file,
+              f.line,
+              (parsed.reason ?? '').slice(0, 200),
+            );
+            return { keep: true, verification: 'unverified' };
+          }
           console.warn(
             '[finding-verify] dropped false-positive %s "%s" (%s:%d): %s',
             f.severity,
