@@ -134,7 +134,7 @@ export {
 export type { ReviewThreadComment } from './github/client.js';
 
 // ─── Comment formatter ──────────────────────────────────────────────────────
-export { formatReviewComment, buildWorkDoneSection, countBlockingCriticals } from './comment-formatter.js';
+export { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, escapeUserContent } from './comment-formatter.js';
 export type { Finding, WorkDoneSection } from './comment-formatter.js';
 
 // ─── Review delta ────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, escapeUserContent, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -496,5 +496,48 @@ describe('countBlockingCriticals (#240)', () => {
       makeFinding({}), // no verification field — pre-W2 record, counts as blocking
       makeFinding({ severity: 'warning' }),
     ])).toBe(2);
+  });
+});
+
+// ─── #369 — commentHeader/footer injection is escaped ────────────────────────
+
+describe('escapeUserContent + injection sites (#369)', () => {
+  const payload = '# Acme Review Bot <img src=x onerror=alert(1)> [click](https://example.com/pwn) **bold**';
+
+  it('neutralizes HTML and markdown in the escape helper', () => {
+    const out = escapeUserContent(payload);
+    expect(out).not.toContain('<img');
+    expect(out).toContain('&lt;img');
+    expect(out).toContain('\\[click\\]');
+    expect(out).toContain('\\*\\*bold\\*\\*');
+    expect(out.startsWith('\\#')).toBe(true);
+  });
+
+  it('renders ux.commentHeader as literal text — the E2E-79 payload is inert', () => {
+    const result = formatReviewComment(baseOptions({ ux: { commentHeader: payload } }));
+    expect(result).not.toContain('<img src=x');
+    expect(result).not.toContain('[click](https://example.com/pwn)');
+    expect(result).not.toMatch(/^# Acme Review Bot/m);
+    expect(result).toContain('&lt;img');
+  });
+
+  it('renders the dashboard commentFooter through the same contract', () => {
+    const result = formatReviewComment(baseOptions({ commentFooter: payload }));
+    expect(result).not.toContain('<img src=x');
+    expect(result).not.toContain('[click](https://example.com/pwn)');
+  });
+
+  it('plain-text headers and footers remain visually intact', () => {
+    const result = formatReviewComment(baseOptions({
+      ux: { commentHeader: 'Acme Internal Review' },
+      commentFooter: 'Powered by ACME Corp',
+    }));
+    expect(result).toContain('Acme Internal Review');
+    expect(result).toContain('Powered by ACME Corp');
+  });
+
+  it('the default wordmark header (no custom header) is untouched', () => {
+    const result = formatReviewComment(baseOptions());
+    expect(result).toContain('mergewatch-wordmark.svg');
   });
 });
