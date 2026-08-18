@@ -38,6 +38,7 @@ import {
   AGENT_MODE_PLACEHOLDER,
   AGENT_MODE_SUFFIX,
   INTENT_CLAIMS_DIRECTIVE,
+  applyConfidenceFloor,
 } from './prompts.js';
 import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
@@ -1058,6 +1059,13 @@ export interface ReviewPipelineOptions {
    * Defaults to 'info' (report everything) when absent.
    */
   minSeverity?: 'info' | 'warning' | 'critical';
+  /**
+   * Minimum self-reported confidence (1-100) a finding needs to survive the
+   * FP-A floor filter. Fed from `.mergewatch.yml` `minConfidence:`; defaults
+   * to CONFIDENCE_FLOOR (75) when absent, so unset configs see no change.
+   * Findings with no `confidence` field are always kept.
+   */
+  minConfidence?: number;
   /**
    * #350 — output-token cap applied to every LLM invocation this pipeline
    * makes (agents, summary, diagram, orchestrator, verification). A call
@@ -2135,6 +2143,7 @@ export async function runReviewPipeline(
     customStyleRules = [],
     maxFindings,
     minSeverity = 'info',
+    minConfidence = CONFIDENCE_FLOOR,
     maxTokensPerAgent,
     enabledAgents,
     fileFetchOptions,
@@ -2157,9 +2166,18 @@ export async function runReviewPipeline(
   // invocation in this pipeline (same decorator pattern as the tracking
   // wrapper above). Call sites that pass an explicit maxTokens keep it;
   // when unset, providers fall back to their built-in 4096 as before.
-  const llm: ILLMProvider = maxTokensPerAgent
+  const cappedLlm: ILLMProvider = maxTokensPerAgent
     ? { invoke: (m, p, t, s) => trackedLlm.invoke(m, p, t ?? maxTokensPerAgent, s) }
     : trackedLlm;
+  // Configurable FP-A floor: rewrite the prompts' hardcoded confidence-75
+  // rules to the configured value so the model's self-filter and the
+  // deterministic post-orchestrator filter enforce the SAME threshold
+  // (otherwise lowering the floor below 75 would be inert). No-op at the
+  // default. Applied at this choke point so every agent prompt gets it
+  // without threading the value through each builder.
+  const llm: ILLMProvider = minConfidence !== CONFIDENCE_FLOOR
+    ? { invoke: (m, p, t, s) => cappedLlm.invoke(m, applyConfidenceFloor(p, minConfidence), t, s) }
+    : cappedLlm;
 
   // Extract the changed-file set once, up front. Used for:
   //   - FP-D diagram path validation (passed into runDiagramAgent below).
@@ -2274,11 +2292,12 @@ export async function runReviewPipeline(
   // confidence < 75, but nothing in code enforces it. This deterministic post-
   // orchestrator filter catches the entire class of "model didn't honor its
   // own confidence rule" false positives. Findings with NO `confidence` field
-  // default to 100 (no surprise suppression of legacy findings).
+  // default to 100 (no surprise suppression of legacy findings). The floor is
+  // configurable via yml `minConfidence:` (default CONFIDENCE_FLOOR).
   {
     const before = orchestratorResult.findings.length;
     orchestratorResult.findings = orchestratorResult.findings.filter(
-      (f) => (f.confidence ?? 100) >= CONFIDENCE_FLOOR,
+      (f) => (f.confidence ?? 100) >= minConfidence,
     );
     const dropped = before - orchestratorResult.findings.length;
     if (dropped > 0) {
@@ -2286,7 +2305,7 @@ export async function runReviewPipeline(
         '[confidence-floor] dropped %d finding%s with confidence < %d',
         dropped,
         dropped === 1 ? '' : 's',
-        CONFIDENCE_FLOOR,
+        minConfidence,
       );
     }
   }

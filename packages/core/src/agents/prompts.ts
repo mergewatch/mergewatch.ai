@@ -624,6 +624,23 @@ Respond with plain markdown text (NOT JSON). This will be posted directly as a G
  */
 export const PREVIOUS_FINDINGS_PLACEHOLDER = '{{PREVIOUS_FINDINGS}}';
 
+/**
+ * Rewrites the two hardcoded confidence-75 rules (SHARED_PREAMBLE's
+ * "less than 75% confident" self-filter and the orchestrator's "Drop any
+ * finding with confidence below 75") to a repo-configured floor. Without
+ * this, lowering `minConfidence` below 75 would be inert: the model would
+ * self-censor at 75 before the deterministic FP-A filter ever ran. The
+ * replacements target those exact sentences — prompts that don't contain
+ * them pass through untouched. reviewer.test.ts asserts both source
+ * sentences still exist so a prompt rewording breaks loudly, not silently.
+ */
+export function applyConfidenceFloor(prompt: string, floor: number): string {
+  if (floor === 75) return prompt;
+  return prompt
+    .replace('If you are less than 75% confident', `If you are less than ${floor}% confident`)
+    .replace('Drop any finding with confidence below 75.', `Drop any finding with confidence below ${floor}.`);
+}
+
 export const ORCHESTRATOR_PROMPT = `${SHARED_PREAMBLE}
 
 You receive findings from multiple review agents (security, bugs, style, error-handling, test-coverage, comment-accuracy).

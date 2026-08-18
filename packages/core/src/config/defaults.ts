@@ -160,6 +160,13 @@ export interface MergeWatchConfig {
   includePatterns: string[];
   /** Minimum severity to report: 'info' | 'warning' | 'critical' */
   minSeverity: 'info' | 'warning' | 'critical';
+  /**
+   * Minimum self-reported confidence (1-100) a finding needs to be
+   * reported — the FP-A floor. Lower it to see more speculative findings
+   * (e.g. 50 while calibrating), raise it to only surface near-certain
+   * defects. Findings with no confidence field are always kept.
+   */
+  minConfidence: number;
   /** Maximum number of findings to include in the comment */
   maxFindings: number;
   /** Whether to post a summary even when there are no findings */
@@ -209,6 +216,7 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
   ],
   includePatterns: [],
   minSeverity: 'info',
+  minConfidence: 75,
   maxFindings: 25,
   postSummaryOnClean: true,
   codebaseAwareness: true,

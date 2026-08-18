@@ -457,6 +457,7 @@ export interface MergeWatchConfig {
   customStyleRules: string[];
   excludePatterns: string[];
   minSeverity: 'info' | 'warning' | 'critical';
+  minConfidence: number;             // Default: 75 (FP-A confidence floor, 1-100)
   maxFindings: number;               // Default: 25
   postSummaryOnClean: boolean;       // Post comment even if no findings
 }

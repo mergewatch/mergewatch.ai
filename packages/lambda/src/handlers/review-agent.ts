@@ -812,6 +812,8 @@ export async function handler(
       maxFindings: runtimeConfig.maxFindings,
       // #310 — merged from yml `minSeverity:` + dashboard severityThreshold.
       minSeverity: runtimeConfig.minSeverity,
+      // FP-A floor from yml `minConfidence:` (default 75).
+      minConfidence: runtimeConfig.minConfidence,
       // #350 — per-invocation output-token cap from yml `maxTokensPerAgent:`.
       maxTokensPerAgent: runtimeConfig.maxTokensPerAgent,
       enabledAgents: mode === 'summary'

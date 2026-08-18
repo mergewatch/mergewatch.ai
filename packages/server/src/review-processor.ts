@@ -667,6 +667,8 @@ export async function processReviewJob(
         maxFindings: config.maxFindings,
         // #310 — merged from yml `minSeverity:` + dashboard severityThreshold.
         minSeverity: config.minSeverity,
+        // FP-A floor from yml `minConfidence:` (default 75).
+        minConfidence: config.minConfidence,
         // #350 — per-invocation output-token cap from yml `maxTokensPerAgent:`.
         maxTokensPerAgent: config.maxTokensPerAgent,
         enabledAgents: {

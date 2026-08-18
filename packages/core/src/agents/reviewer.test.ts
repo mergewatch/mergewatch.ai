@@ -1550,6 +1550,65 @@ describe('runReviewPipeline', () => {
     expect(result.findings[0].title).toBe('Legacy untagged');
   });
 
+  it('minConfidence — a lowered floor keeps findings the default drops and rewrites the prompt rules', async () => {
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 50, category: 'style', title: 'Boundary at 50',  description: '', suggestion: '' },
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 40, category: 'style', title: 'Below the floor', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, minConfidence: 50, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+
+    const titles = result.findings.map((f) => f.title);
+    expect(titles).toContain('Boundary at 50');
+    expect(titles).not.toContain('Below the floor');
+
+    // The prompt-side rules must track the floor, or the model self-censors
+    // at 75 before the deterministic filter ever sees a 50-confidence finding.
+    const agentCall = llm.calls.find((c) => c.prompt.includes('% confident'));
+    expect(agentCall?.prompt).toContain('If you are less than 50% confident');
+    const orchestratorCall = llm.calls.find((c) => c.prompt.includes('Drop any finding with confidence below'));
+    expect(orchestratorCall?.prompt).toContain('Drop any finding with confidence below 50.');
+  });
+
+  it('minConfidence — a raised floor drops boundary findings the default keeps', async () => {
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 95 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 95, category: 'security', title: 'Near-certain',       description: '', suggestion: '' },
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 80, category: 'bug',      title: 'Default would keep', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, minConfidence: 90, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+
+    const titles = result.findings.map((f) => f.title);
+    expect(titles).toContain('Near-certain');
+    expect(titles).not.toContain('Default would keep');
+  });
+
 });
 
 // ─── agentAuthored flag (AGENT_MODE_SUFFIX injection) ───────────────
