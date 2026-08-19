@@ -30,6 +30,30 @@ describe('LiteLLMProvider', () => {
     expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
   });
 
+  it('#390 — invokeStructured sends response_format json_schema and parses the content object', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        choices: [{ message: { content: '{"findings": []}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 3, completion_tokens: 4 },
+      }),
+    );
+    const provider = new LiteLLMProvider('http://localhost:4000');
+    const schema = { type: 'object', properties: { findings: { type: 'array' } } };
+    const result = await provider.invokeStructured('gpt-4', 'prompt', schema);
+
+    expect(result.object).toEqual({ findings: [] });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'result', schema, strict: false } });
+  });
+
+  it('#390 — invokeStructured throws when the upstream ignored response_format (prose content)', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: 'I found no issues.' }, finish_reason: 'stop' }] }),
+    );
+    const provider = new LiteLLMProvider('http://localhost:4000');
+    await expect(provider.invokeStructured('gpt-4', 'prompt', {})).rejects.toThrow();
+  });
+
   it('constructs correct URL from baseUrl + /chat/completions', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
