@@ -78,6 +78,37 @@ export function countBlockingCriticals(
   ).length;
 }
 
+/**
+ * #380 — completion check-run title, shared by both runtimes. The conclusion
+ * only fails on blocking criticals (#240), which means a 3/5 "review
+ * recommended" verdict renders a green check indistinguishable from a clean
+ * 5/5 in the checks tab — PR #363 merged with an unaddressed warning exactly
+ * that way. The title therefore always leads with the merge score (the
+ * pipeline's W7-reconciled score, same value the comment verdict renders),
+ * so the checks tab carries the signal without changing gating behavior.
+ * No score (legacy/edge case) → the pre-#380 title, unprefixed.
+ */
+export function buildCheckTitle(input: {
+  mergeScore?: number;
+  findingCount: number;
+  blockingCriticalCount: number;
+  orgBlocked?: boolean;
+  orgBlockedBy?: string[];
+}): string {
+  const { mergeScore, findingCount, blockingCriticalCount, orgBlocked, orgBlockedBy } = input;
+  const prefix = mergeScore != null
+    ? `${Math.max(1, Math.min(5, mergeScore))}/5 — `
+    : '';
+  if (orgBlocked) return `${prefix}Blocked by org agent: ${(orgBlockedBy ?? []).join(', ')}`;
+  if (blockingCriticalCount > 0) {
+    return `${prefix}${blockingCriticalCount} critical issue${blockingCriticalCount > 1 ? 's' : ''} found`;
+  }
+  if (findingCount > 0) {
+    return `${prefix}${findingCount} finding${findingCount > 1 ? 's' : ''} (no blocking critical)`;
+  }
+  return `${prefix}No issues found`;
+}
+
 interface FormatOptions {
   /** Markdown summary text from the summary agent */
   summary: string;

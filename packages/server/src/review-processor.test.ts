@@ -310,7 +310,8 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4]).toMatchObject({
         status: 'completed',
         conclusion: 'failure',
-        title: '2 critical issues found',
+        // #380 — titles lead with the merge score.
+        title: '1/5 — 2 critical issues found',
         summary: 'Found: 2 critical',
       });
     });
@@ -334,7 +335,7 @@ describe('processReviewJob — check runs', () => {
         status: 'completed',
         conclusion: 'success',
         // #240 — "blocking" qualifier: unverified criticals no longer count.
-        title: '2 findings (no blocking critical)',
+        title: '4/5 — 2 findings (no blocking critical)',
         summary: 'Found: 1 warning, 1 info',
       });
     });
@@ -348,7 +349,7 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4]).toMatchObject({
         status: 'completed',
         conclusion: 'success',
-        title: 'No issues found',
+        title: '5/5 — No issues found',
         summary: 'No issues detected in this PR.',
       });
     });
@@ -385,7 +386,7 @@ describe('processReviewJob — check runs', () => {
 
       const calls = (createCheckRun as any).mock.calls;
       const completionCall = calls[calls.length - 1];
-      expect(completionCall[4].title).toBe('1 critical issue found');
+      expect(completionCall[4].title).toBe('2/5 — 1 critical issue found');
     });
   });
 
@@ -1157,7 +1158,7 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
 
     const check = completionCheckRun();
     expect(check.conclusion).toBe('failure');
-    expect(check.title).toBe('1 critical issue found');
+    expect(check.title).toBe('2/5 — 1 critical issue found');
   });
 
   it('a critical with no verification field (pre-W2 record) still fails the check', async () => {
@@ -1177,7 +1178,7 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
 
     const check = completionCheckRun();
     expect(check.conclusion).toBe('failure');
-    expect(check.title).toBe('1 critical issue found');
+    expect(check.title).toBe('2/5 — 1 critical issue found');
     expect(check.summary).toContain('1 critical');
     expect(check.summary).toContain('1 unverified');
   });

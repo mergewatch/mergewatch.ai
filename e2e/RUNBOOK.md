@@ -336,7 +336,7 @@ No `.mergewatch.yml` needed.
 - [ ] "Requires your attention" table lists the SQL Injection row with 🔴
 - [ ] Formal PR review state = **Changes requested** (single review event — NOT multiple COMMENTED reviews)
 - [ ] Review body is a single line that points at the summary comment (e.g. `🔴 Critical issues found — see the full review in the summary comment above.`)
-- [ ] Check run conclusion = `failure` with a title like "N critical issues found"
+- [ ] Check run conclusion = `failure` with a title like "1/5 — N critical issues found" (#380: title leads with the merge score)
 
 **Failure modes to watch for**
 - ❌ Formal review state is `COMMENTED` instead of `CHANGES_REQUESTED` (regression of #139 — was the bug observed in mergewatch-fixtures PR #3)
@@ -1098,7 +1098,7 @@ Provide `groundingFetch` (the default on SaaS / when configured) so verification
 - [ ] If a Critical surfaces, the rendered comment shows score `3/5 — Review recommended` (not `2/5 — Needs fixes` or red)
 - [ ] Score-reason line includes phrasing like *"could not be confirmed against the source"* / *"verification inconclusive"* / *"advisory"*
 - [ ] Formal PR review event = **COMMENT** (not REQUEST_CHANGES)
-- [ ] `MergeWatch Review` check status = SUCCESS (advisory), not FAILURE
+- [ ] `MergeWatch Review` check status = SUCCESS (advisory), not FAILURE — with the check **title** leading with the score, e.g. `3/5 — 1 finding (no blocking critical)` (#380: the green check must still surface the verdict in the checks tab)
 - [ ] Each surviving Critical row carries the `verification: 'unverified'` tag in the stored review (DynamoDB / Postgres). Verify via the dashboard's "View full details" link or directly in the store.
 - [ ] Push a follow-up commit that makes the same code clearly broken (e.g. remove the inline guard); the next review's verification should now confirm the Critical → no clamp → score returns to ≤ 2 + REQUEST_CHANGES. Confirms the guardrail is gated on "W2 inconclusive," not "presence of any Critical."
 
@@ -2435,7 +2435,7 @@ The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, ap
 **How to run.** As an org admin, on an installation with ≥1 repo.
 1. **Create (admin):** Settings → Custom Agents → Add agent. Name `no-todo`, prompt "Flag any new TODO comment", severity `critical`, enforcement **blocking**, scope **All repositories**. Save. Reload as a non-admin member → fields are read-only.
 2. **Advisory run:** set the agent to **advisory**, open a PR that adds a `// TODO`. The review surfaces a finding from `no-todo`; the check still passes / score is normal.
-3. **Blocking run:** set it to **blocking**, push another `// TODO`. The summary review is **REQUEST_CHANGES**, the MergeWatch check run is **failure** titled `Blocked by org agent: no-todo`.
+3. **Blocking run:** set it to **blocking**, push another `// TODO`. The summary review is **REQUEST_CHANGES**, the MergeWatch check run is **failure** titled `N/5 — Blocked by org agent: no-todo` (#380 score prefix).
 4. **Scope:** switch the agent to **Selected repositories** and pick only repo B. Open a PR in repo A → the agent does NOT run; in repo B → it does.
 5. **Targeting:** add path glob `src/**`. A PR touching only `docs/**` does NOT trigger it; one touching `src/**` does.
 6. **Union + precedence:** define a repo `.mergewatch.yml` `customAgents` entry with the SAME name as an org agent → only the org definition runs (org wins).

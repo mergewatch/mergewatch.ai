@@ -26,6 +26,7 @@ import {
   runReviewPipeline,
   formatReviewComment,
   countBlockingCriticals,
+  buildCheckTitle,
   isThrottleError,
   computeDiffStats,
   mergeConfig,
@@ -1139,13 +1140,15 @@ export async function handler(
     await createCheckRun(octokit, owner, repo, headSha, {
       status: 'completed',
       conclusion: checkConclusion,
-      title: orgBlocked
-        ? `Blocked by org agent: ${orgBlockedBy.join(', ')}`
-        : hasCritical
-          ? `${blockingCriticalCount} critical issue${blockingCriticalCount > 1 ? 's' : ''} found`
-          : result.findings.length > 0
-            ? `${result.findings.length} finding${result.findings.length > 1 ? 's' : ''} (no blocking critical)`
-            : 'No issues found',
+      // #380 — the title leads with the merge score so a 3/5-with-warnings
+      // verdict is visible in the checks tab despite the green conclusion.
+      title: buildCheckTitle({
+        mergeScore: result.mergeScore,
+        findingCount: result.findings.length,
+        blockingCriticalCount,
+        orgBlocked,
+        orgBlockedBy,
+      }),
       summary: findingSummaryParts.length > 0
         ? `Found: ${findingSummaryParts.join(', ')}`
         : 'No issues detected in this PR.',
