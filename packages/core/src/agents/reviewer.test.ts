@@ -136,6 +136,45 @@ describe('runSecurityAgent', () => {
     expect(findings).toEqual([]);
   });
 
+  // #382 failure mode A (fixtures#445): the model answers the file-fetch
+  // protocol first, then prose, then the findings object. The parser must
+  // find the findings — the protocol object must never shadow them.
+  it('#382 — extracts findings from a requestFiles-prefixed multi-object response', async () => {
+    const response = [
+      '{ "requestFiles": [] }',
+      '',
+      'Based on the diff, I can see the endpoint has no authentication or authorization check before returning the full user list.',
+      '',
+      JSON.stringify({
+        findings: [{
+          file: 'src/admin-endpoint.ts', line: 4, severity: 'critical', confidence: 95,
+          title: 'Unauthenticated admin endpoint', description: 'No auth check.', suggestion: 'Add auth middleware.',
+        }],
+      }),
+    ].join('\n');
+    const llm = createMockLLM([response]);
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('Unauthenticated admin endpoint');
+  });
+
+  it('#382 — prose with quoted braces around the findings object still parses', async () => {
+    const response = [
+      'The function "loadAll" (see `{ users: allUsers }`) is problematic.',
+      JSON.stringify({ findings: [{ file: 'a.ts', line: 1, severity: 'warning', title: 'Stub', description: '', suggestion: '' }] }),
+    ].join('\n');
+    const llm = createMockLLM([response]);
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('Stub');
+  });
+
+  it('#382 — a truncated findings object still falls back to empty (no crash)', async () => {
+    const llm = createMockLLM(['{\n  "findings": [\n    { "file": "src/x.ts", "line": 4, "severity": "critical", "title": "Convention violation:']);
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toEqual([]);
+  });
+
   it('injects conventions into the prompt when provided', async () => {
     const llm = createMockLLM([JSON.stringify({ findings: [] })]);
     const conventions = '# Repo rules\nErrors are handled via middleware. Do NOT flag missing try/catch.';
@@ -814,6 +853,35 @@ describe('runOrchestratorAgent', () => {
     expect(result.findings).toHaveLength(1);
     expect(result.mergeScore).toBe(3);
     expect(result.mergeScoreReason).toBe('Warnings present.');
+  });
+
+  // #382 failure mode B (fixtures#465): a truncated orchestrator response
+  // used to fall back to empty findings → "no action items → 5/5", silently
+  // approving with every raw finding dropped. It must retry once, then FAIL.
+  it('#382 — retries once on an unparseable response and succeeds on the retry', async () => {
+    const truncated = '{\n  "findings": [\n    { "file": "src/conventions-bait.ts", "line": 4, "severity": "critical", "title": "Convention violation:';
+    const good = JSON.stringify({
+      findings: [{ file: 'src/conventions-bait.ts', line: 4, severity: 'critical', confidence: 97, category: 'style', title: 'Convention violation', description: '', suggestion: '' }],
+      mergeScore: 2, mergeScoreReason: 'Critical violation.',
+    });
+    const llm = createMockLLM([truncated, good]);
+    const result = await runOrchestratorAgent(
+      [{ category: 'style', findings: [{ file: 'src/conventions-bait.ts', line: 4, severity: 'critical', confidence: 97, title: 'Convention violation', description: '', suggestion: '' }] }],
+      'model-1', 25, llm,
+    );
+    expect(llm.calls).toHaveLength(2);
+    expect(result.findings).toHaveLength(1);
+    expect(result.mergeScore).toBe(2);
+  });
+
+  it('#382 — throws (fails the review) when the retry is also unparseable, never approving blind', async () => {
+    const truncated = '{ "findings": [ { "file": "x.ts", "line": 1,';
+    const llm = createMockLLM([truncated, 'still not JSON either']);
+    await expect(runOrchestratorAgent(
+      [{ category: 'bug', findings: [{ file: 'x.ts', line: 1, severity: 'critical', confidence: 90, title: 'Real bug', description: '', suggestion: '' }] }],
+      'model-1', 25, llm,
+    )).rejects.toThrow(/could not be parsed after retry/);
+    expect(llm.calls).toHaveLength(2);
   });
 
   it('injects previous findings into the prompt and still calls the LLM when there are no new agent findings', async () => {
@@ -1548,6 +1616,49 @@ describe('runReviewPipeline', () => {
     );
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe('Legacy untagged');
+  });
+
+  it('#382 — counts agent-response parse failures in parseFailureCount', async () => {
+    const bugFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Real bug', confidence: 90 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 90, category: 'bug', title: 'Real bug', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      // Security agent: unparseable (truncated) — must count, not throw.
+      '{ "findings": [ { "file": "x.ts", "line": 1, "severity": "critical", "title": "Cut off',
+      bugFinding, JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+
+    expect(result.parseFailureCount).toBe(1);
+    expect(result.findings.map((f) => f.title)).toContain('Real bug');
+  });
+
+  it('#382 — parseFailureCount is 0 on a clean run', async () => {
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
+    const orchestrator = JSON.stringify({
+      findings: [], mergeScore: 5, mergeScoreReason: 'Clean.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Refactor.' }), '%% overview\nflowchart TD\n  A-->B', orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+    expect(result.parseFailureCount).toBe(0);
   });
 
   it('minConfidence — a lowered floor keeps findings the default drops and rewrites the prompt rules', async () => {

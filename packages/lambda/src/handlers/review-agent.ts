@@ -899,6 +899,8 @@ export async function handler(
       delta,
       deltaCaption: result.deltaCaption,
       suppressedCount: result.suppressedCount,
+      // #382 — disclose unparsed agent responses (findings may be missing).
+      parseFailureCount: result.parseFailureCount,
       enabledAgentCount: result.enabledAgentCount,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
