@@ -714,7 +714,19 @@ function joinBrokenEdgeLabels(diagram: string): string {
   return out.join('\n');
 }
 
-/** Count double quotes — the sanitizer's quote-segmentation is only sound on balanced input (#394). */
+/**
+ * Count double quotes — the sanitizer's quote-segmentation is only sound on
+ * balanced input (#394).
+ *
+ * Deliberately no `\"` escape handling: Mermaid's grammar has NO
+ * backslash-quote escaping — a quote inside a label is written `#quot;` /
+ * `&quot;` (exactly what escapeMermaidLabelChars emits), and Mermaid's own
+ * parser treats a backslash-preceded quote as a plain delimiter. Treating
+ * `\"` as escaped here would make this counter DISAGREE with the renderer:
+ * a diagram we judged balanced would still fail to render. A model emitting
+ * `\"` produces invalid Mermaid regardless; it trips this parity check and
+ * the diagram is dropped — the #394 contract (missing beats broken).
+ */
 function hasBalancedQuotes(diagram: string): boolean {
   return ((diagram.match(/"/g) ?? []).length) % 2 === 0;
 }

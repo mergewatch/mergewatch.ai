@@ -131,6 +131,15 @@ describe('isValidMermaidDiagram', () => {
     expect(isValidMermaidDiagram('flowchart TD\n  A -->|fallback on\nUnsupportedError| B')).toBe(false);
   });
 
+  it('#394 — backslash-"escaped" quotes are NOT an escape in mermaid — odd totals drop the diagram', () => {
+    // Mermaid has no \" escaping (quotes in labels are #quot;/&quot;), so the
+    // quote counter deliberately treats every `"` as a delimiter, matching the
+    // renderer. Three quotes total → unbalanced → invalid → dropped.
+    expect(isValidMermaidDiagram('flowchart TD\n  A["a\\"b"] --> B')).toBe(false);
+    // The sanctioned escape form stays valid.
+    expect(isValidMermaidDiagram('flowchart TD\n  A["say &quot;hi&quot;"] --> B')).toBe(true);
+  });
+
   it('#394 — the verbatim PR #392 corrupted fragment is invalid', () => {
     const corrupted = [
       'flowchart TD',
