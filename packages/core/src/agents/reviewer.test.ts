@@ -108,6 +108,38 @@ describe('isValidMermaidDiagram', () => {
   it('returns true when preceded by mermaid comment', () => {
     expect(isValidMermaidDiagram('%% caption\nflowchart TD\n  A-->B')).toBe(true);
   });
+
+  // ─── #394 — structural corruption checks (missing beats broken) ───────────
+
+  it('#394 — rejects unbalanced quotes', () => {
+    expect(isValidMermaidDiagram('flowchart TD\n  A["ok] --> B')).toBe(false);
+  });
+
+  it('#394 — rejects HTML entities outside quoted regions (parity-inversion signature)', () => {
+    expect(isValidMermaidDiagram('flowchart TD\n  R&lsqb;"TokenAccumulator"&rsqb; --> A')).toBe(false);
+  });
+
+  it('#394 — rejects literal <br/> outside quoted regions (glued statements)', () => {
+    expect(isValidMermaidDiagram('flowchart TD\n  A --> B<br/>C --> D')).toBe(false);
+  });
+
+  it('#394 — entities and <br/> INSIDE quoted labels remain legitimate', () => {
+    expect(isValidMermaidDiagram('flowchart TD\n  A["invoke&lpar;&rpar;<br/>wrapper"] --> B')).toBe(true);
+  });
+
+  it('#394 — rejects an unclosed edge label (raw newline inside |…|)', () => {
+    expect(isValidMermaidDiagram('flowchart TD\n  A -->|fallback on\nUnsupportedError| B')).toBe(false);
+  });
+
+  it('#394 — the verbatim PR #392 corrupted fragment is invalid', () => {
+    const corrupted = [
+      'flowchart TD',
+      '    Q["TrackingLLMProvider&lt;br/&gt;wrapper"] -->|forwards| A',
+      '    Q -->|tracks usage"&rsqb; R&lsqb;"TokenAccumulator"&rsqb;<br/>    <br/>    S&lsqb;"Truncation retry',
+      'wrapper"] -->|wraps| A',
+    ].join('\n');
+    expect(isValidMermaidDiagram(corrupted)).toBe(false);
+  });
 });
 
 // ─── runSecurityAgent ───────────────────────────────────────────────────────
@@ -342,6 +374,27 @@ describe('runSummaryAgent', () => {
 // ─── runDiagramAgent ────────────────────────────────────────────────────────
 
 describe('runDiagramAgent', () => {
+  it('#394 — heals an edge label broken across lines (raw newline inside |…|)', async () => {
+    const mermaid = '%% Flow\nflowchart TD\n  A -->|fallback on\nUnsupportedError| B\n  B --> C';
+    const llm = createMockLLM([mermaid]);
+    const result = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(result.diagram).toContain('|fallback on UnsupportedError|');
+    expect(isValidMermaidDiagram(result.diagram)).toBe(true);
+  });
+
+  it('#394 — a corrupt diagram is DROPPED, never shipped (unbalanced quotes / entity-mangled syntax)', async () => {
+    const corrupted = [
+      '%% wiring',
+      'flowchart TD',
+      '    Q["Tracking wrapper"] -->|forwards| A',
+      '    Q -->|tracks usage"&rsqb; R&lsqb;"TokenAccumulator"&rsqb;<br/>    S&lsqb;"Truncation retry',
+      'wrapper"] -->|wraps| A',
+    ].join('\n');
+    const llm = createMockLLM([corrupted]);
+    const result = await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(result.diagram).toBe('');
+  });
+
   it('returns DiagramResult for valid mermaid', async () => {
     const mermaid = '%% Auth flow\nsequenceDiagram\n  Client->>API: request\n  API->>Auth: validate';
     const llm = createMockLLM([mermaid]);

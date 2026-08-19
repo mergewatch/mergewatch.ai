@@ -690,7 +690,51 @@ function decodeMermaidOutsideQuotes(diagram: string): string {
   return parts.join('');
 }
 
+/**
+ * #394 — heal edge labels broken across lines. Mermaid edge labels (`|…|`)
+ * cannot span lines, but the model sometimes emits
+ * `-->|fallback on\nSomeLongName| G` — joining the offending line with the
+ * next (newline → space) restores a parseable single-line label. Detection
+ * is a per-line pipe-parity check counting only pipes OUTSIDE quoted
+ * regions; bounded to the line count so a pathological input can't loop.
+ */
+function joinBrokenEdgeLabels(diagram: string): string {
+  const unquotedPipeCount = (line: string): number =>
+    line.split(/("[^"]*")/).filter((_, i) => i % 2 === 0).join('').split('|').length - 1;
+  const lines = diagram.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    let guard = lines.length;
+    while (unquotedPipeCount(line) % 2 === 1 && i + 1 < lines.length && guard-- > 0) {
+      line = `${line} ${lines[++i].trim()}`;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** Count double quotes — the sanitizer's quote-segmentation is only sound on balanced input (#394). */
+function hasBalancedQuotes(diagram: string): boolean {
+  return ((diagram.match(/"/g) ?? []).length) % 2 === 0;
+}
+
 function sanitizeMermaidOutput(diagram: string): string {
+  // #394 — heal newline-broken edge labels BEFORE any quote-based pass.
+  diagram = joinBrokenEdgeLabels(diagram);
+
+  // #394 — parity guard: every quote-segmented pass below assumes balanced
+  // quotes. On an odd count the even/odd segment alternation INVERTS from
+  // the stray quote onward — unquoted syntax gets label-escaped into
+  // `R&lsqb;"…"&rsqb;` and statements glue with `<br/>` (the PR #392
+  // corruption). Transforming would corrupt; bail with the raw text and let
+  // isValidMermaidDiagram decide (it rejects unbalanced quotes, so the
+  // diagram is dropped — missing beats broken).
+  if (!hasBalancedQuotes(diagram)) {
+    console.warn('[diagram] unbalanced quotes — skipping sanitation passes (#394); validation will drop the diagram');
+    return diagram;
+  }
+
   // Pass 0 — OUTSIDE quoted regions: decode HTML entities the model sometimes
   // emits in syntactic positions, and convert any literal `<br/>` outside a
   // label back into a statement-separating newline. See decode helper above.
@@ -787,7 +831,27 @@ export function isValidMermaidDiagram(diagram: string): boolean {
 
   // Extract the first word and check against known diagram types
   const firstWord = firstMeaningful.trim().split(/[\s-]/)[0];
-  return MERMAID_DIAGRAM_TYPES.has(firstWord.toLowerCase());
+  if (!MERMAID_DIAGRAM_TYPES.has(firstWord.toLowerCase())) return false;
+
+  // #394 — structural corruption checks. A diagram that trips any of these
+  // will not parse; the caller drops the section entirely (missing beats a
+  // broken code block shipped to every reader — PR #392's live corruption).
+  // 1. Unbalanced quotes: the sanitizer's quote segmentation was unsound,
+  //    or a label broke out of its quoted region.
+  if (!hasBalancedQuotes(diagram)) return false;
+  // 2. HTML entities or literal <br/> OUTSIDE quoted regions: entity-escaped
+  //    structural syntax (`R&lsqb;"…"&rsqb;`) / glued statements — the parity-
+  //    inversion signature. Inside quotes both are legitimate label content.
+  const unquoted = diagram.split(/("[^"]*")/).filter((_, i) => i % 2 === 0).join('');
+  if (/&(?:lsqb|rsqb|lbrace|rbrace|lpar|rpar|lt|gt|quot|amp);/.test(unquoted)) return false;
+  if (/<br\s*\/?>/i.test(unquoted)) return false;
+  // 3. Unclosed edge label: an odd number of unquoted pipes on a line means
+  //    a `|…|` label never closed (raw newline inside the label).
+  for (const line of lines) {
+    const lineUnquoted = line.split(/("[^"]*")/).filter((_, i) => i % 2 === 0).join('');
+    if ((lineUnquoted.split('|').length - 1) % 2 === 1) return false;
+  }
+  return true;
 }
 
 /**
