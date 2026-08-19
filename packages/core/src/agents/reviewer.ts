@@ -11,8 +11,10 @@
  */
 
 import type { ILLMProvider } from '../llm/types.js';
-import { normalizeLLMResult } from '../llm/types.js';
+import { normalizeLLMResult, StructuredOutputUnsupportedError } from '../llm/types.js';
 import { TokenAccumulator, TrackingLLMProvider } from '../llm/token-accumulator.js';
+import { isThrottleError } from '../llm/throttle.js';
+import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
 import {
   SECURITY_REVIEWER_PROMPT,
   BUG_REVIEWER_PROMPT,
@@ -389,7 +391,7 @@ function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentFinding[
  * When fileFetchOptions is provided, the agent can request files from the repo.
  * Otherwise, falls back to a simple llm.invoke().
  */
-async function invokeAgent(
+async function invokeAgentText(
   llm: ILLMProvider,
   modelId: string,
   prompt: string,
@@ -408,6 +410,51 @@ async function invokeAgent(
   return normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
 }
 
+/**
+ * #390 — adapt a schema-constrained invocation to the text plumbing: the
+ * provider validates the object against `schema`, we re-serialize it, and
+ * every downstream consumer (the agentic file-fetch loop's `requestFiles`
+ * detection, parseAgentFindings) reads guaranteed-valid JSON. This is what
+ * lets structured mode reuse the fetch rounds/budget logic unchanged —
+ * `requestFiles` is a field of the SAME schema instead of the ambiguous
+ * bare-object convention that caused #382 mode A.
+ */
+function structuredAsText(llm: ILLMProvider, schema: object): ILLMProvider {
+  return {
+    invoke: async (m, p, t, s) => {
+      const r = await llm.invokeStructured!(m, p, schema, t, s);
+      return { text: JSON.stringify(r.object), usage: r.usage, stopReason: r.stopReason };
+    },
+  };
+}
+
+/**
+ * Invoke an agent, preferring schema-constrained output when the provider
+ * supports it (#390). Fallback ladder: StructuredOutputUnsupportedError is
+ * silent (pre-network, the designed text path); throttles rethrow so the
+ * review parks instead of double-invoking; anything else warns and falls
+ * back to the hardened text parser path.
+ */
+async function invokeAgent(
+  llm: ILLMProvider,
+  modelId: string,
+  prompt: string,
+  fileFetchOptions?: FileFetchOptions,
+  schema?: object,
+): Promise<string> {
+  if (schema && llm.invokeStructured) {
+    try {
+      return await invokeAgentText(structuredAsText(llm, schema), modelId, prompt, fileFetchOptions);
+    } catch (err) {
+      if (isThrottleError(err)) throw err;
+      if (!(err instanceof StructuredOutputUnsupportedError)) {
+        console.warn('[structured] structured invocation failed — falling back to the text path:', err);
+      }
+    }
+  }
+  return invokeAgentText(llm, modelId, prompt, fileFetchOptions);
+}
+
 // ─── Individual agents ─────────────────────────────────────────────────────
 
 /** Run the security review agent. */
@@ -423,7 +470,7 @@ export async function runSecurityAgent(
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(SECURITY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -440,7 +487,7 @@ export async function runBugAgent(
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(BUG_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -482,7 +529,7 @@ export async function runStyleAgent(
   );
 
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -912,7 +959,7 @@ export async function runErrorHandlingAgent(
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(ERROR_HANDLING_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -929,7 +976,7 @@ export async function runTestCoverageAgent(
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(TEST_COVERAGE_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -946,7 +993,7 @@ export async function runCommentAccuracyAgent(
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(COMMENT_ACCURACY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   return parseAgentFindings(raw, diag);
 }
 
@@ -1033,7 +1080,7 @@ export async function runCustomAgent(
 ): Promise<AgentFinding[]> {
   const systemPrompt = `${agentDef.prompt}\n${CUSTOM_AGENT_RESPONSE_FORMAT}`;
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   const findings = parseAgentFindings(raw, diag);
   // Apply default severity if agent didn't specify
   return findings.map((f) => ({
@@ -1175,10 +1222,26 @@ export async function runOrchestratorAgent(
   // the invocation once; if the retry is also unparseable, throw so the
   // review fails loudly (failure check run) instead of approving blind.
   type OrchestratorRaw = { findings: OrchestratedFinding[]; mergeScore?: number; mergeScoreReason?: string };
-  const raw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
-  let parsed = tryParseJson<OrchestratorRaw>(raw, 'findings');
+  let parsed: OrchestratorRaw | null = null;
+  // #390 — prefer schema-constrained output: the orchestrator is the single
+  // point where a parse failure used to cost EVERY finding at once. Silent
+  // fallback on unsupported providers; throttles rethrow (review parks).
+  if (llm.invokeStructured) {
+    try {
+      parsed = (await llm.invokeStructured(modelId, prompt, ORCHESTRATOR_SCHEMA)).object as OrchestratorRaw;
+    } catch (err) {
+      if (isThrottleError(err)) throw err;
+      if (!(err instanceof StructuredOutputUnsupportedError)) {
+        console.warn('[orchestrator] structured invocation failed — falling back to the text path:', err);
+      }
+    }
+  }
   if (!parsed) {
-    console.warn('[orchestrator] unparseable response — retrying once:', raw.trim().slice(0, 200));
+    const raw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
+    parsed = tryParseJson<OrchestratorRaw>(raw, 'findings');
+  }
+  if (!parsed) {
+    console.warn('[orchestrator] unparseable response — retrying once');
     const retryRaw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
     parsed = tryParseJson<OrchestratorRaw>(retryRaw, 'findings');
     if (!parsed) {
@@ -1908,13 +1971,27 @@ Suggestion: ${f.suggestion}
 ${content}`;
 
       try {
-        const raw = normalizeLLMResult(
-          await llm.invoke(modelId, prompt, undefined, { temperature: 0 }),
-        ).text;
+        // #390 — prefer schema-constrained verdicts; unsupported providers
+        // fall through to the text path silently. Any OTHER structured error
+        // flows to the outer catch below, which keeps the finding as
+        // 'unverified' — identical to a failed text invocation.
+        let verdict: { valid?: boolean; reason?: string } | null = null;
+        if (llm.invokeStructured) {
+          try {
+            verdict = (await llm.invokeStructured(modelId, prompt, VERIFIER_VERDICT_SCHEMA, undefined, { temperature: 0 }))
+              .object as { valid?: boolean; reason?: string };
+          } catch (err) {
+            if (!(err instanceof StructuredOutputUnsupportedError)) throw err;
+          }
+        }
         // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
         // or verdict-less response is distinguishable from an explicit
         // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
-        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {}, 'valid');
+        const parsed = verdict ?? safeParseJson<{ valid?: boolean; reason?: string }>(
+          normalizeLLMResult(await llm.invoke(modelId, prompt, undefined, { temperature: 0 })).text,
+          {},
+          'valid',
+        );
         if (parsed.valid === false) {
           // #372 — an intent-shaped dismissal ("the comment says this is
           // test code") is not a legitimate drop: intent does not change
@@ -2345,7 +2422,10 @@ export async function runReviewPipeline(
   // wrapper above). Call sites that pass an explicit maxTokens keep it;
   // when unset, providers fall back to their built-in 4096 as before.
   const cappedLlm: ILLMProvider = maxTokensPerAgent
-    ? { invoke: (m, p, t, s) => trackedLlm.invoke(m, p, t ?? maxTokensPerAgent, s) }
+    ? {
+        invoke: (m, p, t, s) => trackedLlm.invoke(m, p, t ?? maxTokensPerAgent, s),
+        invokeStructured: (m, p, sc, t, s) => trackedLlm.invokeStructured!(m, p, sc, t ?? maxTokensPerAgent, s),
+      }
     : trackedLlm;
   // Configurable FP-A floor: rewrite the prompts' hardcoded confidence-75
   // rules to the configured value so the model's self-filter and the
@@ -2354,7 +2434,10 @@ export async function runReviewPipeline(
   // default. Applied at this choke point so every agent prompt gets it
   // without threading the value through each builder.
   const floorLlm: ILLMProvider = minConfidence !== CONFIDENCE_FLOOR
-    ? { invoke: (m, p, t, s) => cappedLlm.invoke(m, applyConfidenceFloor(p, minConfidence), t, s) }
+    ? {
+        invoke: (m, p, t, s) => cappedLlm.invoke(m, applyConfidenceFloor(p, minConfidence), t, s),
+        invokeStructured: (m, p, sc, t, s) => cappedLlm.invokeStructured!(m, applyConfidenceFloor(p, minConfidence), sc, t, s),
+      }
     : cappedLlm;
   // Truncation auto-retry: `stopReason === 'max_tokens'` means the response
   // was cut off at the output cap — the tail (usually the back half of a
@@ -2370,6 +2453,17 @@ export async function runReviewPipeline(
       const retryCap = Math.min(2 * (t ?? maxTokensPerAgent ?? 4096), 16384);
       console.warn('[llm] response truncated at the output cap — retrying once with maxTokens %d', retryCap);
       return floorLlm.invoke(m, p, retryCap, s);
+    },
+    // #390 — same truncation retry for structured invocations: a tool input
+    // cut at the cap surfaces as stopReason max_tokens with a possibly
+    // partial object; the provider throws or returns what the API validated,
+    // and one doubled-cap retry resolves the common case.
+    invokeStructured: async (m, p, sc, t, s) => {
+      const first = await floorLlm.invokeStructured!(m, p, sc, t, s);
+      if (first.stopReason !== 'max_tokens') return first;
+      const retryCap = Math.min(2 * (t ?? maxTokensPerAgent ?? 4096), 16384);
+      console.warn('[llm] structured response truncated at the output cap — retrying once with maxTokens %d', retryCap);
+      return floorLlm.invokeStructured!(m, p, sc, retryCap, s);
     },
   };
 

@@ -45,6 +45,32 @@ export interface LLMSamplingConfig {
   topK?: number;
 }
 
+/**
+ * Result of a schema-constrained invocation (#390). `object` is the payload
+ * the provider validated/constrained against the caller's JSON Schema — no
+ * text parsing involved, so the #382 class of "could not parse agent JSON
+ * response" finding loss is structurally impossible on this path.
+ */
+export interface LLMStructuredResult<T = unknown> {
+  object: T;
+  usage?: TokenUsage;
+  stopReason?: string;
+}
+
+/**
+ * Thrown by `invokeStructured` when the provider (or the specific model)
+ * cannot do schema-constrained output — e.g. Bedrock Titan, or a LiteLLM
+ * upstream without `json_schema` support. Callers catch this SILENTLY and
+ * fall back to the text path; it must be raised before any network call so
+ * the fallback costs nothing.
+ */
+export class StructuredOutputUnsupportedError extends Error {
+  constructor(detail: string) {
+    super(`Structured output not supported: ${detail}`);
+    this.name = 'StructuredOutputUnsupportedError';
+  }
+}
+
 export interface ILLMProvider {
   invoke(
     modelId: string,
@@ -52,6 +78,21 @@ export interface ILLMProvider {
     maxTokens?: number,
     sampling?: LLMSamplingConfig,
   ): Promise<string | LLMInvokeResult>;
+  /**
+   * #390 — schema-constrained invocation. The provider forces the model to
+   * emit an object matching `schema` (forced tool use on Anthropic/Bedrock,
+   * `response_format: json_schema` on OpenAI-compatible endpoints, `format`
+   * on Ollama) instead of writing JSON as prose. Optional: providers that
+   * cannot support it either omit the method or throw
+   * StructuredOutputUnsupportedError before any network call.
+   */
+  invokeStructured?(
+    modelId: string,
+    prompt: string,
+    schema: object,
+    maxTokens?: number,
+    sampling?: LLMSamplingConfig,
+  ): Promise<LLMStructuredResult>;
 }
 
 /** Normalize a string or LLMInvokeResult to always get an LLMInvokeResult. */

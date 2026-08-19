@@ -16,7 +16,8 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, TokenUsage } from '@mergewatch/core';
+import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, TokenUsage } from '@mergewatch/core';
+import { StructuredOutputUnsupportedError } from '@mergewatch/core';
 
 // ─── Supported model IDs ───────────────────────────────────────────────────
 export const SUPPORTED_MODELS = {
@@ -82,6 +83,40 @@ function buildAnthropicBody(
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
     messages: [{ role: 'user', content: prompt }],
+  };
+  if (acceptsSamplingParams(modelId)) {
+    body.temperature = sampling.temperature ?? 0;
+    if (sampling.topP !== undefined) body.top_p = sampling.topP;
+    if (sampling.topK !== undefined) body.top_k = sampling.topK;
+  }
+  return {
+    body: JSON.stringify(body),
+    contentType: 'application/json',
+    accept: 'application/json',
+  };
+}
+
+/**
+ * #390 — Anthropic-family body with a single forced tool: the model must call
+ * `emit_result` and the API constrains its input against the JSON Schema.
+ */
+function buildAnthropicStructuredBody(
+  prompt: string,
+  schema: object,
+  maxTokens: number,
+  sampling: LLMSamplingConfig,
+  modelId: string,
+): ModelRequestBody {
+  const body: Record<string, unknown> = {
+    anthropic_version: 'bedrock-2023-05-31',
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }],
+    tools: [{
+      name: 'emit_result',
+      description: 'Emit the structured result of your analysis.',
+      input_schema: schema,
+    }],
+    tool_choice: { type: 'tool', name: 'emit_result' },
   };
   if (acceptsSamplingParams(modelId)) {
     body.temperature = sampling.temperature ?? 0;
@@ -211,6 +246,44 @@ export class BedrockLLMProvider implements ILLMProvider {
     const rawResponse = new TextDecoder().decode(response.body);
     const parsed = parseResponse(modelId, rawResponse);
     return { text: parsed.text, usage: parsed.usage, stopReason: parsed.stopReason };
+  }
+
+  // #390 — schema-constrained invocation via forced tool use. Only the
+  // Anthropic model family supports tools on Bedrock; Titan throws
+  // StructuredOutputUnsupportedError BEFORE any network call so the caller's
+  // text fallback costs nothing.
+  async invokeStructured(
+    modelId: string,
+    prompt: string,
+    schema: object,
+    maxTokens = 4096,
+    sampling: LLMSamplingConfig = {},
+  ): Promise<LLMStructuredResult> {
+    if (isTitanModel(modelId)) {
+      throw new StructuredOutputUnsupportedError(`Titan models have no tool support (${modelId})`);
+    }
+    const { body, contentType, accept } = buildAnthropicStructuredBody(prompt, schema, maxTokens, sampling, modelId);
+    const command = new InvokeModelCommand({
+      modelId,
+      body: new TextEncoder().encode(body),
+      contentType,
+      accept,
+    });
+    const response = await this.sendWithSignatureRecovery(command);
+    const parsed = JSON.parse(new TextDecoder().decode(response.body));
+    const block = Array.isArray(parsed.content)
+      ? parsed.content.find((b: { type?: string }) => b.type === 'tool_use')
+      : undefined;
+    if (!block) {
+      throw new Error(`Structured invocation returned no tool_use block (stop_reason: ${parsed.stop_reason})`);
+    }
+    return {
+      object: block.input,
+      usage: parsed.usage
+        ? { inputTokens: parsed.usage.input_tokens ?? 0, outputTokens: parsed.usage.output_tokens ?? 0 }
+        : undefined,
+      stopReason: parsed.stop_reason ?? undefined,
+    };
   }
 
   // Recover from SDK v3's poisoned systemClockOffset in long-lived warm Lambdas.

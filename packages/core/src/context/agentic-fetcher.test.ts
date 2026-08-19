@@ -82,6 +82,29 @@ describe('invokeWithFileFetching', () => {
     expect(llm.calls[1]).toContain('export const foo = 42;');
   });
 
+  // #390 — structured mode folds requestFiles into the findings schema, so
+  // the response carries BOTH keys. Non-empty requestFiles must still trigger
+  // a fetch round; empty/absent requestFiles must read as a final response.
+  it('fetches when requestFiles appears alongside findings (structured-mode shape)', async () => {
+    const llm = createMockLLM([
+      '{"findings": [], "requestFiles": ["src/foo.ts"]}',
+      '{"findings": [{"file": "src/foo.ts", "line": 1, "severity": "warning", "title": "x"}]}',
+    ]);
+    const opts = makeFetchOptions({ 'src/foo.ts': 'export const foo = 42;' });
+    const result = await invokeWithFileFetching(llm, 'model-id', 'Analyze this diff', opts);
+    expect(result.roundsUsed).toBe(2);
+    expect(result.fetchedFiles['src/foo.ts']).toBe('export const foo = 42;');
+  });
+
+  it('treats an empty requestFiles array alongside findings as a final response (structured-mode shape)', async () => {
+    const llm = createMockLLM(['{"findings": [], "requestFiles": []}']);
+    const result = await invokeWithFileFetching(
+      llm, 'model-id', 'Analyze this diff', makeFetchOptions(),
+    );
+    expect(result.roundsUsed).toBe(1);
+    expect(result.response).toBe('{"findings": [], "requestFiles": []}');
+  });
+
   it('rejects paths with ../ traversal', async () => {
     const llm = createMockLLM([
       '{"requestFiles": ["../secret/passwords.txt"]}',

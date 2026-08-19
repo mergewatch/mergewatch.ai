@@ -43,6 +43,34 @@ describe('AnthropicLLMProvider', () => {
     expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
   });
 
+  it('#390 — invokeStructured forces the emit_result tool and returns its input', async () => {
+    mockCreate.mockResolvedValueOnce({
+      content: [{ type: 'tool_use', id: 't1', name: 'emit_result', input: { valid: false, reason: 'r' } }],
+      usage: { input_tokens: 5, output_tokens: 9 },
+      stop_reason: 'tool_use',
+    });
+    const provider = new AnthropicLLMProvider('test-api-key');
+    const schema = { type: 'object', properties: { valid: { type: 'boolean' } } };
+    const result = await provider.invokeStructured('claude-sonnet-4-20250514', 'verify', schema);
+
+    expect(result.object).toEqual({ valid: false, reason: 'r' });
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+      tools: [expect.objectContaining({ name: 'emit_result', input_schema: schema })],
+      tool_choice: { type: 'tool', name: 'emit_result' },
+    }));
+  });
+
+  it('#390 — invokeStructured throws when the response has no tool_use block', async () => {
+    mockCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'prose' }],
+      usage: { input_tokens: 5, output_tokens: 9 },
+      stop_reason: 'end_turn',
+    });
+    const provider = new AnthropicLLMProvider('test-api-key');
+    await expect(provider.invokeStructured('claude-sonnet-4-20250514', 'verify', {}))
+      .rejects.toThrow(/no tool_use block/);
+  });
+
   it('returns text from first content block', async () => {
     mockCreate.mockResolvedValueOnce({
       content: [{ type: 'text', text: 'The answer is 42' }],

@@ -3369,3 +3369,128 @@ describe('intent-claims directive in prompts (#372)', () => {
     expect(prompt).toContain('Only the repository conventions block above');
   });
 });
+
+// ─── Structured outputs (#390) ──────────────────────────────────────────────
+
+import { StructuredOutputUnsupportedError } from '../llm/types.js';
+
+function createStructuredMockLLM(opts: {
+  objects?: Array<unknown | Error>;
+  textResponses?: string[];
+}) {
+  let oi = 0;
+  let ti = 0;
+  const structuredCalls: Array<{ prompt: string; schema: Record<string, unknown> }> = [];
+  const textCalls: string[] = [];
+  return {
+    structuredCalls,
+    textCalls,
+    async invoke(_m: string, prompt: string) {
+      textCalls.push(prompt);
+      return (opts.textResponses ?? [])[ti++] ?? JSON.stringify({ findings: [] });
+    },
+    async invokeStructured(_m: string, prompt: string, schema: object) {
+      structuredCalls.push({ prompt, schema: schema as Record<string, unknown> });
+      const next = (opts.objects ?? [])[oi++];
+      if (next instanceof Error) throw next;
+      return { object: next };
+    },
+  };
+}
+
+describe('structured outputs (#390)', () => {
+  const finding = { file: 'foo.ts', line: 3, severity: 'critical' as const, confidence: 95, title: 'SQLi', description: 'd', suggestion: 's' };
+
+  it('prefers invokeStructured and never touches the text path on success', async () => {
+    const llm = createStructuredMockLLM({ objects: [{ findings: [finding] }] });
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('SQLi');
+    expect(llm.textCalls).toHaveLength(0);
+    // The schema carries the findings contract (and the requestFiles field
+    // that folds the file-fetch protocol into the same object).
+    const schemaProps = (llm.structuredCalls[0].schema as any).properties;
+    expect(schemaProps.findings).toBeDefined();
+    expect(schemaProps.requestFiles).toBeDefined();
+  });
+
+  it('falls back to the text path SILENTLY on StructuredOutputUnsupportedError', async () => {
+    const llm = createStructuredMockLLM({
+      objects: [new StructuredOutputUnsupportedError('no tool support')],
+      textResponses: [validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Text-path finding', confidence: 90 }])],
+    });
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('Text-path finding');
+    expect(llm.textCalls).toHaveLength(1);
+  });
+
+  it('falls back to the text path on other structured errors (warn, not fail)', async () => {
+    const llm = createStructuredMockLLM({
+      objects: [new Error('upstream rejected json_schema')],
+      textResponses: [validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Recovered', confidence: 90 }])],
+    });
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings[0].title).toBe('Recovered');
+  });
+
+  it('rethrows throttles from the structured path — the review must park, not double-invoke', async () => {
+    const llm = createStructuredMockLLM({
+      objects: [Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' })],
+    });
+    await expect(runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm)).rejects.toThrow(/Too many requests/);
+    expect(llm.textCalls).toHaveLength(0);
+  });
+
+  it('orchestrator uses the structured path (mergeScore schema) and parse failures are impossible', async () => {
+    const orchestratorObject = {
+      findings: [{ ...finding, severity: 'warning' as const, category: 'security' }],
+      mergeScore: 3,
+      mergeScoreReason: 'One warning.',
+    };
+    let agentServed = false;
+    const llm = {
+      // Only summary + diagram use the text path in a structured run.
+      async invoke(_m: string, prompt: string) {
+        if (prompt.includes('mermaid')) return '%% overview\nflowchart TD\n  A-->B';
+        return JSON.stringify({ summary: 'Adds code.' });
+      },
+      async invokeStructured(_m: string, _p: string, schema: object) {
+        const props = (schema as { properties: Record<string, unknown> }).properties;
+        if (props.mergeScore) return { object: orchestratorObject };
+        if (!agentServed) { agentServed = true; return { object: { findings: [{ ...finding, severity: 'warning' }] } }; }
+        return { object: { findings: [] } };
+      },
+    };
+    const enabledAgents = { security: true, bugs: true, style: true, summary: true, diagram: true, errorHandling: true, testCoverage: true, commentAccuracy: true };
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents },
+      { llm },
+    );
+    expect(result.findings.map((f) => f.title)).toContain('SQLi');
+    expect(result.mergeScore).toBe(3);
+    expect(result.parseFailureCount).toBe(0);
+  });
+
+  it('verifyFindings uses structured verdicts and demotes a refuted critical', async () => {
+    const fileContents = { 'foo.ts': 'const x = 1;\n' };
+    const llm = {
+      async invoke() { throw new Error('text path must not be used'); },
+      async invokeStructured() {
+        return { object: { valid: false, confidence: 0.9, reason: 'the code is parameterized' } };
+      },
+    };
+    const result = await verifyFindings([{ ...finding, category: 'security' }], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...finding, category: 'security', verification: 'unverified' }]);
+  });
+
+  it('verifyFindings falls back to the text path when structured is unsupported', async () => {
+    const fileContents = { 'foo.ts': 'const x = 1;\n' };
+    const llm = {
+      async invoke() { return '{"valid": true, "confidence": 0.9, "reason": "real"}'; },
+      async invokeStructured(): Promise<never> { throw new StructuredOutputUnsupportedError('none'); },
+    };
+    const result = await verifyFindings([{ ...finding, category: 'security' }], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...finding, category: 'security', verification: 'verified' }]);
+  });
+});

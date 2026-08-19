@@ -6,8 +6,8 @@
  * The wrapped provider is transparent to callers — agents still receive strings.
  */
 
-import type { ILLMProvider, TokenUsage, LLMInvokeResult, LLMSamplingConfig } from './types.js';
-import { normalizeLLMResult } from './types.js';
+import type { ILLMProvider, TokenUsage, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult } from './types.js';
+import { normalizeLLMResult, StructuredOutputUnsupportedError } from './types.js';
 import { estimateCost } from './pricing.js';
 
 /** Per-model token usage entry. */
@@ -100,6 +100,24 @@ export class TrackingLLMProvider implements ILLMProvider {
     // wrapper — the pipeline's truncation retry depends on seeing it. All
     // callers normalize via normalizeLLMResult, so strings-only consumers
     // are unaffected.
+    return result;
+  }
+
+  // #390 — forward schema-constrained invocations, tracking usage the same
+  // way. Throws StructuredOutputUnsupportedError (pre-network, so the text
+  // fallback costs nothing) when the inner provider has no invokeStructured.
+  async invokeStructured(
+    modelId: string,
+    prompt: string,
+    schema: object,
+    maxTokens?: number,
+    sampling?: LLMSamplingConfig,
+  ): Promise<LLMStructuredResult> {
+    if (!this.inner.invokeStructured) {
+      throw new StructuredOutputUnsupportedError('inner provider has no invokeStructured');
+    }
+    const result = await this.inner.invokeStructured(modelId, prompt, schema, maxTokens, sampling);
+    this.accumulator.add(modelId, result.usage);
     return result;
   }
 }

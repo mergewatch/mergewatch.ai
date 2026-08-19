@@ -215,6 +215,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
+| [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
 | [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 |
 
 ---
@@ -3098,6 +3099,28 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 - [ ] Conventions-declared intent → suppressed as before (channel contrast)
 - [ ] Technical verifier dismissals unaffected
 - [ ] Intent-refusal shows the distinct log line and renders under "Unverified concerns"
+
+---
+
+### E2E-90: #390 — Structured outputs: zero parse failures
+
+**Status:** 🚧 In review (#390).
+
+**Behavior:** every findings-bearing LLM call (6 built-in agents, custom agents, orchestrator, W2 verifier) prefers `invokeStructured` — the provider forces the model to emit an object matching an explicit JSON Schema (forced tool use on Anthropic/Bedrock; `response_format: json_schema` on LiteLLM; `format` on Ollama). Free-text JSON parsing — and with it the entire #382 class of silent finding loss — happens only on fallback paths: providers without structured support (Bedrock Titan, older Ollama, LiteLLM upstreams that reject `response_format`) throw `StructuredOutputUnsupportedError` pre-network and drop to the hardened text parser (#383/#391). The agentic file-fetch protocol is a `requestFiles` field of the same schema, eliminating the bare-object ambiguity of #382 mode A.
+
+**How to run.** Any full-suite run on prod (Bedrock Anthropic models) after the #390 deploy.
+
+**Expected outcomes.**
+- [ ] Zero `Could not parse agent JSON response` lines in the agent logs across the whole run (CloudWatch filter on `/aws/lambda/mergewatch-review-agent-prod`)
+- [ ] Zero "⚠️ Unparsed agent output" disclosures in review comments
+- [ ] No `[structured] structured invocation failed` warnings (a few are tolerable — each one must show the text fallback recovering, not a lost review)
+- [ ] Findings quality unchanged or better vs. the previous run's healthy fixtures (03/20/32/39/54d/77a/80a/81 catch their baits)
+- [ ] Agentic file fetching still works: at least one fixture shows `Agent fetched N file(s)` with a structured provider
+
+**Failure modes.**
+- ❌ Any review that LOSES findings relative to text mode (schema over-constraining — check `required` fields vs. what the model emits)
+- ❌ `[structured]` fallback warnings on EVERY call (provider integration broken; the run silently became a text-mode run — quality identical but #390's guarantee is not exercised)
+- ❌ Throttle storms doubling: a parked review re-invoking structured AND text per agent (the throttle-rethrow guard regressed)
 
 ---
 
