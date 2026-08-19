@@ -131,6 +131,8 @@ The same fail-safe semantics apply at both severities: missing file content → 
 
 ### FP-G — Linter-aware style agent  ✅ SHIPPED
 
+> **RETIRED (#387, 2026-08-19):** the linter-aware directive was removed. On E2E-36's A/B run the model inverted it — citing the detected ESLint config as a *reason to report* a lint-equivalent nit ("will fail ESLint 'no-unused-vars'"). The #376 Option-1 hard list in `STYLE_REVIEWER_PROMPT` is the sole, unconditional mechanism; `detectLinters` and all threading were deleted, and a unit test locks the style prompt as linter-invariant.
+
 **Where the gap lived:** `STYLE_REVIEWER_PROMPT` said *"Anything already enforced by a linter"* should not be reported — but the model had no way to know what linters the repo had configured. It conservatively reported things like *"missing semicolon"* / *"prefer const"* / *"unused import"* because it didn't trust that a linter would catch them. False-positive surface = the gap between *"what the linter actually does"* and *"what the model assumes the linter does."*
 
 **The fix:**

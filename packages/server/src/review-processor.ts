@@ -8,7 +8,7 @@ import {
   DEFAULT_CONFIG, mergeConfig,
   BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, mergeScoreToReviewEvent,
   buildInlineComments, extractInlineCommentTitle,
-  fetchRepoConfig, fetchConventions, detectLinters, type DetectedLinter,
+  fetchRepoConfig, fetchConventions,
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
@@ -587,34 +587,15 @@ export async function processReviewJob(
     }
 
     // Load repo conventions (AGENTS.md / CONVENTIONS.md or the `conventions:` path)
-    // and (FP-G) probe the repo root for known linter marker files in parallel.
-    // detectLinters performs at most one root-listing API call + one extra
-    // pyproject.toml fetch on Python repos; both are bounded and best-effort.
-    // FP-J L1 — fetch category dispute rates in parallel. The helper
+    // and (FP-J L1) category dispute rates in parallel. The dispute helper
     // returns `{}` on every failure path (no rollup yet, store unwired,
-    // upstream-degraded), which is identical to "no down-weighting" in
-    // the verdict-tier softener — so the await is safe to bundle here.
-    const [conventionsResult, detectedLinters, categoryDisputeRates] = await Promise.all([
+    // upstream-degraded), identical to "no down-weighting" downstream.
+    const [conventionsResult, categoryDisputeRates] = await Promise.all([
       fetchConventions(octokit, owner, repo, ref, config.conventions),
-      detectLinters(octokit, owner, repo, ref).catch((err) => {
-        // Fail-open by design: linter detection is best-effort and a
-        // transient infra issue (rate-limit, 5xx, network blip) must not
-        // block the review. Surface the status code when available so
-        // post-mortem grep can distinguish 404 (ref gone) from 403 (token
-        // scope) from 5xx (GitHub-side) without rifling through Sentry.
-        const status = (err && typeof err === 'object' && 'status' in err)
-          ? (err as { status?: number }).status
-          : undefined;
-        console.warn('[fp-g] linter detection failed (status=%s):', status ?? 'n/a', err);
-        return [] as DetectedLinter[];
-      }),
       loadCategoryDisputeRates(deps.fpInsightStore, job.installationId),
     ]);
     if (conventionsResult) {
       console.log(`Loaded repo conventions from ${conventionsResult.sourcePath}${conventionsResult.truncated ? ' (truncated)' : ''}`);
-    }
-    if (detectedLinters.length > 0) {
-      console.log('[fp-g] detected linters: %s', detectedLinters.join(', '));
     }
 
     // #235 — pick the org custom agents that apply to this PR (enabled, in
@@ -686,7 +667,6 @@ export async function processReviewJob(
         disputedKeys,
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
-        detectedLinters,
         categoryDisputeRates,
       },
       { llm: deps.llm },

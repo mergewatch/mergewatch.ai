@@ -225,6 +225,22 @@ describe('ORCHESTRATOR_PROMPT — anti-pedantry pass', () => {
   });
 });
 
+// ─── #387 — linter-invariant style prompt + findings-free diagram ───────────
+
+describe('#387 — style prompt is linter-invariant; diagram carries no findings', () => {
+  it('STYLE_REVIEWER_PROMPT contains no linter placeholder or conditioning', () => {
+    expect(STYLE_REVIEWER_PROMPT).not.toContain('{{LINTERS_DETECTED}}');
+    expect(STYLE_REVIEWER_PROMPT).not.toContain('linters configured');
+    // The unconditional hard list remains the sole exclusion mechanism.
+    expect(STYLE_REVIEWER_PROMPT).toContain('Anything already enforced by a linter');
+  });
+
+  it('DIAGRAM_PROMPT bars findings/nits from appearing as nodes or labels', () => {
+    expect(DIAGRAM_PROMPT).toContain('NEVER embed review findings');
+    expect(DIAGRAM_PROMPT).toContain('no "ISSUE:", "BUG:", "WARNING:" annotations');
+  });
+});
+
 // ─── applyConfidenceFloor (configurable FP-A floor) ─────────────────────────
 
 describe('applyConfidenceFloor', () => {
