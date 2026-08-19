@@ -1618,6 +1618,49 @@ describe('runReviewPipeline', () => {
     expect(result.findings[0].title).toBe('Legacy untagged');
   });
 
+  it('#382 — counts agent-response parse failures in parseFailureCount', async () => {
+    const bugFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Real bug', confidence: 90 }]);
+    const summary = JSON.stringify({ summary: 'Refactor.' });
+    const diagram = '%% overview\nflowchart TD\n  A-->B';
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 90, category: 'bug', title: 'Real bug', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      // Security agent: unparseable (truncated) — must count, not throw.
+      '{ "findings": [ { "file": "x.ts", "line": 1, "severity": "critical", "title": "Cut off',
+      bugFinding, JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      summary, diagram, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+
+    expect(result.parseFailureCount).toBe(1);
+    expect(result.findings.map((f) => f.title)).toContain('Real bug');
+  });
+
+  it('#382 — parseFailureCount is 0 on a clean run', async () => {
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
+    const orchestrator = JSON.stringify({
+      findings: [], mergeScore: 5, mergeScoreReason: 'Clean.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Refactor.' }), '%% overview\nflowchart TD\n  A-->B', orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled },
+      { llm },
+    );
+    expect(result.parseFailureCount).toBe(0);
+  });
+
   it('minConfidence — a lowered floor keeps findings the default drops and rewrites the prompt rules', async () => {
     const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'trigger', confidence: 90 }]);
     const summary = JSON.stringify({ summary: 'Refactor.' });

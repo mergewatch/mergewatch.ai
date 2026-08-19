@@ -542,6 +542,37 @@ describe('escapeUserContent + injection sites (#369)', () => {
   });
 });
 
+// ─── parseFailureCount disclosure (#382) ────────────────────────────────────
+
+describe('parse-failure disclosure (#382)', () => {
+  it('renders the unparsed-agent-output warning when parseFailureCount > 0', () => {
+    const result = formatReviewComment(baseOptions({ parseFailureCount: 2 }));
+    expect(result).toContain('Unparsed agent output');
+    expect(result).toContain('2 agent responses could not be parsed');
+    expect(result).toContain('findings may be missing');
+  });
+
+  it('uses singular phrasing for one failure', () => {
+    const result = formatReviewComment(baseOptions({ parseFailureCount: 1 }));
+    expect(result).toContain('1 agent response could not be parsed');
+  });
+
+  it('renders nothing when parseFailureCount is 0 or absent', () => {
+    expect(formatReviewComment(baseOptions({ parseFailureCount: 0 }))).not.toContain('Unparsed agent output');
+    expect(formatReviewComment(baseOptions())).not.toContain('Unparsed agent output');
+  });
+
+  it('is a reliability warning — NOT gated by showSuppressedCount', () => {
+    const result = formatReviewComment(baseOptions({
+      parseFailureCount: 1,
+      suppressedCount: 3,
+      ux: { showSuppressedCount: false },
+    }));
+    expect(result).not.toContain('removed by dedup');
+    expect(result).toContain('Unparsed agent output');
+  });
+});
+
 // ─── buildCheckTitle (#380) ─────────────────────────────────────────────────
 
 describe('buildCheckTitle', () => {
