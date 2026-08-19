@@ -2314,14 +2314,46 @@ describe('verifyFindings', () => {
     expect(llm.calls).toHaveLength(0);
   });
 
-  it('keeps the finding when the LLM call throws — tags it `unverified`', async () => {
+  it('keeps the finding when the LLM call fails on a NON-throttle error — tags it `unverified`', async () => {
     const llm: ILLMProvider = {
       async invoke() {
-        throw new Error('bedrock throttled');
+        throw new Error('model exploded');
       },
     };
     const result = await verifyFindings([critical], fileContents, 'light', llm);
     expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+  });
+
+  it('#386 — a THROTTLED verification call rejects the pass (review parks) instead of degrading the verdict', async () => {
+    // Pre-#386 this path tagged the finding 'unverified', letting the W7
+    // clamp convert a real blocking critical into an advisory 3/5 under
+    // rate-limit pressure (E2E-18a).
+    const llm: ILLMProvider = {
+      async invoke() {
+        throw Object.assign(new Error('Too many requests, please wait before trying again.'), { name: 'ThrottlingException' });
+      },
+    };
+    await expect(verifyFindings([critical], fileContents, 'light', llm)).rejects.toThrow(/Too many requests/);
+  });
+
+  it('#386 — an inconclusive verdict is retried once and the retry verdict wins', async () => {
+    const llm = createMockLLM([
+      '{"confidence": 0.5, "reason": "hard to tell"}',
+      '{"valid": true, "confidence": 0.9, "reason": "confirmed on retry"}',
+    ]);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...critical, verification: 'verified' }]);
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it('#386 — inconclusive twice → still fail-safe unverified (exactly two attempts)', async () => {
+    const llm = createMockLLM([
+      '{"confidence": 0.5, "reason": "hard to tell"}',
+      '{"confidence": 0.4, "reason": "still unsure"}',
+    ]);
+    const result = await verifyFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+    expect(llm.calls).toHaveLength(2);
   });
 
   it('keeps the finding on unparseable LLM output — tags it `unverified`', async () => {

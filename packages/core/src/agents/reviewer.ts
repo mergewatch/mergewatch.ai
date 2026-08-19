@@ -1975,23 +1975,37 @@ ${content}`;
         // fall through to the text path silently. Any OTHER structured error
         // flows to the outer catch below, which keeps the finding as
         // 'unverified' — identical to a failed text invocation.
-        let verdict: { valid?: boolean; reason?: string } | null = null;
-        if (llm.invokeStructured) {
-          try {
-            verdict = (await llm.invokeStructured(modelId, prompt, VERIFIER_VERDICT_SCHEMA, undefined, { temperature: 0 }))
-              .object as { valid?: boolean; reason?: string };
-          } catch (err) {
-            if (!(err instanceof StructuredOutputUnsupportedError)) throw err;
+        const attemptVerdict = async (): Promise<{ valid?: boolean; reason?: string }> => {
+          let verdict: { valid?: boolean; reason?: string } | null = null;
+          if (llm.invokeStructured) {
+            try {
+              verdict = (await llm.invokeStructured(modelId, prompt, VERIFIER_VERDICT_SCHEMA, undefined, { temperature: 0 }))
+                .object as { valid?: boolean; reason?: string };
+            } catch (err) {
+              if (!(err instanceof StructuredOutputUnsupportedError)) throw err;
+            }
           }
+          // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
+          // or verdict-less response is distinguishable from an explicit
+          // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
+          return verdict ?? safeParseJson<{ valid?: boolean; reason?: string }>(
+            normalizeLLMResult(await llm.invoke(modelId, prompt, undefined, { temperature: 0 })).text,
+            {},
+            'valid',
+          );
+        };
+        // #386 — an inconclusive verdict gets ONE retry before it can feed
+        // the W7 clamp: E2E-18a showed a raw string-interpolated SQLi (as
+        // verifiable as criticals get) coming back verdict-less once and
+        // being silently downgraded from blocking 1/5 to advisory 3/5.
+        let parsed = await attemptVerdict();
+        if (parsed.valid === undefined) {
+          console.warn(
+            '[finding-verify] no usable verdict for %s "%s" (%s:%d) — retrying once (#386)',
+            f.severity, f.title, f.file, f.line,
+          );
+          parsed = await attemptVerdict();
         }
-        // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
-        // or verdict-less response is distinguishable from an explicit
-        // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
-        const parsed = verdict ?? safeParseJson<{ valid?: boolean; reason?: string }>(
-          normalizeLLMResult(await llm.invoke(modelId, prompt, undefined, { temperature: 0 })).text,
-          {},
-          'valid',
-        );
         if (parsed.valid === false) {
           // #372 — an intent-shaped dismissal ("the comment says this is
           // test code") is not a legitimate drop: intent does not change
@@ -2040,9 +2054,9 @@ ${content}`;
         if (parsed.valid === true) {
           return { keep: true, verification: 'verified' };
         }
-        // Ambiguous: parsed but no usable verdict.
+        // Ambiguous twice: parsed but no usable verdict even after the retry.
         console.warn(
-          '[finding-verify] no usable verdict for %s "%s" (%s:%d) — keeping finding (unverified, advisory)',
+          '[finding-verify] no usable verdict for %s "%s" (%s:%d) after retry — keeping finding (unverified, advisory)',
           f.severity,
           f.title,
           f.file,
@@ -2050,6 +2064,13 @@ ${content}`;
         );
         return { keep: true, verification: 'unverified' };
       } catch (err) {
+        // #386 — throttles PARK the review (#355 semantics), they never
+        // degrade the verdict: tagging 'unverified' here under rate-limit
+        // pressure let the W7 clamp convert a real blocking critical into
+        // an advisory 3/5 COMMENTED (E2E-18a). Rethrowing aborts the pass;
+        // the handler parks the review and SQS/queue redelivery re-runs it
+        // when the burst clears.
+        if (isThrottleError(err)) throw err;
         console.warn(
           '[finding-verify] verification call failed for %s "%s" (%s:%d) — keeping finding (unverified, advisory):',
           f.severity,
