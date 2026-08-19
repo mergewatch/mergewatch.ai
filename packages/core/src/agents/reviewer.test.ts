@@ -1618,6 +1618,62 @@ describe('runReviewPipeline', () => {
     expect(result.findings[0].title).toBe('Legacy untagged');
   });
 
+  it('#385 — a custom-agent finding survives even when the orchestrator drops it', async () => {
+    const todoAgent = { name: 'no-todo', prompt: 'Flag any new TODO comment', severityDefault: 'critical' as const, enabled: true };
+    const customResponse = validFindingsJson([
+      { file: 'foo.ts', line: 3, severity: 'critical', title: 'New TODO comment added', confidence: 95 },
+    ]);
+    // Orchestrator returns ZERO findings — simulating its anti-pedantry pass
+    // eating the org agent's TODO finding (fixtures#515).
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const llm = createMockLLM([
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Adds code.' }), '%% overview\nflowchart TD\n  A-->B',
+      customResponse, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [todoAgent] },
+      { llm },
+    );
+
+    const todo = result.findings.find((f) => f.title === 'New TODO comment added');
+    expect(todo).toBeDefined();
+    expect(todo!.category).toBe('no-todo');
+    // No verification tag (never subjected to W2) → counts as blocking-capable.
+    expect(todo!.verification).toBeUndefined();
+  });
+
+  it('#385 — a custom-agent finding at a location already surfaced by a kept builtin finding is skipped', async () => {
+    const todoAgent = { name: 'no-todo', prompt: 'Flag any new TODO comment', severityDefault: 'warning' as const, enabled: true };
+    const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Builtin issue', confidence: 90 }]);
+    const customResponse = validFindingsJson([
+      { file: 'foo.ts', line: 3, severity: 'warning', title: 'Custom at same line', confidence: 95 },
+    ]);
+    const orchestrator = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 3, severity: 'warning', confidence: 90, category: 'security', title: 'Builtin issue', description: '', suggestion: '' },
+      ],
+      mergeScore: 3, mergeScoreReason: 'Has warnings.',
+    });
+    const llm = createMockLLM([
+      securityFinding, JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Adds code.' }), '%% overview\nflowchart TD\n  A-->B',
+      customResponse, orchestrator,
+    ]);
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [todoAgent] },
+      { llm },
+    );
+
+    const atLine = result.findings.filter((f) => f.file === 'foo.ts' && f.line === 3);
+    expect(atLine).toHaveLength(1);
+    expect(atLine[0].title).toBe('Builtin issue');
+    // The skipped custom duplicate rolls into suppressedCount.
+    expect(result.suppressedCount).toBeGreaterThanOrEqual(1);
+  });
+
   it('#382 — counts agent-response parse failures in parseFailureCount', async () => {
     const bugFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Real bug', confidence: 90 }]);
     const summary = JSON.stringify({ summary: 'Refactor.' });
@@ -2180,11 +2236,24 @@ describe('verifyFindings', () => {
   };
   const fileContents = { 'src/rag.ts': 'return await searchViaPostgres(q);\n' };
 
-  it('drops a critical the model judges invalid', async () => {
+  it('#385 — a refuted critical is DEMOTED to unverified, never dropped', async () => {
+    // The verifier runs on the light model and can refute a true critical
+    // with a confident misread (fixtures#495: false 5/5 on real SQLi). A
+    // wrongly demoted advisory is visible noise; a falsely refuted critical
+    // is an invisible approval.
     const llm = createMockLLM([
       '{"valid": false, "confidence": 0.95, "reason": "line 1 already awaits searchViaPostgres"}',
     ]);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+  });
+
+  it('#385 — a refuted WARNING is still dropped (drop authority below critical is unchanged)', async () => {
+    const warning = { ...critical, severity: 'warning' as const };
+    const llm = createMockLLM([
+      '{"valid": false, "confidence": 0.95, "reason": "line 1 already awaits searchViaPostgres"}',
+    ]);
+    const result = await verifyFindings([warning], fileContents, 'light', llm);
     expect(result).toEqual([]);
   });
 
@@ -2496,15 +2565,16 @@ describe('verifyFindings', () => {
       expect(fpKIdx).toBeLessThan(priorIdx);
     });
 
-    it('still drops the finding when the model returns valid:false citing the FP-K reason', async () => {
+    it('honours a valid:false FP-K verdict — the critical demotes to unverified (#385)', async () => {
       // End-to-end smoke: prompt instructs, model decides. We control the model
       // decision via the mock; this asserts the verifier honours an
       // abstraction-safe verdict identically to any other valid:false verdict.
+      // #385: on a CRITICAL the honoured verdict now demotes instead of drops.
       const llm = createMockLLM([
         '{"valid": false, "confidence": 0.92, "reason": "abstraction-safe — Drizzle eq() parameterizes the value"}',
       ]);
       const result = await verifyFindings([finding], fileContents, 'light', llm);
-      expect(result).toEqual([]);
+      expect(result).toEqual([{ ...finding, verification: 'unverified' }]);
     });
 
     it('still KEEPS the finding when the model returns valid:true (regression: FP-K must not over-suppress)', async () => {
@@ -3223,12 +3293,15 @@ describe('verifyFindings — intent-claim guard (#372)', () => {
     expect(result[0].verification).toBe('unverified');
   });
 
-  it('still drops a technically-dismissed finding (no regression on real FP removal)', async () => {
+  it('honours a technical (non-intent) dismissal — the critical demotes to unverified (#385)', async () => {
+    // Pre-#385 this dropped outright; the guard distinction still holds:
+    // a technical dismissal is honoured (demotion), an intent-shaped one
+    // is refused. Warnings keep full drop authority (see verifyFindings tests).
     const llm = createMockLLM([
       '{"valid": false, "reason": "The query goes through a parameterized prepared statement two lines up."}',
     ]);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([]);
+    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
   });
 });
 

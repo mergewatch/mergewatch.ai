@@ -975,8 +975,8 @@ PR diff should only touch the `.map(...)` / `return` lines (so the `const rows =
 
 **Expected outcomes**
 
-- [ ] No surviving CRITICAL claiming `searchCandidates` is unawaited / a missing-await race
-- [ ] If an agent produced one, logs show `[critical-verify] dropped false-positive critical … ` with a reason citing the `await` on the assignment line
+- [ ] No BLOCKING critical claiming `searchCandidates` is unawaited / a missing-await race — **#385: a refuted critical demotes instead of deleting**, so the claim may legitimately appear under "Unverified concerns" (advisory, W7-clamped score), never in the attention table
+- [ ] If an agent produced one, logs show `[finding-verify] refuted critical … demoted to unverified (not dropped)` with a reason citing the `await` on the assignment line (warnings still log `dropped false-positive`)
 - [ ] A genuinely-unawaited variant (delete the `await`) is still reported (verification doesn't blanket-suppress)
 - [ ] LLM/infra failure path keeps the finding (do not regress the fail-safe — exercise by pointing at an unreachable model in a self-hosted run)
 
@@ -1241,6 +1241,8 @@ Run the fixtures separately to exercise both branches of the body-handling logic
 ### E2E-29: W10 finding consolidation — fragments on the same region merge
 
 **Behavior**: when the multi-agent pipeline emits multiple findings about the same underlying concern in the same code region — same file, line-span ≤ 50, ≥ 1 shared "significant" token across title + description — `clusterFindings` collapses them into **one** finding carrying the strongest severity, the earliest cited line, and a *"Related concerns clustered into this finding"* list of the absorbed siblings. The reader sees one row in "Requires your attention" where they would have seen N.
+
+> **#385 note:** on the 2026-08-19 run this fixture exposed a verifier false-refutation — the light-model W2 pass refuted the TRUE SQLi (it saw `$n` placeholder tokens and missed that `db.query(sql)` takes no values array), producing a false 5/5. A refuted **critical** now demotes to "Unverified concerns" (score W7-clamped) instead of deleting; a 5/5 all-clear whose summary prose describes a critical is a **failure mode**, never a pass.
 
 Canonical reproduction: voice-bot PR #37 raised three findings about a single "validate the parsed S3 chunk file" concern — `seed.ts:82` (type assertion without runtime validation), `seed.ts:130` (untrusted JSON parsing without validation), `seed.ts:150` (SQL injection risk in dynamic construction). All three share *validation / structure / chunk* tokens; transitively they cluster (`:82↔:130` is 48 lines, `:130↔:150` is 20 lines, both within span 50).
 
@@ -2058,9 +2060,9 @@ Branch: `fixture/54-abstraction-aware`. Three test PRs in sequence:
 
 **Expected outcomes**
 
-- [x] PR-A — verifier drops the "SQL injection on Drizzle eq()" finding with `[finding-verify] dropped false-positive critical "SQL injection..." (...): abstraction-safe — Drizzle eq() parameterizes the value`
-- [x] PR-B — verifier drops the "URL injection on encodeURIComponent" finding similarly
-- [x] PR-C — verifier drops the "XSS via text content" finding similarly
+- [x] PR-A — verifier refutes the "SQL injection on Drizzle eq()" finding; **#385: as a critical it DEMOTES** — log `[finding-verify] refuted critical "SQL injection..." … demoted to unverified (not dropped): abstraction-safe — Drizzle eq() parameterizes the value`; it renders (if at all) only under "Unverified concerns", never as a blocking finding
+- [x] PR-B — verifier refutes the "URL injection on encodeURIComponent" finding similarly (demoted if critical, dropped if warning)
+- [x] PR-C — verifier refutes the "XSS via text content" finding similarly (demoted if critical, dropped if warning)
 - [x] PR-D (regression) — verifier KEEPS the "SQL injection on raw concat" finding (the FP-K abstraction prefix is absent on the cited path → the model must return `valid: true`, the prompt instructs no override)
 - [x] **Back-compat**: a finding on info-only severity is NOT verified (info-level findings skip W2 entirely; no FP-K-augmented prompt is built for them)
 - [x] **Prompt-shape**: the FP-K block renders on FIRST reviews (`previousFindings` empty) — independent of the FP-H/J prior-context placeholder
@@ -2434,7 +2436,7 @@ The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, ap
 
 **How to run.** As an org admin, on an installation with ≥1 repo.
 
-> **⚠️ Prerequisite (#382):** this scenario has a **dashboard-side setup step the automated suite does not seed** — the org agent must exist before the fixture PR opens. Verify the `#AGENTS` sentinel row exists (`aws dynamodb get-item --table-name mergewatch-installations-prod --key '{"installationId":{"S":"<id>"},"repoFullName":{"S":"#AGENTS"}}'`) or the run degrades silently: generic agents flag the planted TODOs and the anti-pedantry pass correctly drops them (the 2026-08-19 run's fixtures#455 "Suppressed: 2" was exactly this, not a filter bug).
+> **⚠️ Prerequisite (#382):** this scenario has a **dashboard-side setup step the automated suite does not seed** — the org agent must exist before the fixture PR opens. Verify the `#AGENTS` sentinel row exists (`aws dynamodb get-item --table-name mergewatch-installations-prod --key '{"installationId":{"S":"<id>"},"repoFullName":{"S":"#AGENTS"}}'`) or the run degrades silently: generic agents flag the planted TODOs and the anti-pedantry pass correctly drops them (the 2026-08-19 run's fixtures#455 "Suppressed: 2" was exactly this, not a filter bug). **With the row seeded**, #385 guarantees the agent's findings survive: custom/org-agent findings bypass the orchestrator's anti-pedantry pass and the W2 verifier's drop authority entirely (deterministic dedup + W3 triage are the only filters) — a seeded run where the TODO findings still vanish is a product regression.
 
 1. **Create (admin):** Settings → Custom Agents → Add agent. Name `no-todo`, prompt "Flag any new TODO comment", severity `critical`, enforcement **blocking**, scope **All repositories**. Save. Reload as a non-admin member → fields are read-only.
 2. **Advisory run:** set the agent to **advisory**, open a PR that adds a `// TODO`. The review surfaces a finding from `no-todo`; the check still passes / score is normal.

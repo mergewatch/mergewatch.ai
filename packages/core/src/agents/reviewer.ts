@@ -1872,6 +1872,25 @@ ${content}`;
             );
             return { keep: true, verification: 'unverified' };
           }
+          // #385 — a refuted CRITICAL demotes to advisory, never deletes.
+          // The verifier runs on the light model and can refute a true
+          // critical with a confident misread (fixtures#495: saw `$n`
+          // placeholder tokens, missed that db.query takes no values
+          // array → false 5/5 on real SQLi). Risk asymmetry: a wrongly
+          // demoted advisory is visible noise; a falsely refuted critical
+          // is an invisible approval. Warnings/info keep full drop
+          // authority; deterministic kills (FP-I L2 above, FP-K,
+          // grounding) are unchanged.
+          if (f.severity === 'critical') {
+            console.warn(
+              '[finding-verify] refuted critical "%s" (%s:%d) demoted to unverified (not dropped): %s',
+              f.title,
+              f.file,
+              f.line,
+              (parsed.reason ?? '').slice(0, 200),
+            );
+            return { keep: true, verification: 'unverified' };
+          }
           console.warn(
             '[finding-verify] dropped false-positive %s "%s" (%s:%d): %s',
             f.severity,
@@ -2365,12 +2384,25 @@ export async function runReviewPipeline(
   // suppression.
   const totalRawFindings = taggedFindings.reduce((sum, t) => sum + (t.findings?.length ?? 0), 0);
 
+  // #385 — custom/org-agent findings are user-legislated policy, so they are
+  // routed AROUND every model-taste layer: the orchestrator (whose
+  // anti-pedantry rule classified a blocking org agent's "new TODO" findings
+  // as pedantry — fixtures#515 — which also meant the #235 blocking gate
+  // could never fire), the W2 verifier's drop authority, FP-A, and the
+  // grounding/line-proximity geometry. They re-enter deterministically just
+  // before W3 triage below — the one legitimate filter, because triage is
+  // user action, not model opinion.
+  const customCategorySet = new Set(enabledCustomAgents.map((a) => a.name));
+  const builtinTagged = taggedFindings.filter((t) => !customCategorySet.has(t.category));
+
   // FP-C — pre-orchestrator same-`(file, line)` cross-agent dedup. Merges
   // exact-line doubles BEFORE the orchestrator's LLM call sees them so the
   // prompt is shorter AND we don't rely on the model to spot identical-
   // location duplicates. Wider line-region clustering is W10's job and runs
-  // POST-orchestrator on the final finding set.
-  const fpCResult = dedupeCrossAgentByLine(taggedFindings);
+  // POST-orchestrator on the final finding set. Custom-agent findings are
+  // excluded (#385): an fp-c merge into a builtin finding would re-expose
+  // them to the orchestrator's drop authority.
+  const fpCResult = dedupeCrossAgentByLine(builtinTagged);
   if (fpCResult.dedupedCount > 0) {
     console.warn(
       '[fp-c] merged %d cross-agent finding%s at the same (file, line)',
@@ -2526,12 +2558,39 @@ export async function runReviewPipeline(
     groundingFileContents,
   );
 
+  // #385 — re-enter the custom/org-agent findings (partitioned out before
+  // fp-c above). Deterministic dedup only: one entry per (agent, file, line),
+  // and a location already surfaced by a kept builtin finding is skipped
+  // (fp-c precedent — the skip rolls into `suppressedCount`). Everything the
+  // model layers could have done to them is bypassed by design.
+  const seenCustomKeys = new Set<string>();
+  const customFindings = customTagged
+    .flatMap((t) => (t.findings ?? []).map((f) => ({ ...f, category: t.category } as OrchestratedFinding)))
+    .filter((f) => {
+      const key = `${f.category}|${f.file}|${f.line}`;
+      if (seenCustomKeys.has(key)) return false;
+      seenCustomKeys.add(key);
+      return !onChangedLines.some((k) => k.file === f.file && k.line === f.line);
+    });
+  if (customFindings.length > 0) {
+    console.log(
+      '[org-agents] %d custom-agent finding%s bypass model filtering (#385)',
+      customFindings.length,
+      customFindings.length === 1 ? '' : 's',
+    );
+  }
+  const preTriageFindings = [
+    ...onChangedLines,
+    ...withCodeFingerprints(customFindings, groundingFileContents),
+  ];
+
   // W3 convergence guard: drop findings the author already rebutted/deferred
   // in a prior `## mergewatch triage` reply (keyed via the W9 stable
   // identity, so the suppression only sticks while the cited code is
-  // unchanged — edit the code and it correctly resurfaces).
+  // unchanged — edit the code and it correctly resurfaces). Applies to
+  // custom-agent findings too — triage is user action, not model taste.
   const { kept: filteredFindings, suppressed: triageSuppressed } = partitionDisputed(
-    onChangedLines,
+    preTriageFindings,
     disputedKeys,
   );
   for (const f of triageSuppressed) {
