@@ -42,13 +42,16 @@ export class LiteLLMProvider implements ILLMProvider {
     }
 
     const data = await response.json() as any;
-    const text = data.choices[0].message.content;
+    // Optional-chained throughout: a misbehaving LiteLLM upstream can return
+    // an empty choices array or omit fields; an empty text degrades into the
+    // pipeline's parse-failure disclosure instead of crashing the review.
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content ?? '';
     const usage = data.usage
       ? { inputTokens: data.usage.prompt_tokens ?? 0, outputTokens: data.usage.completion_tokens ?? 0 }
       : undefined;
     // OpenAI vocab says 'length' where Anthropic says 'max_tokens' — normalize.
-    // Optional-chained: some LiteLLM upstreams omit finish_reason entirely.
-    const finishReason = data.choices?.[0]?.finish_reason;
+    const finishReason = choice?.finish_reason;
     return { text, usage, stopReason: finishReason === 'length' ? 'max_tokens' : finishReason ?? undefined };
   }
 }
