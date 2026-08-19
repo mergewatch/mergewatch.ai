@@ -158,6 +158,12 @@ interface FormatOptions {
   deltaCaption?: string | null;
   /** Number of findings suppressed by orchestrator */
   suppressedCount?: number;
+  /**
+   * #382 — findings-bearing agent responses that failed to parse this run.
+   * Rendered as a reliability warning (not gated by showSuppressedCount):
+   * a non-zero value means findings may be missing from this review.
+   */
+  parseFailureCount?: number;
   /** Number of enabled agents that ran */
   enabledAgentCount?: number;
   /** Total input tokens used */
@@ -317,6 +323,7 @@ export function formatReviewComment(options: FormatOptions): string {
     delta,
     deltaCaption,
     suppressedCount,
+    parseFailureCount,
     inputTokens,
     outputTokens,
     estimatedCostUsd,
@@ -557,7 +564,8 @@ export function formatReviewComment(options: FormatOptions): string {
   // 9. Review details drawer — collapsed: model, time, tokens, cost, suppressed
   const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
   const hasSuppressed = (suppressedCount ?? 0) > 0 && (ux?.showSuppressedCount !== false);
-  const hasDetails = totalTokens > 0 || durationMs != null || model || hasSuppressed || !!conventionsSource;
+  const hasParseFailures = (parseFailureCount ?? 0) > 0;
+  const hasDetails = totalTokens > 0 || durationMs != null || model || hasSuppressed || hasParseFailures || !!conventionsSource;
   if (hasDetails) {
     const detailParts: string[] = [];
     if (totalTokens > 0) {
@@ -593,6 +601,9 @@ export function formatReviewComment(options: FormatOptions): string {
     }
     if (hasSuppressed) {
       lines.push(`| **Suppressed** | ${suppressedCount} finding${suppressedCount !== 1 ? 's' : ''} removed by dedup & quality filters |`);
+    }
+    if (hasParseFailures) {
+      lines.push(`| **\u26A0\uFE0F Unparsed agent output** | ${parseFailureCount} agent response${parseFailureCount !== 1 ? 's' : ''} could not be parsed \u2014 findings may be missing from this review |`);
     }
     if (conventionsSource) {
       const suffix = conventionsTruncated ? ' (truncated)' : '';

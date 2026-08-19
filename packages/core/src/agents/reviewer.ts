@@ -301,6 +301,28 @@ function safeParseJson<T>(raw: string, fallback: T, requiredKey?: string): T {
   return fallback;
 }
 
+/**
+ * #382 — mutable per-pipeline diagnostics. A finding-bearing agent whose
+ * response cannot be parsed contributes ZERO raw findings, so the loss never
+ * shows up in `suppressedCount` (raw − final) and the review looks clean.
+ * The pipeline threads one of these through every findings agent and surfaces
+ * the count as `parseFailureCount` so the comment can disclose the gap.
+ */
+export interface AgentDiagnostics {
+  parseFailures: number;
+}
+
+/** Shared findings-parse tail for every findings-bearing agent. */
+function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentFinding[] {
+  const parsed = tryParseJson<{ findings: AgentFinding[] }>(raw, 'findings');
+  if (parsed === null) {
+    console.warn('Could not parse agent JSON response, using fallback:', raw.trim().slice(0, 200));
+    if (diag) diag.parseFailures++;
+    return [];
+  }
+  return parsed.findings ?? [];
+}
+
 // ─── Agent invocation helper ────────────────────────────────────────────────
 
 /**
@@ -339,11 +361,11 @@ export async function runSecurityAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(SECURITY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Run the bug detection agent. */
@@ -356,11 +378,11 @@ export async function runBugAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(BUG_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Run the style / code-quality agent. Accepts optional custom rules. */
@@ -375,6 +397,7 @@ export async function runStyleAgent(
   conventions?: string,
   agentAuthored?: boolean,
   detectedLinters?: readonly string[],
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   let systemPrompt = STYLE_REVIEWER_PROMPT;
 
@@ -401,8 +424,7 @@ export async function runStyleAgent(
 
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Result from the diagram agent. */
@@ -828,11 +850,11 @@ export async function runErrorHandlingAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(ERROR_HANDLING_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Run the test coverage review agent. */
@@ -845,11 +867,11 @@ export async function runTestCoverageAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(TEST_COVERAGE_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Run the comment accuracy review agent. */
@@ -862,11 +884,11 @@ export async function runCommentAccuracyAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(COMMENT_ACCURACY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
-  return parsed.findings ?? [];
+  return parseAgentFindings(raw, diag);
 }
 
 /** Run the summary agent that produces a human-readable PR summary. */
@@ -948,13 +970,14 @@ export async function runCustomAgent(
   fileFetchOptions?: FileFetchOptions,
   conventions?: string,
   agentAuthored?: boolean,
+  diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   const systemPrompt = `${agentDef.prompt}\n${CUSTOM_AGENT_RESPONSE_FORMAT}`;
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
+  const findings = parseAgentFindings(raw, diag);
   // Apply default severity if agent didn't specify
-  return (parsed.findings ?? []).map((f) => ({
+  return findings.map((f) => ({
     ...f,
     severity: f.severity || agentDef.severityDefault,
   }));
@@ -1249,6 +1272,12 @@ export interface ReviewPipelineResult {
   disputeDisclosure?: string;
   /** Number of findings suppressed by the orchestrator (deduplication + filtering) */
   suppressedCount: number;
+  /**
+   * #382 — findings-bearing agent responses that could not be parsed. These
+   * agents contributed zero raw findings, so the loss is invisible to
+   * `suppressedCount`; a non-zero value means findings may be missing.
+   */
+  parseFailureCount: number;
   /** Number of enabled agents that ran */
   enabledAgentCount: number;
   /** Total input tokens used across all LLM invocations */
@@ -2257,6 +2286,9 @@ export async function runReviewPipeline(
   const changedLines = extractChangedLines(diff);
   const changedFiles = Array.from(changedLines.keys());
 
+  // #382 — collects agent-response parse failures for comment disclosure.
+  const diag: AgentDiagnostics = { parseFailures: 0 };
+
   // Launch all enabled agents with bounded concurrency (see AGENT_CONCURRENCY).
   // Note: summary and diagram agents don't get file fetching (they benefit less from deep context)
   const [
@@ -2265,22 +2297,22 @@ export async function runReviewPipeline(
     summary, diagramResult,
   ] = await withConcurrency<AgentFinding[] | string | DiagramResult>([
     () => enabledAgents.security
-      ? runSecurityAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runSecurityAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.bugs
-      ? runBugAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runBugAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.style
-      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, detectedLinters)
+      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, detectedLinters, diag)
       : Promise.resolve([]),
     () => enabledAgents.errorHandling
-      ? runErrorHandlingAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runErrorHandlingAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.testCoverage
-      ? runTestCoverageAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runTestCoverageAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.commentAccuracy
-      ? runCommentAccuracyAgent(diff, context, lightModelId, llm, fileFetchOptions, tone, conventions, agentAuthored)
+      ? runCommentAccuracyAgent(diff, context, lightModelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.summary
       ? runSummaryAgent(diff, context, lightModelId, llm, conventions, agentAuthored)
@@ -2299,7 +2331,7 @@ export async function runReviewPipeline(
   const customResults = enabledCustomAgents.length > 0
     ? await withConcurrency<AgentFinding[]>(
         enabledCustomAgents.map((agentDef) => () =>
-          runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored)
+          runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored, diag)
             .catch((err) => {
               console.warn(`Custom agent "${agentDef.name}" failed:`, err);
               return [] as AgentFinding[];
@@ -2575,6 +2607,7 @@ export async function runReviewPipeline(
     mergeScoreReason,
     ...(disputeDisclosure ? { disputeDisclosure } : {}),
     suppressedCount: Math.max(0, totalRawFindings - filteredFindings.length),
+    parseFailureCount: diag.parseFailures,
     enabledAgentCount,
     inputTokens: accumulator.totalInputTokens,
     outputTokens: accumulator.totalOutputTokens,
