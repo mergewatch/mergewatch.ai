@@ -18,6 +18,18 @@ describe('LiteLLMProvider', () => {
     vi.clearAllMocks();
   });
 
+  it("normalizes OpenAI finish_reason 'length' to stopReason 'max_tokens'", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        choices: [{ message: { content: 'cut off' }, finish_reason: 'length' }],
+        usage: { prompt_tokens: 1, completion_tokens: 4096 },
+      }),
+    );
+    const provider = new LiteLLMProvider('http://localhost:4000');
+    const result = await provider.invoke('gpt-4', 'prompt');
+    expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
+  });
+
   it('constructs correct URL from baseUrl + /chat/completions', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({

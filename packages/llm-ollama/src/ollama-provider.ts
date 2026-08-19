@@ -37,6 +37,7 @@ export class OllamaLLMProvider implements ILLMProvider {
     const usage = (data.prompt_eval_count != null || data.eval_count != null)
       ? { inputTokens: data.prompt_eval_count ?? 0, outputTokens: data.eval_count ?? 0 }
       : undefined;
-    return { text, usage };
+    // Ollama says 'length' where Anthropic says 'max_tokens' — normalize.
+    return { text, usage, stopReason: data.done_reason === 'length' ? 'max_tokens' : data.done_reason ?? undefined };
   }
 }

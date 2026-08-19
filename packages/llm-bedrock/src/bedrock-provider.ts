@@ -142,6 +142,7 @@ function buildRequestBody(
 interface ParsedResponse {
   text: string;
   usage?: TokenUsage;
+  stopReason?: string;
 }
 
 function parseAnthropicResponse(raw: string): ParsedResponse {
@@ -150,12 +151,17 @@ function parseAnthropicResponse(raw: string): ParsedResponse {
   const usage: TokenUsage | undefined = parsed.usage
     ? { inputTokens: parsed.usage.input_tokens ?? 0, outputTokens: parsed.usage.output_tokens ?? 0 }
     : undefined;
-  return { text, usage };
+  return { text, usage, stopReason: parsed.stop_reason ?? undefined };
 }
 
 function parseTitanResponse(raw: string): ParsedResponse {
   const parsed = JSON.parse(raw);
-  return { text: parsed.results?.[0]?.outputText ?? '' };
+  const completionReason = parsed.results?.[0]?.completionReason;
+  return {
+    text: parsed.results?.[0]?.outputText ?? '',
+    // Titan says LENGTH where Anthropic says max_tokens — normalize.
+    stopReason: completionReason === 'LENGTH' ? 'max_tokens' : completionReason ?? undefined,
+  };
 }
 
 function parseResponse(modelId: string, raw: string): ParsedResponse {
@@ -204,7 +210,7 @@ export class BedrockLLMProvider implements ILLMProvider {
     const response = await this.sendWithSignatureRecovery(command);
     const rawResponse = new TextDecoder().decode(response.body);
     const parsed = parseResponse(modelId, rawResponse);
-    return { text: parsed.text, usage: parsed.usage };
+    return { text: parsed.text, usage: parsed.usage, stopReason: parsed.stopReason };
   }
 
   // Recover from SDK v3's poisoned systemClockOffset in long-lived warm Lambdas.

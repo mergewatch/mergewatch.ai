@@ -18,6 +18,20 @@ describe('OllamaLLMProvider', () => {
     vi.clearAllMocks();
   });
 
+  it("normalizes done_reason 'length' to stopReason 'max_tokens'", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        message: { content: 'cut off' },
+        done_reason: 'length',
+        prompt_eval_count: 10,
+        eval_count: 4096,
+      }),
+    );
+    const provider = new OllamaLLMProvider('http://myhost:11434');
+    const result = await provider.invoke('llama3', 'prompt');
+    expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
+  });
+
   it('constructs correct URL: {baseUrl}/api/chat', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({

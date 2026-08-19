@@ -260,12 +260,58 @@ function extractJsonObjects(text: string): string[] {
 }
 
 /**
+ * Last-resort repair candidates for a JSON object truncated mid-generation
+ * (stopReason max_tokens whose retry also truncated, or a hard stop). Walks
+ * the text string/escape-aware, recording every position where a NESTED
+ * structure closes cleanly; each candidate is the text cut at such a close
+ * plus the closers the open-bracket stack still needs. Cutting only at
+ * completed-element boundaries is load-bearing: a response truncated inside
+ * its FIRST element yields no candidates at all — it must surface as a parse
+ * failure (disclosure / fail-loud), never be "repaired" into a silently
+ * empty result.
+ */
+function repairTruncatedJson(text: string): string[] {
+  const start = text.indexOf('{');
+  if (start === -1) return [];
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  const closeSnapshots: Array<{ pos: number; closers: string }> = [];
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.length === 0) break;
+      stack.pop();
+      if (stack.length === 0) return []; // top-level object completed — not truncated
+      closeSnapshots.push({ pos: i, closers: stack.slice().reverse().join('') });
+    }
+  }
+  const candidates: string[] = [];
+  for (let k = closeSnapshots.length - 1; k >= 0 && candidates.length < 5; k--) {
+    const { pos, closers } = closeSnapshots[k];
+    candidates.push(text.slice(start, pos + 1) + closers);
+  }
+  return candidates;
+}
+
+/**
  * Parse JSON from a model response, or null if nothing usable parses.
  * The model may wrap JSON in markdown code fences, prefix it with prose, or
  * (#382) emit multiple objects — e.g. answering the file-fetch protocol with
  * `{"requestFiles": []}` before the findings object. When `requiredKey` is
  * given, only an object containing that key is accepted, so a protocol or
- * preamble object can never shadow the real payload.
+ * preamble object can never shadow the real payload. A truncated response is
+ * repaired as a last resort (see repairTruncatedJson) — recovering the
+ * complete leading elements rather than losing the whole payload.
  */
 function tryParseJson<T>(raw: string, requiredKey?: string): T | null {
   let cleaned = raw.trim();
@@ -284,6 +330,19 @@ function tryParseJson<T>(raw: string, requiredKey?: string): T | null {
       const parsed = JSON.parse(candidate) as T;
       if (hasKey(parsed)) return parsed;
     } catch { /* try the next candidate */ }
+  }
+  for (const repaired of repairTruncatedJson(cleaned)) {
+    try {
+      const parsed = JSON.parse(repaired) as T;
+      if (hasKey(parsed)) {
+        console.warn(
+          '[json-repair] recovered a truncated JSON response (%d of %d chars kept) — the trailing partial element was dropped',
+          repaired.length,
+          cleaned.length,
+        );
+        return parsed;
+      }
+    } catch { /* try an earlier cut */ }
   }
   return null;
 }
@@ -2294,9 +2353,25 @@ export async function runReviewPipeline(
   // (otherwise lowering the floor below 75 would be inert). No-op at the
   // default. Applied at this choke point so every agent prompt gets it
   // without threading the value through each builder.
-  const llm: ILLMProvider = minConfidence !== CONFIDENCE_FLOOR
+  const floorLlm: ILLMProvider = minConfidence !== CONFIDENCE_FLOOR
     ? { invoke: (m, p, t, s) => cappedLlm.invoke(m, applyConfidenceFloor(p, minConfidence), t, s) }
     : cappedLlm;
+  // Truncation auto-retry: `stopReason === 'max_tokens'` means the response
+  // was cut off at the output cap — the tail (usually the back half of a
+  // findings JSON) was never generated, and no parser can recover it. Retry
+  // once with a doubled cap; if the retry truncates too, downstream handles
+  // it (JSON repair → parse-failure disclosure → fail-loud orchestrator).
+  // This is the detection #382 could not do: providers previously discarded
+  // stop_reason entirely.
+  const llm: ILLMProvider = {
+    invoke: async (m, p, t, s) => {
+      const first = await floorLlm.invoke(m, p, t, s);
+      if (normalizeLLMResult(first).stopReason !== 'max_tokens') return first;
+      const retryCap = Math.min(2 * (t ?? maxTokensPerAgent ?? 4096), 16384);
+      console.warn('[llm] response truncated at the output cap — retrying once with maxTokens %d', retryCap);
+      return floorLlm.invoke(m, p, retryCap, s);
+    },
+  };
 
   // Extract the changed-file set once, up front. Used for:
   //   - FP-D diagram path validation (passed into runDiagramAgent below).

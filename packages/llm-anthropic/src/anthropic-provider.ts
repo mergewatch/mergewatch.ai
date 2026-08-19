@@ -32,6 +32,7 @@ export class AnthropicLLMProvider implements ILLMProvider {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
       },
+      stopReason: response.stop_reason ?? undefined,
     };
   }
 }
