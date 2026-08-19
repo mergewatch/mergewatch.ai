@@ -18,6 +18,15 @@ export interface TokenUsage {
 export interface LLMInvokeResult {
   text: string;
   usage?: TokenUsage;
+  /**
+   * Why generation stopped, normalized to Anthropic vocabulary where the
+   * provider uses different names ('length' → 'max_tokens'). 'max_tokens'
+   * means the response was TRUNCATED at the output cap — the tail was never
+   * generated, so downstream JSON parsing cannot succeed and the pipeline
+   * retries once with a doubled cap. Absent on providers/paths that don't
+   * surface it (legacy behavior: truncation is undetectable).
+   */
+  stopReason?: string;
 }
 
 /**

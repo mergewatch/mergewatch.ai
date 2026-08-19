@@ -169,10 +169,51 @@ describe('runSecurityAgent', () => {
     expect(findings[0].title).toBe('Stub');
   });
 
-  it('#382 — a truncated findings object still falls back to empty (no crash)', async () => {
+  it('#382 — a response truncated inside its FIRST element still falls back to empty (never "repaired" into a silent empty result)', async () => {
     const llm = createMockLLM(['{\n  "findings": [\n    { "file": "src/x.ts", "line": 4, "severity": "critical", "title": "Convention violation:']);
     const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
     expect(findings).toEqual([]);
+  });
+
+  it('json-repair — a response truncated after a complete element recovers the leading findings', async () => {
+    const complete = '{ "file": "a.ts", "line": 2, "severity": "critical", "confidence": 95, "title": "Real issue", "description": "d", "suggestion": "s" }';
+    const llm = createMockLLM([`{\n  "findings": [\n    ${complete},\n    { "file": "b.ts", "line": 9, "sev`]);
+    const findings = await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('Real issue');
+  });
+
+  it('truncation retry — a stopReason max_tokens response is retried once with a raised cap', async () => {
+    const truncated = '{ "findings": [ { "file": "foo.ts", "line": 3, "severity": "critical", "title": "Cut';
+    const full = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'critical', title: 'Recovered on retry', confidence: 95 }]);
+    const calls: Array<{ prompt: string; maxTokens?: number }> = [];
+    let call = 0;
+    const inner: ILLMProvider = {
+      async invoke(_m, prompt, maxTokens) {
+        calls.push({ prompt, maxTokens });
+        call++;
+        // Call 1: security agent, truncated at the cap. Call 2: its retry
+        // (identical prompt), full response. Call 3: the orchestrator.
+        if (call === 1) return { text: truncated, stopReason: 'max_tokens' };
+        if (prompt === calls[0].prompt) return { text: full, stopReason: 'end_turn' };
+        return JSON.stringify({
+          findings: [{ file: 'foo.ts', line: 3, severity: 'critical', confidence: 95, category: 'security', title: 'Recovered on retry', description: '', suggestion: '' }],
+          mergeScore: 2, mergeScoreReason: 'Critical present.',
+        });
+      },
+    };
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: { security: true, bugs: false, style: false, summary: false, diagram: false, errorHandling: false, testCoverage: false, commentAccuracy: false } },
+      { llm: inner },
+    );
+
+    // Retry happened: same prompt sent twice, second time with a raised cap.
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls[1].prompt).toBe(calls[0].prompt);
+    expect(calls[1].maxTokens).toBe(8192);
+    const titles = result.findings.map((f) => f.title);
+    expect(titles).toContain('Recovered on retry');
+    expect(result.parseFailureCount).toBe(0);
   });
 
   it('injects conventions into the prompt when provided', async () => {

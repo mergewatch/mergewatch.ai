@@ -73,7 +73,7 @@ export class TokenAccumulator {
 
 /**
  * Wraps an ILLMProvider to transparently track token usage.
- * Returns the text string from invoke() so callers are unaffected,
+ * Returns the full LLMInvokeResult from invoke() (callers normalize),
  * while accumulating usage in the provided TokenAccumulator.
  */
 export class TrackingLLMProvider implements ILLMProvider {
@@ -92,10 +92,14 @@ export class TrackingLLMProvider implements ILLMProvider {
     prompt: string,
     maxTokens?: number,
     sampling?: LLMSamplingConfig,
-  ): Promise<string> {
+  ): Promise<LLMInvokeResult> {
     const raw = await this.inner.invoke(modelId, prompt, maxTokens, sampling);
     const result = normalizeLLMResult(raw);
     this.accumulator.add(modelId, result.usage);
-    return result.text;
+    // Return the full result (not just text) so `stopReason` survives the
+    // wrapper — the pipeline's truncation retry depends on seeing it. All
+    // callers normalize via normalizeLLMResult, so strings-only consumers
+    // are unaffected.
+    return result;
   }
 }
