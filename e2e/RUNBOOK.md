@@ -980,6 +980,8 @@ PR diff should only touch the `.map(...)` / `return` lines (so the `const rows =
 - [ ] If an agent produced one, logs show `[finding-verify] refuted critical … demoted to unverified (not dropped)` with a reason citing the `await` on the assignment line (warnings still log `dropped false-positive`)
 - [ ] A genuinely-unawaited variant (delete the `await`) is still reported (verification doesn't blanket-suppress)
 - [ ] LLM/infra failure path keeps the finding (do not regress the fail-safe — exercise by pointing at an unreachable model in a self-hosted run)
+- [ ] **#386:** a THROTTLED verification call parks the whole review (queued check, redelivery) — it must NEVER tag the finding `unverified`, which would let the W7 clamp silently downgrade a blocking critical to advisory under burst pressure (the E2E-18a regression: real SQLi → 3/5 COMMENTED)
+- [ ] **#386:** an inconclusive verdict is retried once (`[finding-verify] no usable verdict … retrying once` log line) before the `unverified` tag can feed the clamp
 
 **Failure modes**
 - ❌ "Missing await" critical rendered despite `const rows = await kbStore.searchCandidates(...)` in the file (#31/#39 regression)
