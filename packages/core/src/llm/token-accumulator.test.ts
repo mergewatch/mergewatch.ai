@@ -86,14 +86,17 @@ describe('TokenAccumulator', () => {
 });
 
 describe('TrackingLLMProvider', () => {
-  it('wraps inner provider and returns text string', async () => {
+  it('wraps inner provider and returns the full result (stopReason survives the wrapper)', async () => {
     const inner: ILLMProvider = {
-      invoke: async () => ({ text: 'hello', usage: { inputTokens: 10, outputTokens: 5 } }),
+      invoke: async () => ({ text: 'hello', usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'max_tokens' }),
     };
     const acc = new TokenAccumulator();
     const tracking = new TrackingLLMProvider(inner, acc);
     const result = await tracking.invoke('model', 'prompt');
-    expect(result).toBe('hello');
+    expect(result.text).toBe('hello');
+    // The truncation retry in runReviewPipeline depends on this field
+    // surviving the wrapper — it used to be stripped here.
+    expect(result.stopReason).toBe('max_tokens');
   });
 
   it('accumulates usage from LLMInvokeResult', async () => {
@@ -114,7 +117,7 @@ describe('TrackingLLMProvider', () => {
     const acc = new TokenAccumulator();
     const tracking = new TrackingLLMProvider(inner, acc);
     const result = await tracking.invoke('model-x', 'prompt');
-    expect(result).toBe('plain string');
+    expect(result.text).toBe('plain string');
     expect(acc.totalInputTokens).toBe(0);
     expect(acc.totalOutputTokens).toBe(0);
   });

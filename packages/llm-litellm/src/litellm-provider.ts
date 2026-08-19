@@ -46,6 +46,8 @@ export class LiteLLMProvider implements ILLMProvider {
     const usage = data.usage
       ? { inputTokens: data.usage.prompt_tokens ?? 0, outputTokens: data.usage.completion_tokens ?? 0 }
       : undefined;
-    return { text, usage };
+    // OpenAI vocab says 'length' where Anthropic says 'max_tokens' — normalize.
+    const finishReason = data.choices[0].finish_reason;
+    return { text, usage, stopReason: finishReason === 'length' ? 'max_tokens' : finishReason ?? undefined };
   }
 }

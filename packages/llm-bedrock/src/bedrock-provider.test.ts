@@ -107,6 +107,28 @@ describe('BedrockLLMProvider', () => {
     expect(result.usage).toBeUndefined();
   });
 
+  it('surfaces Anthropic stop_reason as stopReason (truncation detection)', async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      content: [{ type: 'text', text: 'cut off mid-JSON' }],
+      usage: { input_tokens: 100, output_tokens: 4096 },
+      stop_reason: 'max_tokens',
+    }));
+
+    const provider = new BedrockLLMProvider();
+    const result = await provider.invoke('us.anthropic.claude-opus-4-6-v1', 'prompt');
+    expect(result.stopReason).toBe('max_tokens');
+  });
+
+  it("normalizes Titan completionReason 'LENGTH' to stopReason 'max_tokens'", async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      results: [{ outputText: 'cut off', completionReason: 'LENGTH' }],
+    }));
+
+    const provider = new BedrockLLMProvider();
+    const result = await provider.invoke('amazon.titan-text-express-v1', 'prompt');
+    expect(result.stopReason).toBe('max_tokens');
+  });
+
   it('uses default maxTokens of 4096', async () => {
     mockSend.mockResolvedValueOnce(makeResponse({
       content: [{ type: 'text', text: 'ok' }],

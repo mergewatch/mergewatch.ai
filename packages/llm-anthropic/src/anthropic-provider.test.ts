@@ -32,6 +32,17 @@ describe('AnthropicLLMProvider', () => {
     });
   });
 
+  it('surfaces stop_reason as stopReason (truncation detection)', async () => {
+    mockCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'cut off mid-JSON' }],
+      usage: { input_tokens: 10, output_tokens: 4096 },
+      stop_reason: 'max_tokens',
+    });
+    const provider = new AnthropicLLMProvider('test-api-key');
+    const result = await provider.invoke('claude-sonnet-4-20250514', 'hello');
+    expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
+  });
+
   it('returns text from first content block', async () => {
     mockCreate.mockResolvedValueOnce({
       content: [{ type: 'text', text: 'The answer is 42' }],
