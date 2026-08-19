@@ -223,26 +223,82 @@ function buildPrompt(
 }
 
 /**
- * Safely parse JSON from a model response.
- * The model may wrap JSON in markdown code fences — strip those first.
+ * Scan text for top-level balanced JSON objects, respecting string literals
+ * and escapes. Returns each candidate's exact source slice, in order. This is
+ * what lets a response like `{"requestFiles": []}` + prose + `{"findings":
+ * [...]}` yield BOTH objects instead of one invalid first-brace-to-last-brace
+ * span (#382 failure mode A).
  */
-function safeParseJson<T>(raw: string, fallback: T): T {
+function extractJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    // Quotes in prose outside any object are not JSON strings.
+    if (ch === '"' && depth > 0) { inString = true; continue; }
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+/**
+ * Parse JSON from a model response, or null if nothing usable parses.
+ * The model may wrap JSON in markdown code fences, prefix it with prose, or
+ * (#382) emit multiple objects — e.g. answering the file-fetch protocol with
+ * `{"requestFiles": []}` before the findings object. When `requiredKey` is
+ * given, only an object containing that key is accepted, so a protocol or
+ * preamble object can never shadow the real payload.
+ */
+function tryParseJson<T>(raw: string, requiredKey?: string): T | null {
   let cleaned = raw.trim();
   // Strip markdown code fences if present
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
-  // Try to extract JSON object from mixed prose+JSON responses
-  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) cleaned = match[0];
-  }
+  const hasKey = (v: unknown): boolean =>
+    !requiredKey || (typeof v === 'object' && v !== null && requiredKey in (v as object));
   try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    console.warn('Could not parse agent JSON response, using fallback:', cleaned.slice(0, 200));
-    return fallback;
+    const direct = JSON.parse(cleaned) as T;
+    if (hasKey(direct)) return direct;
+  } catch { /* fall through to the object scan */ }
+  for (const candidate of extractJsonObjects(cleaned)) {
+    try {
+      const parsed = JSON.parse(candidate) as T;
+      if (hasKey(parsed)) return parsed;
+    } catch { /* try the next candidate */ }
   }
+  return null;
+}
+
+/**
+ * Safely parse JSON from a model response, with a fallback for callers where
+ * a lost payload is tolerable (a single agent's findings; a caption). Callers
+ * where a parse failure must NOT fail open (the orchestrator) use
+ * tryParseJson directly and handle null loudly.
+ */
+function safeParseJson<T>(raw: string, fallback: T, requiredKey?: string): T {
+  const parsed = tryParseJson<T>(raw, requiredKey);
+  if (parsed !== null) return parsed;
+  console.warn('Could not parse agent JSON response, using fallback:', raw.trim().slice(0, 200));
+  return fallback;
 }
 
 // ─── Agent invocation helper ────────────────────────────────────────────────
@@ -286,7 +342,7 @@ export async function runSecurityAgent(
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(SECURITY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -303,7 +359,7 @@ export async function runBugAgent(
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(BUG_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -345,7 +401,7 @@ export async function runStyleAgent(
 
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -775,7 +831,7 @@ export async function runErrorHandlingAgent(
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(ERROR_HANDLING_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -792,7 +848,7 @@ export async function runTestCoverageAgent(
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(TEST_COVERAGE_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -809,7 +865,7 @@ export async function runCommentAccuracyAgent(
 ): Promise<AgentFinding[]> {
   const prompt = buildPrompt(COMMENT_ACCURACY_REVIEWER_PROMPT, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   return parsed.findings ?? [];
 }
 
@@ -829,7 +885,7 @@ export async function runSummaryAgent(
   const raw = normalizeLLMResult(
     await llm.invoke(modelId, prompt, undefined, { temperature: 0.3 }),
   ).text;
-  const parsed = safeParseJson<{ summary: string }>(raw, { summary: '' });
+  const parsed = safeParseJson<{ summary: string }>(raw, { summary: '' }, 'summary');
   return parsed.summary;
 }
 
@@ -871,7 +927,7 @@ export async function runDeltaCaptionAgent(
     const raw = normalizeLLMResult(
       await llm.invoke(modelId, prompt, undefined, { temperature: 0.2 }),
     ).text;
-    const parsed = safeParseJson<{ caption: string }>(raw, { caption: '' });
+    const parsed = safeParseJson<{ caption: string }>(raw, { caption: '' }, 'caption');
     const caption = (parsed.caption ?? '').trim();
     return caption.length > 0 ? caption : null;
   } catch (err) {
@@ -896,7 +952,7 @@ export async function runCustomAgent(
   const systemPrompt = `${agentDef.prompt}\n${CUSTOM_AGENT_RESPONSE_FORMAT}`;
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions);
-  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] });
+  const parsed = safeParseJson<{ findings: AgentFinding[] }>(raw, { findings: [] }, 'findings');
   // Apply default severity if agent didn't specify
   return (parsed.findings ?? []).map((f) => ({
     ...f,
@@ -1030,11 +1086,26 @@ export async function runOrchestratorAgent(
     .replace(PREVIOUS_FINDINGS_PLACEHOLDER, buildPreviousFindingsBlock(previousFindings))
     + `\n\n--- Findings from all agents (new on this commit) ---\n${JSON.stringify(allFindings, null, 2)}`;
 
+  // #382 — the orchestrator must never fail OPEN: its old empty-findings
+  // parse fallback flowed into the "no action items → 5/5" path, turning a
+  // truncated/unparseable response into a silent approval with every raw
+  // finding counted as "suppressed" (fixtures#465: 7 findings → 5/5). Retry
+  // the invocation once; if the retry is also unparseable, throw so the
+  // review fails loudly (failure check run) instead of approving blind.
+  type OrchestratorRaw = { findings: OrchestratedFinding[]; mergeScore?: number; mergeScoreReason?: string };
   const raw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
-  const parsed = safeParseJson<{ findings: OrchestratedFinding[]; mergeScore?: number; mergeScoreReason?: string }>(
-    raw,
-    { findings: [] },
-  );
+  let parsed = tryParseJson<OrchestratorRaw>(raw, 'findings');
+  if (!parsed) {
+    console.warn('[orchestrator] unparseable response — retrying once:', raw.trim().slice(0, 200));
+    const retryRaw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
+    parsed = tryParseJson<OrchestratorRaw>(retryRaw, 'findings');
+    if (!parsed) {
+      console.error('[orchestrator] unparseable response after retry:', retryRaw.trim().slice(0, 200));
+      throw new Error(
+        'Orchestrator response could not be parsed after retry — failing the review instead of approving with all findings dropped (#382)',
+      );
+    }
+  }
   return {
     findings: parsed.findings ?? [],
     mergeScore: Math.max(1, Math.min(5, parsed.mergeScore ?? 3)),
@@ -1755,7 +1826,7 @@ ${content}`;
         // Sentinel default `{}` (not `{ valid: true }`) so an unparseable
         // or verdict-less response is distinguishable from an explicit
         // pass — the fail-safe "keep" is then logged AND tagged 'unverified'.
-        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {});
+        const parsed = safeParseJson<{ valid?: boolean; reason?: string }>(raw, {}, 'valid');
         if (parsed.valid === false) {
           // #372 — an intent-shaped dismissal ("the comment says this is
           // test code") is not a legitimate drop: intent does not change
