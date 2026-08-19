@@ -1526,6 +1526,7 @@ Branch: `fixture/36-linter-aware`. Two arms (linter present / absent) sharing a 
 - ❌ ANY behavioral difference between the two arms (the prompt is linter-invariant by construction — a difference means something new is conditioning on repo contents)
 - ❌ A finding rationalized by linter enforcement ("will fail ESLint" / "the linter will flag") — the #387 inversion signature
 - ❌ The diagram embeds a finding/nit node ("ISSUE:", "BUG:", "WARNING:" labels)
+- ❌ **#394:** a review comment ships a mermaid block that fails to render (entity-mangled syntax `R&lsqb;…&rsqb;`, glued `<br/>` statements, unbalanced quotes, or a `|…|` label spanning lines) — the structural validation gate must DROP the diagram section instead; a `[diagram] unbalanced quotes — skipping sanitation` log line marks the bail path
 
 ---
 
