@@ -87,8 +87,6 @@ export {
   ORCHESTRATOR_PROMPT,
   PREVIOUS_FINDINGS_PLACEHOLDER,
   CONVENTIONS_PLACEHOLDER,
-  LINTER_AWARE_PLACEHOLDER,
-  buildLinterAwareDirective,
   PRIOR_CONTEXT_PLACEHOLDER,
   buildVerifierPriorContext,
   RESPOND_PROMPT,
@@ -219,11 +217,10 @@ export type {
 export {
   fetchConventions,
   truncateConventions,
-  detectLinters,
   DEFAULT_CONVENTIONS_PATHS,
   CONVENTIONS_MAX_BYTES,
 } from './config/conventions.js';
-export type { ConventionsLoadResult, DetectedLinter } from './config/conventions.js';
+export type { ConventionsLoadResult } from './config/conventions.js';
 
 // ─── Context (agentic file fetching) ─────────────────────────────────────────
 export { fetchFileContents } from './context/file-fetcher.js';

@@ -19,8 +19,6 @@ import {
   SECURITY_REVIEWER_PROMPT,
   BUG_REVIEWER_PROMPT,
   STYLE_REVIEWER_PROMPT,
-  LINTER_AWARE_PLACEHOLDER,
-  buildLinterAwareDirective,
   SUMMARY_PROMPT,
   DIAGRAM_PROMPT,
   PREVIOUS_DIAGRAM_PLACEHOLDER,
@@ -502,7 +500,6 @@ export async function runStyleAgent(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
-  detectedLinters?: readonly string[],
   diag?: AgentDiagnostics,
 ): Promise<AgentFinding[]> {
   let systemPrompt = STYLE_REVIEWER_PROMPT;
@@ -517,16 +514,6 @@ export async function runStyleAgent(
   } else {
     systemPrompt = systemPrompt.replace('CUSTOM_RULES_PLACEHOLDER', '');
   }
-
-  // FP-G — inject the linter-aware directive (or strip the placeholder if no
-  // linters were detected). When the placeholder gets stripped, the
-  // surrounding newlines collapse via the standard trim/collapse pass on the
-  // prompt builder below, so the back-compat "no linter" prompt matches the
-  // pre-FP-G shape.
-  systemPrompt = systemPrompt.replace(
-    LINTER_AWARE_PLACEHOLDER,
-    buildLinterAwareDirective(detectedLinters ?? []),
-  );
 
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, tone, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
@@ -1351,16 +1338,6 @@ export interface ReviewPipelineOptions {
    */
   agentAuthored?: boolean;
 
-  /**
-   * FP-G — list of linters detected at the repo root (e.g. `['eslint',
-   * 'biome']`). When non-empty, the style agent's prompt gets a directive
-   * telling it to defer all formatting / lint-equivalent findings to those
-   * tools. The directive is style-agent-specific — the security, bug,
-   * error-handling, and test-coverage agents are unaffected. Computed by
-   * the handler via `detectLinters()`; empty/undefined disables the
-   * directive (back-compat: prompt is byte-identical to the pre-FP-G shape).
-   */
-  detectedLinters?: readonly string[];
 
   /**
    * FP-J L1 — per-category historical dispute rate, derived from FB-E's
@@ -2432,7 +2409,6 @@ export async function runReviewPipeline(
     previousFindings,
     conventions,
     agentAuthored,
-    detectedLinters,
   } = options;
 
   // Wrap the LLM provider to track token usage across all agents
@@ -2512,7 +2488,7 @@ export async function runReviewPipeline(
       ? runBugAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.style
-      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, detectedLinters, diag)
+      ? runStyleAgent(diff, context, modelId, llm, customStyleRules, fileFetchOptions, tone, conventions, agentAuthored, diag)
       : Promise.resolve([]),
     () => enabledAgents.errorHandling
       ? runErrorHandlingAgent(diff, context, modelId, llm, fileFetchOptions, tone, conventions, agentAuthored, diag)

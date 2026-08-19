@@ -307,39 +307,19 @@ describe('runStyleAgent', () => {
 
   // ─── FP-G — linter-aware directive ───────────────────────────────────────
 
-  it('FP-G — injects the linter-aware directive when linters are detected', async () => {
-    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
-    await runStyleAgent(
-      sampleDiff, sampleContext, 'model-1', llm,
-      /* customRules */ [],
-      /* fileFetchOptions */ undefined,
-      /* tone */ undefined,
-      /* conventions */ undefined,
-      /* agentAuthored */ undefined,
-      /* detectedLinters */ ['eslint', 'biome'],
-    );
-    const prompt = llm.calls[0].prompt;
-    expect(prompt).toContain('This repository has the following linters configured: biome, eslint');
-    expect(prompt).toContain('Defer ALL formatting and lint-equivalent findings');
-    expect(prompt).not.toContain('{{LINTERS_DETECTED}}');
-  });
-
-  it('FP-G — strips the placeholder when no linters are detected (back-compat)', async () => {
+  // #387 — the FP-G linter-aware directive was REMOVED: the model inverted
+  // it into a reporting rationale ("will fail ESLint 'no-unused-vars'"),
+  // making behavior linter-conditional in the wrong direction. The style
+  // prompt is now linter-invariant; the unconditional hard list stands alone.
+  it('#387 — the style prompt carries no linter conditioning of any kind', async () => {
     const llm = createMockLLM([JSON.stringify({ findings: [] })]);
     await runStyleAgent(sampleDiff, sampleContext, 'model-1', llm, []);
     const prompt = llm.calls[0].prompt;
     expect(prompt).not.toContain('{{LINTERS_DETECTED}}');
-    expect(prompt).not.toContain('This repository has the following linters configured');
-  });
-
-  it('FP-G — strips the placeholder when an empty detectedLinters list is passed', async () => {
-    const llm = createMockLLM([JSON.stringify({ findings: [] })]);
-    await runStyleAgent(
-      sampleDiff, sampleContext, 'model-1', llm, [],
-      undefined, undefined, undefined, undefined,
-      /* detectedLinters */ [],
-    );
-    expect(llm.calls[0].prompt).not.toContain('linters configured');
+    expect(prompt).not.toContain('linters configured');
+    expect(prompt).not.toContain('the linter will catch');
+    // The hard list is the sole (unconditional) exclusion mechanism.
+    expect(prompt).toContain('Anything already enforced by a linter');
   });
 });
 

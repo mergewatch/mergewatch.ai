@@ -162,7 +162,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
 | [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
 | [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
-| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Lint-equivalent nits (semicolons, import order) are NEVER bot findings — the style prompt's anti-noise hard list excludes them unconditionally (#376 decision); `detectLinters` still injects the reinforcing directive when linters exist; the style agent stays alive for concrete-impact findings | 2m | 60s | FP-G, #376 |
+| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Lint-equivalent nits (semicolons, import order) are NEVER bot findings — the style prompt's anti-noise hard list excludes them unconditionally (#376 decision); the prompt is LINTER-INVARIANT (#387 removed the FP-G directive after the model inverted it into a reporting rationale); the style agent stays alive for concrete-impact findings | 2m | 60s | FP-G, #376, #387 |
 | [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
 | [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
 | [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
@@ -1505,9 +1505,9 @@ Branch: `fixture/35-inline-resolve`. Two-commit sequence:
 
 **Status:** ✅ SHIPPED, contract revised per the **#376 decision (Option 1)**. See [`docs/false-positive-reduction-plan.md` → FP-G](./../docs/false-positive-reduction-plan.md#fp-g--linter-aware-style-agent--shipped).
 
-**Behavior (revised):** `STYLE_REVIEWER_PROMPT`'s anti-noise hard list ("DO NOT report … regardless of confidence") excludes lint-equivalent nits **unconditionally** — semicolons/formatting, import ordering, and anything a linter would enforce are never bot findings, linter or no linter. That supersedes FP-G's original arm-differentiation: the linter-aware directive (`detectLinters` root-listing → `buildLinterAwareDirective`) still injects when linters are detected, but is reinforcement of the base list, not the deciding mechanism. The style agent's remaining in-scope set is deliberately narrow: performance anti-patterns with concrete impact, actively misleading names, incorrect TypeScript types, and bug-prone duplication. Structural preferences (god functions, deep nesting, magic numbers) are also on the hard list and are NOT findings.
+**Behavior (revised again per #387):** `STYLE_REVIEWER_PROMPT`'s anti-noise hard list ("DO NOT report … regardless of confidence") excludes lint-equivalent nits **unconditionally** — semicolons/formatting, import ordering, and anything a linter would enforce are never bot findings, linter or no linter. **The FP-G linter-aware directive was REMOVED (#387):** on the 2026-08-19 run the model inverted it — the linter-present arm surfaced an unused-import finding rationalized as "will fail ESLint 'no-unused-vars'" while the byte-identical no-linter arm stayed clean. Enumerating linters in the prompt primed exactly the reporting it was meant to suppress. `detectLinters` and all its plumbing are gone; the style prompt is **linter-invariant by construction** (locked by a unit test). The style agent's remaining in-scope set is deliberately narrow: performance anti-patterns with concrete impact, actively misleading names, incorrect TypeScript types, and bug-prone duplication. Structural preferences (god functions, deep nesting, magic numbers) are also on the hard list and are NOT findings.
 
-The directive remains **style-agent-specific** — security, bug, error-handling, and test-coverage agents are unaffected. Best-effort: any `detectLinters` API error returns `[]` (caught + logged) and the placeholder is stripped.
+Relatedly (#387's "related noise"): `DIAGRAM_PROMPT` now bars review findings/nits from appearing as diagram nodes or labels (no "ISSUE:" annotations) — the diagram depicts structure and flow only.
 
 **Setup**
 
@@ -1517,14 +1517,15 @@ Branch: `fixture/36-linter-aware`. Two arms (linter present / absent) sharing a 
 
 - [ ] **No** semicolon / unused-import / formatting / import-order findings in either arm — the hard list, not linter detection, is the mechanism
 - [ ] The in-scope control finding (misleading name / concrete-impact perf) **does** appear in both arms — proves the style agent is alive, not over-suppressed
-- [ ] Linter-present arm only: prompt includes the `LINTER_AWARE_DIRECTIVE` block and the `[fp-g] detected linters:` log line; no-linter arm: placeholder stripped, no log line
+- [ ] **#387:** the two arms are indistinguishable to the pipeline — no `[fp-g]` log lines exist at all, and no finding text cites a linter as its rationale ("will fail ESLint …" is the failure signature)
 - [ ] Regression check: security / bug / error-handling / test-coverage prompts byte-identical regardless of linter detection
 
 **Failure modes**
 - ❌ Lint-equivalent nits appear in either arm (the hard list stopped being honored)
 - ❌ The in-scope control finding is missing in either arm (over-suppression — the agent is dead, not restrained; this is what separates #376's intended behavior from a real defect)
-- ❌ Detection false-positive: a linter config outside the repo root triggers the directive (scan is root-only)
-- ❌ A `pyproject.toml` without `[tool.ruff]` triggers `ruff`
+- ❌ ANY behavioral difference between the two arms (the prompt is linter-invariant by construction — a difference means something new is conditioning on repo contents)
+- ❌ A finding rationalized by linter enforcement ("will fail ESLint" / "the linter will flag") — the #387 inversion signature
+- ❌ The diagram embeds a finding/nit node ("ISSUE:", "BUG:", "WARNING:" labels)
 
 ---
 
