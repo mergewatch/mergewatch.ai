@@ -32,6 +32,32 @@ describe('OllamaLLMProvider', () => {
     expect((result as { stopReason?: string }).stopReason).toBe('max_tokens');
   });
 
+  it('#390 — invokeStructured sends the schema as `format` and parses the content object', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        message: { content: '{"findings": []}' },
+        done_reason: 'stop',
+        prompt_eval_count: 3,
+        eval_count: 4,
+      }),
+    );
+    const provider = new OllamaLLMProvider('http://myhost:11434');
+    const schema = { type: 'object', properties: { findings: { type: 'array' } } };
+    const result = await provider.invokeStructured('llama3', 'prompt', schema);
+
+    expect(result.object).toEqual({ findings: [] });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.format).toEqual(schema);
+  });
+
+  it('#390 — invokeStructured throws on prose content (older Ollama ignoring `format`)', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ message: { content: 'no json here' }, done_reason: 'stop' }),
+    );
+    const provider = new OllamaLLMProvider('http://myhost:11434');
+    await expect(provider.invokeStructured('llama3', 'prompt', {})).rejects.toThrow();
+  });
+
   it('constructs correct URL: {baseUrl}/api/chat', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({

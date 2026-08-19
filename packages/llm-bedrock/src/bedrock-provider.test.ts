@@ -155,6 +155,42 @@ describe('BedrockLLMProvider', () => {
     expect(body.max_tokens).toBe(8192);
   });
 
+  it('#390 — invokeStructured forces the emit_result tool and returns its input', async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      content: [{ type: 'tool_use', name: 'emit_result', input: { findings: [] } }],
+      usage: { input_tokens: 50, output_tokens: 20 },
+      stop_reason: 'tool_use',
+    }));
+
+    const provider = new BedrockLLMProvider();
+    const schema = { type: 'object', properties: { findings: { type: 'array' } } };
+    const result = await provider.invokeStructured('us.anthropic.claude-opus-4-6-v1', 'prompt', schema);
+
+    expect(result.object).toEqual({ findings: [] });
+    expect(result.stopReason).toBe('tool_use');
+    const body = getLastCommandBody();
+    expect(body.tools[0].name).toBe('emit_result');
+    expect(body.tools[0].input_schema).toEqual(schema);
+    expect(body.tool_choice).toEqual({ type: 'tool', name: 'emit_result' });
+  });
+
+  it('#390 — invokeStructured throws when no tool_use block came back', async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      content: [{ type: 'text', text: 'prose instead' }],
+      stop_reason: 'end_turn',
+    }));
+    const provider = new BedrockLLMProvider();
+    await expect(provider.invokeStructured('us.anthropic.claude-opus-4-6-v1', 'prompt', {}))
+      .rejects.toThrow(/no tool_use block/);
+  });
+
+  it('#390 — Titan throws StructuredOutputUnsupportedError before any network call', async () => {
+    const provider = new BedrockLLMProvider();
+    await expect(provider.invokeStructured('amazon.titan-text-express-v1', 'prompt', {}))
+      .rejects.toMatchObject({ name: 'StructuredOutputUnsupportedError' });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
   it('has correct SUPPORTED_MODELS mapping', () => {
     expect(SUPPORTED_MODELS['claude-opus-4.6']).toBe('us.anthropic.claude-opus-4-6-v1');
     expect(SUPPORTED_MODELS['claude-sonnet-4']).toBe('us.anthropic.claude-sonnet-4-20250514-v1:0');

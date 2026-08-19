@@ -62,7 +62,14 @@ All agent logic depends only on these interfaces. No package in `core/` imports 
 ```typescript
 // packages/core/src/llm/types.ts
 export interface ILLMProvider {
-  invoke(modelId: string, prompt: string, maxTokens?: number): Promise<string>;
+  invoke(modelId: string, prompt: string, maxTokens?: number, sampling?: LLMSamplingConfig): Promise<string | LLMInvokeResult>;
+  // #390 — optional schema-constrained invocation: the provider forces the
+  // model to emit an object matching the JSON Schema (forced tool use on
+  // Anthropic/Bedrock, response_format json_schema on OpenAI-compatible
+  // endpoints, `format` on Ollama). Providers that can't support it throw
+  // StructuredOutputUnsupportedError pre-network; the pipeline falls back
+  // to the hardened text parser.
+  invokeStructured?(modelId: string, prompt: string, schema: object, maxTokens?: number, sampling?: LLMSamplingConfig): Promise<LLMStructuredResult>;
 }
 ```
 
