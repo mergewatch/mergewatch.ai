@@ -115,7 +115,7 @@ The SK is `account.login.toLowerCase()` — GitHub logins are case-insensitive f
 
 ### Phase 3 — operator script, dashboard, docs
 
-- [ ] **Goal:** make both features operable and visible.
+- [x] **Goal:** make both features operable and visible. **Shipped in PR #412.**
 - **Files:** `scripts/grant-oss.ts` (`--org`, `--preapprove`, `--list-preapprovals`; `--inspect` renders scope + any pending row; `--revoke` handles org grants and pending rows), `packages/lambda/src/handlers/billing.ts` (`ossStatus` currently returns `null` when the repo list is empty — line 242 — which would make every org-scoped grant invisible; add `scope` and `account` to the payload), `packages/dashboard/app/dashboard/billing/BillingClient.tsx` (render "all public repositories" instead of a repo list under org scope), `docs/oss-program.md`, `e2e/RUNBOOK.md`, `packages/billing/src/constants.ts` (`OSS_PREAPPROVAL_TTL_DAYS = 90`).
 - **Tests:** `ossStatus` returns non-null for an org-scoped grant with no repo list; still `null` with no grant at all; script arg-parsing rejects `--org` combined with a repo list.
 - **RUNBOOK:** E2E-93 — operator lifecycle: `--org`, `--preapprove`, `--list-preapprovals`, `--inspect`, `--revoke`; `--stage` guard still refuses to default.
@@ -125,6 +125,9 @@ The SK is `account.login.toLowerCase()` — GitHub logins are case-insensitive f
 
 - **`OSS_PREAPPROVAL_TTL_DAYS` moved from stage 3 to stage 2.** `putPreapproval` needs it to compute `preapprovalExpiresAt`, so it had to ship with the store rather than with the script that calls it.
 - **`getBillingFields`'s `ProjectionExpression` was missing the stage-1 fields.** Found while writing stage 2. `packages/billing/src/dynamo-billing.ts` projects an explicit attribute list, and stage 1 added `ossGrantScope` / `ossGrantAccount` to `BillingFields` without adding them there — so the gate would have read `ossGrantScope` as `undefined`, defaulted to `'repos'`, and silently ignored every org-scoped grant. Latent (nothing wrote the field until stage 2), fixed in stage 2. The file's own comment warns about exactly this; MergeWatch's review of #410 did not catch it.
+- **`ossStatus` had to be exported** from `packages/lambda/src/handlers/billing.ts` to be testable. It is a pure function over billing fields; the alternative was leaving the regression this stage fixes uncovered.
+- **`scripts/grant-oss.ts` duplicates constants and the pre-approval row shape** from `@mergewatch/billing` instead of importing them. Forced: workspace packages do not resolve from the repo root (root `package.json` has no dependencies and pnpm only hoists third-party deps there), so the script can import the AWS SDK and Octokit but never `@mergewatch/*`. The file already duplicated `DEFAULT_CAP_CENTS` / `DEFAULT_TERM_MONTHS` for the same reason. Both sides are commented; E2E-93 lists drift as a failure mode.
+- **Dashboard lint could not be run** — `packages/dashboard` has no ESLint config and `pnpm run lint` drops into an interactive setup prompt. Pre-existing; the dashboard still builds as part of `pnpm run build`.
 - **Date arithmetic is UTC, not local.** `setMonth`/`setDate` shift by an extra hour across a DST boundary, which would make a grant's expiry depend on the timezone of whoever ran the operator script. `addMonths` uses `setUTCMonth`; the TTL is plain millisecond arithmetic. Pinned by tests that run the same computation under four timezones.
 
 ## Out of scope / deferred
