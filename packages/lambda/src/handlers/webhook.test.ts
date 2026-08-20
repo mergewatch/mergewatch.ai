@@ -651,3 +651,104 @@ describe('enqueueReviewJob transport (#355)', () => {
     expect(mockSqsSend).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Config must be read at the PR head ref (#399 / #400)
+//
+// Both bugs were the same mistake: `.mergewatch.yml` fetched without a ref
+// resolves against the DEFAULT BRANCH, so config that lives on the PR branch
+// is invisible. That made agentReview detection fall through to 'human' and
+// made the whole config block inert on mention-triggered reviews.
+// ---------------------------------------------------------------------------
+
+function makeIssueCommentEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'created',
+    issue: {
+      number: 7,
+      pull_request: { url: 'https://api.github.com/repos/octo/repo/pulls/7' },
+    },
+    comment: {
+      body: '@mergewatch review',
+      user: { login: 'alice', id: 1, avatar_url: '', type: 'User' },
+    },
+    sender: { login: 'alice', id: 1, avatar_url: '', type: 'User' },
+    repository: {
+      id: 1,
+      name: 'repo',
+      full_name: 'octo/repo',
+      owner: { login: 'octo', id: 1, avatar_url: '', type: 'User' },
+      private: false,
+      html_url: '',
+      default_branch: 'main',
+      visibility: 'public',
+    },
+    installation: { id: 99 },
+    ...overrides,
+  };
+}
+
+function makeIssueCommentApiEvent(body: string) {
+  return {
+    body,
+    headers: {
+      'x-hub-signature-256': signBody(body),
+      'x-github-event': 'issue_comment',
+    },
+  } as any;
+}
+
+describe('handler — repo config is read at the PR head ref (#399/#400)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    mockFindExistingBotComment.mockResolvedValue(null);
+  });
+
+  function enqueuedPayload() {
+    const invokeInput = (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input;
+    return JSON.parse(invokeInput.Payload.toString());
+  }
+
+  it('fetches .mergewatch.yml at the head SHA when classifying a pull_request (#399)', async () => {
+    mockGetInstallationOctokit.mockResolvedValue({});
+
+    const body = JSON.stringify(makePullRequestEvent());
+    await handler(makeApiGatewayEvent(body));
+
+    expect(mockFetchRepoConfig).toHaveBeenCalled();
+    // (octokit, owner, repo, ref) — the 4th arg is what makes an agentReview
+    // block that only exists on the PR branch visible to the classifier.
+    expect(mockFetchRepoConfig.mock.calls[0][3]).toBe('abc123');
+  });
+
+  it('puts the head SHA on a mention-triggered job so config does not fall back to base (#400)', async () => {
+    const mockPullsGet = vi.fn().mockResolvedValue({ data: { head: { sha: 'head-sha-999' } } });
+    mockGetInstallationOctokit.mockResolvedValue({ pulls: { get: mockPullsGet } });
+
+    const body = JSON.stringify(makeIssueCommentEvent());
+    const res = await handler(makeIssueCommentApiEvent(body));
+
+    expect(res.statusCode).toBe(200);
+    expect(mockPullsGet).toHaveBeenCalledWith({ owner: 'octo', repo: 'repo', pull_number: 7 });
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const payload = enqueuedPayload();
+    expect(payload.mentionTriggered).toBe(true);
+    expect(payload.headSha).toBe('head-sha-999');
+  });
+
+  it('still enqueues the mention-triggered review when the head-SHA lookup fails', async () => {
+    const mockPullsGet = vi.fn().mockRejectedValue(new Error('boom'));
+    mockGetInstallationOctokit.mockResolvedValue({ pulls: { get: mockPullsGet } });
+
+    const body = JSON.stringify(makeIssueCommentEvent());
+    const res = await handler(makeIssueCommentApiEvent(body));
+
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const payload = enqueuedPayload();
+    expect(payload.mentionTriggered).toBe(true);
+    expect(payload.headSha).toBeUndefined();
+  });
+});

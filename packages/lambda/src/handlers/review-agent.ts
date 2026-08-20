@@ -228,11 +228,14 @@ async function handleInlineReplyMode(
     const prevReviews = await reviewStore.queryByPR(repoFullName, `${prNumber}#`, 5).catch(() => [] as ReviewItem[]);
     const latestReview = prevReviews.find((r) => r.status === 'complete');
 
-    // Load repo conventions from the review's head SHA if we have one, else default branch.
+    // Load repo config + conventions from the review's head SHA if we have one,
+    // else default branch. The config read must use the same ref as the
+    // conventions read, or `conventions:` set on the PR branch is looked up
+    // against a path that only exists at head (#400).
     const ref = latestReview?.prNumberCommitSha
       ? (latestReview.prNumberCommitSha as string).split('#')[1]
       : undefined;
-    const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+    const yamlConfig = await fetchRepoConfig(octokit, owner, repo, ref).catch(() => null);
     const conventionsResult = await fetchConventions(octokit, owner, repo, ref, yamlConfig?.conventions).catch(() => null);
 
     const result = await handleInlineReply(

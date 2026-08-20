@@ -227,7 +227,9 @@ async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
   let source: 'agent' | 'human' | undefined;
   let agentKind: ReviewJobPayload['agentKind'];
   if (octokit) {
-    const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+    // Head SHA, not the default branch: agentReview is commonly enabled on the
+    // PR branch itself, and reading base made every such PR classify as 'human' (#399).
+    const yamlConfig = await fetchRepoConfig(octokit, owner, repo, pull_request.head?.sha).catch(() => null);
     const agentReviewConfig: AgentReviewConfig | undefined = yamlConfig?.agentReview
       ? mergeConfig(yamlConfig).agentReview
       : undefined;
@@ -274,6 +276,30 @@ async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps)
 
   const { mode, userComment } = parsed;
 
+  // #400 — issue_comment payloads carry no head SHA. Without it the job's
+  // config reads fall back to the default branch, so the PR branch's
+  // `.mergewatch.yml` (excludePatterns, ux, codebaseAwareness, customAgents)
+  // is silently ignored on every mention-triggered review. Best-effort: keep
+  // the review going with the old behavior if the lookup fails.
+  const headSha = await deps.authProvider
+    .getInstallationOctokit(installation.id)
+    .then((octokit) =>
+      octokit.pulls.get({
+        owner: repository.owner.login,
+        repo: repository.name,
+        pull_number: issue.number,
+      }),
+    )
+    .then(({ data }) => data.head?.sha)
+    .catch((err) => {
+      console.warn(
+        'Failed to resolve head SHA for mention-triggered review — config will read from the default branch:',
+        `${repository.full_name}#${issue.number}`,
+        err,
+      );
+      return undefined;
+    });
+
   const job: ReviewJobPayload = {
     installationId: installation.id,
     owner: repository.owner.login,
@@ -281,6 +307,7 @@ async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps)
     prNumber: issue.number,
     mode,
     mentionTriggered: true,
+    headSha,
     ...ossRepoFields(repository),
     ...(userComment ? { userComment, userCommentAuthor: comment.user.login } : {}),
   };
@@ -350,7 +377,9 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
   // Refetch the PR so we get labels/draft/changed_files for the job payload.
   const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
 
-  const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+  // Read config at the head SHA — an agentReview block on the PR branch is
+  // invisible from the default branch (#399).
+  const yamlConfig = await fetchRepoConfig(octokit, owner, repo, pr.head?.sha).catch(() => null);
   const agentReviewConfig: AgentReviewConfig | undefined = yamlConfig?.agentReview
     ? mergeConfig(yamlConfig).agentReview
     : undefined;
