@@ -59,5 +59,7 @@ export function attemptFromEvent(event: ReviewAgentEvent): number {
 export function rateLimitedCheckSummary(attempt: number, parkedAtIso: string): string {
   return `Attempt ${attempt} of 3 parked at ${parkedAtIso} — the model provider is rate limiting requests. `
     + 'MergeWatch retries automatically via the review queue; under burst load a retry can take ~30 minutes. '
-    + 'If all attempts exhaust, the job lands in the review dead-letter queue for operator redrive.';
+    + 'If all attempts exhaust, the job is dead-lettered and automatically re-driven every few '
+    + 'minutes until the provider recovers (#398), so a long outage still resolves without '
+    + 'intervention. You can also re-run this check or comment `@mergewatch review` to retry now.';
 }

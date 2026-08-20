@@ -46,6 +46,14 @@ describe('rateLimitedCheckSummary (#370)', () => {
     expect(s).toContain('Attempt 2 of 3');
     expect(s).toContain('parked at 2026-08-18T01:35:13.000Z');
     expect(s).toContain('retries automatically');
-    expect(s).toContain('dead-letter queue');
+    expect(s).toContain('dead-lettered');
+  });
+
+  it('promises automatic redrive, not manual operator rescue (#398)', () => {
+    // The DLQ used to be a terminal resting place that only an operator could
+    // empty; the sweeper made that copy a lie.
+    const s = rateLimitedCheckSummary(3, '2026-08-19T19:31:56.000Z');
+    expect(s).toContain('automatically re-driven');
+    expect(s).not.toContain('operator redrive');
   });
 });

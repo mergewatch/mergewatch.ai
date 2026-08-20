@@ -499,6 +499,62 @@ Resources:
           - handlers/insights-rollup.ts
 
   # ===========================================================================
+  # Lambda: Review DLQ auto-redrive (#398)
+  # ===========================================================================
+  # The review queue retries a throttled job 3 times ~6 minutes apart — about
+  # 18 minutes of cover, sized for burst contention. A provider quota window
+  # is a different animal: on 2026-08-19 Bedrock rejected requests for ~2.75
+  # hours and 28 of 57 reviews exhausted all attempts in the first minute,
+  # landing in the DLQ where only a manual operator redrive could rescue them.
+  # Their check runs sat `in_progress` indefinitely.
+  #
+  # This sweeper returns DLQ messages to the review queue on a schedule, so an
+  # outage of any length self-heals. Redrives carry a generation counter with
+  # a growing delay, and are abandoned (with an honest failing check run)
+  # once the cap is hit.
+
+  DlqRedriveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'mergewatch-dlq-redrive-${Stage}'
+      Description: Returns dead-lettered review jobs to the review queue so provider outages self-heal (#398)
+
+      CodeUri: ../packages/lambda/src/
+      Handler: handlers/dlq-redrive.handler
+
+      # Trivial workload — SQS receive/send/delete plus an occasional check-run
+      # write on abandonment.
+      MemorySize: 256
+
+      # Bounded by MAX_MESSAGES_PER_RUN (50) × a few SQS round trips.
+      Timeout: 120
+
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Environment:
+        Variables:
+          REVIEW_QUEUE_URL: !Ref ReviewQueue
+          REVIEW_DLQ_URL: !Ref ReviewDLQ
+
+      # Every 5 minutes. The DLQ only fills after a job's 3 attempts are
+      # exhausted, so this is responsive without being chatty.
+      Events:
+        RedriveSweep:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Description: Sweep the review DLQ back onto the review queue (#398)
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        EntryPoints:
+          - handlers/dlq-redrive.ts
+
+  # ===========================================================================
   # DynamoDB Table: Installations
   # ===========================================================================
   # Tracks GitHub App installations and per-repo configuration.
@@ -1130,6 +1186,14 @@ Resources:
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt ReviewQueue.Arn
+              # #398 — the DLQ sweeper reads and deletes dead-lettered jobs
+              # before re-sending them to ReviewQueue (SendMessage above).
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ReviewDLQ.Arn
 
   # ===========================================================================
   # AWS Amplify Hosting — Next.js Dashboard
