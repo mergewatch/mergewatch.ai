@@ -215,6 +215,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
+| [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #409 |
 | [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #409 |
 | [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
 | [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 |
@@ -3162,6 +3163,48 @@ Then exhaust the free tier (or set `freeReviewsUsed` to 5 and `balanceCents` to 
 - ❌ A pre-#409 grant starts covering unnamed repos (absent `ossGrantScope` misread as org) — this silently sponsors open-core commercial repos
 - ❌ The cap stops applying under org scope (`cap_exceeded` never fires) — a runaway org has no ceiling
 - ❌ Gate and accrual disagree: `billingCheck` says `oss` but `recordReview` charges anyway, or vice versa
+
+---
+
+### E2E-92: #409 — OSS pre-approval claimed automatically on install
+
+**Status:** 🚧 In review (#409, stage 2).
+
+**Behavior:** an operator can approve an org **before** it has installed the App. The approval is parked as a `#PENDING-OSS` row in the installations table, keyed by the lowercased org login. When `installation.created` arrives, the webhook claims it: an org-scoped grant is written to that installation's `#SETTINGS` row and the pending row is marked `claimedAt`. The org's very first PR is already sponsored — no operator step in between.
+
+The claim is guarded on `attribute_not_exists(ossGrantExpiresAt)`, so a webhook redelivery (or an operator who granted manually in the meantime) never resets an existing grant. A claimed row is inert: uninstall/reinstall does not re-grant.
+
+**Setup.** Stage 2 ships no operator command (`--preapprove` lands in stage 3), so write the pending row by hand on dev:
+
+```bash
+aws dynamodb put-item --profile mergewatch --region us-west-2 \
+  --table-name mergewatch-installations-dev \
+  --item '{"installationId":{"S":"#PENDING-OSS"},"repoFullName":{"S":"<org-login-lowercased>"},
+           "orgLogin":{"S":"<Org-Login>"},"capCents":{"N":"2000"},"months":{"N":"12"},
+           "note":{"S":"e2e-92"},"preapprovedAt":{"S":"2026-08-20T12:00:00.000Z"},
+           "preapprovalExpiresAt":{"S":"2026-11-18T12:00:00.000Z"}}'
+```
+
+Then install the App on a test org that has **never** installed it before (an existing installation won't emit `installation.created`).
+
+**Expected outcomes.**
+- [ ] Webhook log shows `[oss] pre-approval claimed for <org> install=<id> scope=org cap=2000c expires=…`
+- [ ] The installation's `#SETTINGS` row now has `ossGrantScope=org`, `ossGrantAccount={id,login}`, `ossGrantExpiresAt` ~12 months out, `ossMonthlyCapCents=2000`, and an `ossGrantNote` containing both the operator note and `claimed from pre-approval`
+- [ ] The pending row now carries `claimedAt` and `claimedInstallationId`
+- [ ] A PR on any **public** repo in that org is sponsored — `[billing] allow install=<id> reason=oss` — with `freeReviewsUsed` still 0
+- [ ] Grant term runs from the **claim**, not the approval (write a pre-approval dated weeks ago; expiry should still be ~12 months from install)
+- [ ] Redeliver the `installation.created` webhook from the GitHub App's Advanced tab → log shows `reason=grant_exists`, and `ossGrantExpiresAt` is **unchanged**
+- [ ] Uninstall and reinstall → log shows `reason=already_claimed`; no new grant is written
+- [ ] A pending row with `preapprovalExpiresAt` in the past → `reason=expired`, nothing written to `#SETTINGS`, row stamped `expiredAt`
+- [ ] Casing: a row written as `acme-corp` is still claimed when the org login is `Acme-Corp`
+- [ ] An org with **no** pending row installs normally, with no `[oss]` log line at all
+
+**Failure modes.**
+- ❌ A redelivery **resets** `ossGrantExpiresAt` — the condition guard regressed, and an operator's amendment or revocation is silently undone
+- ❌ The pending row is marked claimed but no grant landed (ordering inverted) — the approval is spent and the org gets nothing, with no error anywhere
+- ❌ A claim failure returns non-200 or aborts `storeInstallation` — the installation record is lost, which is far worse than a missed sponsorship
+- ❌ An expired pre-approval still fires — the 90-day TTL is the only forcing function to re-review a stale decision
+- ❌ The claim runs in self-hosted mode (`isSaas()` guard regressed) — Postgres has no billing columns and the write targets a table that doesn't exist
 
 ---
 

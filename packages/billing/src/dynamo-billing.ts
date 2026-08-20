@@ -23,9 +23,13 @@ export async function getBillingFields(
       + 'prCount, prTimestamps, totalBilledCents, autoReloadEnabled, '
       + 'autoReloadThresholdCents, autoReloadAmountCents, autoReloadInFlight, '
       + 'blockedAt, blockIssueNumber, blockIssueRepo, '
-      // OSS Program (#261). Omitting a field here reads it back as undefined
-      // with no error, which would silently disable sponsorship — keep this
-      // list in sync with BillingFields.
+      // OSS Program (#261, org scope #409). Omitting a field here reads it back
+      // as undefined with no error, which would silently disable sponsorship —
+      // keep this list in sync with BillingFields. `ossGrantScope` in
+      // particular: absent reads as 'repos', so leaving it out of the
+      // projection would make every org-scoped grant behave as a grant naming
+      // no repos at all.
+      + 'ossGrantScope, ossGrantAccount, '
       + 'ossGrantRepos, ossGrantExpiresAt, ossGrantedAt, ossGrantNote, '
       + 'ossMonthlyCapCents, ossPeriod, ossSponsoredCentsThisPeriod, '
       + 'ossSponsoredCentsLifetime',

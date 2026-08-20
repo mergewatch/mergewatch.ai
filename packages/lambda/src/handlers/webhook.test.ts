@@ -54,6 +54,13 @@ vi.mock('@aws-sdk/lib-dynamodb', () => ({
   PutCommand: class { input: unknown; constructor(input: unknown) { this.input = input; } },
 }));
 
+const mockClaimOssPreapproval = vi.fn();
+const mockIsSaas = vi.fn(() => true);
+vi.mock('@mergewatch/billing', () => ({
+  claimOssPreapproval: (...args: unknown[]) => mockClaimOssPreapproval(...args),
+  isSaas: () => mockIsSaas(),
+}));
+
 vi.mock('../github-auth-ssm.js', () => ({
   SSMGitHubAuthProvider: class {
     getInstallationOctokit(id: number) { return mockGetInstallationOctokit(id); }
@@ -780,5 +787,98 @@ describe('handler — repo config is read at the PR head ref (#399/#400)', () =>
     const payload = enqueuedPayload();
     expect(payload.mentionTriggered).toBe(true);
     expect(payload.headSha).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #409 — OSS pre-approval claimed on installation.created
+// ---------------------------------------------------------------------------
+
+describe('handler — OSS pre-approval claim on install (#409)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSaas.mockReturnValue(true);
+    mockClaimOssPreapproval.mockResolvedValue({ claimed: false, reason: 'no_preapproval' });
+  });
+
+  function makeInstallationEvent(action = 'created') {
+    return {
+      action,
+      installation: {
+        id: 48210231,
+        account: { id: 9931, login: 'acme-corp' },
+        app_id: 1,
+        target_type: 'Organization',
+        created_at: '2026-08-20T12:00:00Z',
+        updated_at: '2026-08-20T12:00:00Z',
+      },
+      repositories: [{ id: 1, full_name: 'acme-corp/api', private: false }],
+      sender: { login: 'someone', id: 1, type: 'User' },
+    };
+  }
+
+  function installationApiEvent(action = 'created'): any {
+    const body = JSON.stringify(makeInstallationEvent(action));
+    return {
+      body,
+      headers: {
+        'x-hub-signature-256': signBody(body),
+        'x-github-event': 'installation',
+      },
+    };
+  }
+
+  it('attempts a claim on installation.created', async () => {
+    await handler(installationApiEvent('created'));
+
+    expect(mockClaimOssPreapproval).toHaveBeenCalledTimes(1);
+    const [, , installationId, account] = mockClaimOssPreapproval.mock.calls[0];
+    expect(installationId).toBe('48210231');
+    expect(account).toEqual({ id: 9931, login: 'acme-corp' });
+  });
+
+  it('passes the installation id as a string, matching the table key type', async () => {
+    await handler(installationApiEvent('created'));
+    expect(typeof mockClaimOssPreapproval.mock.calls[0][2]).toBe('string');
+  });
+
+  for (const action of ['deleted', 'suspend', 'unsuspend', 'new_permissions_accepted']) {
+    it(`never claims on installation.${action}`, async () => {
+      // These carry the same account. Claiming on any of them would burn a
+      // pre-approval against an installation that is going away or already
+      // granted.
+      await handler(installationApiEvent(action));
+      expect(mockClaimOssPreapproval).not.toHaveBeenCalled();
+    });
+  }
+
+  it('does not claim in self-hosted mode', async () => {
+    // The whole OSS gate sits behind isSaas(); Postgres has no billing columns.
+    mockIsSaas.mockReturnValue(false);
+    await handler(installationApiEvent('created'));
+    expect(mockClaimOssPreapproval).not.toHaveBeenCalled();
+  });
+
+  it('still returns 200 when the claim throws', async () => {
+    // An installation must be recorded even if the OSS claim fails — losing the
+    // install record is far worse than missing a sponsorship.
+    mockClaimOssPreapproval.mockRejectedValue(new Error('dynamo exploded'));
+
+    const result = await handler(installationApiEvent('created'));
+
+    expect(result.statusCode).toBe(200);
+  });
+
+  it('returns 200 on a successful claim', async () => {
+    mockClaimOssPreapproval.mockResolvedValue({
+      claimed: true,
+      expiresAt: '2027-08-20T12:00:00.000Z',
+      capCents: 2000,
+    });
+
+    const result = await handler(installationApiEvent('created'));
+
+    expect(result.statusCode).toBe(200);
+    expect(mockClaimOssPreapproval).toHaveBeenCalledTimes(1);
   });
 });

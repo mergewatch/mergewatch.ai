@@ -100,14 +100,14 @@ The SK is `account.login.toLowerCase()` — GitHub logins are case-insensitive f
 
 ### Phase 1 — org scope in the gate
 
-- [ ] **Goal:** `ossGrantScope: 'org'` sponsors every public repo in the installation. Pure logic; nothing writes the field yet.
+- [x] **Goal:** `ossGrantScope: 'org'` sponsors every public repo in the installation. Pure logic; nothing writes the field yet. **Shipped in PR #410** (MergeWatch 5/5, no findings).
 - **Files:** `packages/core/src/types/db.ts` (two fields + revise the "no installation-wide mode" comment), `packages/billing/src/oss-grant.ts` (the branch), `packages/billing/src/index.ts` (re-export any new type), `packages/billing/src/oss-grant.test.ts`, `packages/billing/src/record-review.test.ts`.
 - **Tests:** org-scope eligible with an empty/absent repo list; org scope still rejects private (`repo_not_public`); org scope still respects expiry and cap; absent `ossGrantScope` behaves byte-for-byte as today (back-compat); `repos` scope with an empty list is still `no_grant`; `recordReview` accrues (and does not touch balance or `freeReviewsUsed`) under org scope.
 - **RUNBOOK:** E2E-91 — org-scoped grant sponsors a new public repo with no operator action, and stops sponsoring it when flipped private.
 
 ### Phase 2 — pre-approval store + claim on install
 
-- [ ] **Goal:** pre-approve an org that hasn't installed; the grant lands automatically on `installation.created`.
+- [x] **Goal:** pre-approve an org that hasn't installed; the grant lands automatically on `installation.created`. **Shipped in PR #411.**
 - **Files:** new `packages/billing/src/oss-preapproval.ts` (`putPreapproval`, `getPreapproval`, `listPreapprovals`, `claimOssPreapproval`), `packages/billing/src/index.ts`, `packages/lambda/src/handlers/webhook.ts` (call the claim from `handleInstallationEvent`, `created` action only), new `packages/billing/src/oss-preapproval.test.ts`, `packages/lambda/src/handlers/webhook.test.ts`.
 - **Tests:** claim writes an org-scoped grant; redelivery is a no-op (condition fails); an existing grant is never overwritten; an expired pre-approval writes nothing and stamps `expiredAt`; a claimed row is inert on reinstall; login casing is normalized; a claim failure doesn't break `storeInstallation`; non-`created` actions never claim.
 - **RUNBOOK:** E2E-92 — pre-approve an org, install the App, first PR is sponsored with no operator step in between.
@@ -120,6 +120,12 @@ The SK is `account.login.toLowerCase()` — GitHub logins are case-insensitive f
 - **Tests:** `ossStatus` returns non-null for an org-scoped grant with no repo list; still `null` with no grant at all; script arg-parsing rejects `--org` combined with a repo list.
 - **RUNBOOK:** E2E-93 — operator lifecycle: `--org`, `--preapprove`, `--list-preapprovals`, `--inspect`, `--revoke`; `--stage` guard still refuses to default.
 - **Docs:** update `docs/oss-program.md` **in place** rather than creating a `docs/pending/` doc. The #261 doc already graduated; a parallel pending doc that gets merged back in at the end is pure churn, and the "named repos only" section is now actively wrong and should not stay wrong for three PRs.
+
+## Deviations from the plan as written
+
+- **`OSS_PREAPPROVAL_TTL_DAYS` moved from stage 3 to stage 2.** `putPreapproval` needs it to compute `preapprovalExpiresAt`, so it had to ship with the store rather than with the script that calls it.
+- **`getBillingFields`'s `ProjectionExpression` was missing the stage-1 fields.** Found while writing stage 2. `packages/billing/src/dynamo-billing.ts` projects an explicit attribute list, and stage 1 added `ossGrantScope` / `ossGrantAccount` to `BillingFields` without adding them there — so the gate would have read `ossGrantScope` as `undefined`, defaulted to `'repos'`, and silently ignored every org-scoped grant. Latent (nothing wrote the field until stage 2), fixed in stage 2. The file's own comment warns about exactly this; MergeWatch's review of #410 did not catch it.
+- **Date arithmetic is UTC, not local.** `setMonth`/`setDate` shift by an extra hour across a DST boundary, which would make a grant's expiry depend on the timezone of whoever ran the operator script. `addMonths` uses `setUTCMonth`; the TTL is plain millisecond arithmetic. Pinned by tests that run the same computation under four timezones.
 
 ## Out of scope / deferred
 
