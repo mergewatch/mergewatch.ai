@@ -494,15 +494,40 @@ export interface BillingFields {
   /** Repo where the billing block issue was filed (owner/repo). */
   blockIssueRepo?: string;
 
-  // --- OSS Program (#261) ---
+  // --- OSS Program (#261, org scope #409) ---
   // Sponsored-review entitlement for approved open-source repositories. Set by
-  // the manually-run `scripts/grant-oss.sh`; never written by the review path
+  // the manually-run `scripts/grant-oss.ts`; never written by the review path
   // except for the accrual counters below.
 
   /**
+   * How this grant decides which repositories it covers (#409).
+   *
+   * - `'repos'` — only the repositories named in `ossGrantRepos`. The original
+   *   #261 behavior, and still the right default: an installation can mix a
+   *   genuinely-OSS repo with public-but-commercial ones (open core), and a
+   *   blanket grant would sponsor all of them.
+   * - `'org'` — every **public** repository in the installation, including ones
+   *   created after the grant was written. For accounts where everything public
+   *   is open source, enumerating repos means every new one silently falls
+   *   outside the grant until an operator notices.
+   *
+   * Absent means `'repos'`, so every grant written before #409 reads correctly
+   * with no migration.
+   */
+  ossGrantScope?: OssGrantScope;
+  /**
+   * The account this grant was written for. **Informational only — the gate
+   * never matches on it.** A grant already lives on exactly one installation's
+   * `#SETTINGS` row, so anything reviewed under that installation belongs to
+   * this account by construction; re-checking it would add a second source of
+   * truth that could disagree with the first. Stored so `--inspect` and the
+   * dashboard can name the account, and so an operator who granted the wrong
+   * installation can see it.
+   */
+  ossGrantAccount?: OssGrantAccount;
+  /**
    * Repositories covered by this grant. Required and non-empty for an active
-   * grant — there is no installation-wide mode, because an installation can
-   * mix a genuinely-OSS repo with public-but-commercial ones (open core).
+   * `'repos'`-scoped grant; ignored entirely under `'org'` scope.
    *
    * Matched on the immutable numeric `id`: GitHub renames and org transfers
    * change `fullName`, so a name-keyed list would silently stop matching and
@@ -520,7 +545,11 @@ export interface BillingFields {
   ossGrantedAt?: string;
   /** Free-text provenance: application reference, project name, approver. Informational. */
   ossGrantNote?: string;
-  /** Fair-use ceiling on sponsored review cost per calendar month, across the named repos. */
+  /**
+   * Fair-use ceiling on sponsored review cost per calendar month, shared across
+   * everything the grant covers. Installation-level under both scopes: org
+   * scope widens which repositories are eligible, never the ceiling.
+   */
   ossMonthlyCapCents?: number;
   /** Accrual period (YYYY-MM) that `ossSponsoredCentsThisPeriod` belongs to. */
   ossPeriod?: string;
@@ -531,12 +560,28 @@ export interface BillingFields {
 }
 
 /**
+ * How an OSS grant decides which repositories it covers (#409). See
+ * `BillingFields.ossGrantScope`.
+ */
+export type OssGrantScope = 'repos' | 'org';
+
+/**
  * One repository covered by an OSS grant. `id` is GitHub's immutable numeric
  * repository ID and is the only field the gate matches on.
  */
 export interface OssGrantRepo {
   id: number;
   fullName: string;
+}
+
+/**
+ * The GitHub account (org or user) an OSS grant was written for. Recorded for
+ * display and audit; the gate never matches on it. See
+ * `BillingFields.ossGrantAccount`.
+ */
+export interface OssGrantAccount {
+  id: number;
+  login: string;
 }
 
 // =============================================================================

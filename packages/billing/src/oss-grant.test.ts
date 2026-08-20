@@ -1,5 +1,5 @@
 /**
- * #261 — OSS Program grant evaluation.
+ * #261 — OSS Program grant evaluation, with #409 org scope.
  *
  * The predicate both the gate and the accrual path depend on, so the negative
  * cases matter as much as the positive one: a false positive sponsors work we
@@ -56,8 +56,9 @@ describe('evaluateOssGrant', () => {
     });
   });
 
-  it('does not sponsor when the grant names no repos', () => {
-    // An empty list is not "all repos" — there is no installation-wide mode.
+  it('does not sponsor when a repos-scoped grant names no repos', () => {
+    // An empty list is not "all repos" — widening to the whole installation
+    // is opt-in via ossGrantScope: 'org' (#409), never inferred from absence.
     const fields = activeGrant({ ossGrantRepos: [] });
     expect(evaluateOssGrant(fields, grantedRepo, NOW)).toEqual({
       eligible: false,
@@ -190,5 +191,158 @@ describe('sponsoredCentsThisPeriod', () => {
 
   it('returns 0 when nothing has accrued yet', () => {
     expect(sponsoredCentsThisPeriod({}, PERIOD)).toBe(0);
+  });
+});
+
+describe('evaluateOssGrant — org scope (#409)', () => {
+  /** An org-scoped grant: no repo list at all, expiring in ~4 months. */
+  function orgGrant(overrides: Partial<BillingFields> = {}): BillingFields {
+    return {
+      ossGrantScope: 'org',
+      ossGrantAccount: { id: 9931, login: 'acme-corp' },
+      ossGrantExpiresAt: '2026-12-01T00:00:00.000Z',
+      ossMonthlyCapCents: 2000,
+      ...overrides,
+    };
+  }
+
+  /** A public repo that no grant has ever named. */
+  const unnamedPublicRepo: RepoContext = {
+    repoId: 777001,
+    repoFullName: 'acme-corp/brand-new-service',
+    isPublic: true,
+  };
+
+  it('sponsors a public repo that the grant never named', () => {
+    // The whole point: a repo created after the grant was written is covered
+    // with no operator action.
+    expect(evaluateOssGrant(orgGrant(), unnamedPublicRepo, NOW)).toEqual({ eligible: true });
+  });
+
+  it('sponsors without any repo list present', () => {
+    // ossGrantRepos is not merely empty, it is absent — that must not read as
+    // `no_grant` the way it does under repos scope.
+    const fields = orgGrant();
+    expect(fields.ossGrantRepos).toBeUndefined();
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({ eligible: true });
+  });
+
+  it('still refuses a private repo', () => {
+    // Org scope widens which repos are eligible, never the visibility rule.
+    const privateRepo: RepoContext = { ...unnamedPublicRepo, isPublic: false };
+    expect(evaluateOssGrant(orgGrant(), privateRepo, NOW)).toEqual({
+      eligible: false,
+      reason: 'repo_not_public',
+    });
+  });
+
+  it('stops sponsoring a repo the moment it is flipped private', () => {
+    const fields = orgGrant();
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW).eligible).toBe(true);
+    expect(evaluateOssGrant(fields, { ...unnamedPublicRepo, isPublic: false }, NOW)).toEqual({
+      eligible: false,
+      reason: 'repo_not_public',
+    });
+  });
+
+  it('still refuses once the grant has expired', () => {
+    const fields = orgGrant({ ossGrantExpiresAt: '2026-08-01T00:00:00.000Z' });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({
+      eligible: false,
+      reason: 'grant_expired',
+    });
+  });
+
+  it('treats a revoked org grant (expiry in the past) as expired', () => {
+    const fields = orgGrant({ ossGrantExpiresAt: '2020-01-01T00:00:00.000Z' });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({
+      eligible: false,
+      reason: 'grant_expired',
+    });
+  });
+
+  it('still refuses once the month is over its fair-use cap', () => {
+    // The cap stays installation-level: org scope widens coverage, not the
+    // ceiling. A runaway org degrades to the standard gate, same as before.
+    const fields = orgGrant({ ossPeriod: PERIOD, ossSponsoredCentsThisPeriod: 2000 });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({
+      eligible: false,
+      reason: 'cap_exceeded',
+    });
+  });
+
+  it('ignores last month\'s spend against this month\'s cap', () => {
+    const fields = orgGrant({ ossPeriod: '2026-07', ossSponsoredCentsThisPeriod: 99999 });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({ eligible: true });
+  });
+
+  it('still requires repo context', () => {
+    expect(evaluateOssGrant(orgGrant(), undefined, NOW)).toEqual({
+      eligible: false,
+      reason: 'no_repo_context',
+    });
+  });
+
+  it('never reports repo_not_granted', () => {
+    // There is no membership check under org scope, so the reason a caller
+    // would have to explain ("your repo isn't on the list") cannot arise.
+    const result = evaluateOssGrant(orgGrant(), unnamedPublicRepo, NOW);
+    expect(result).toEqual({ eligible: true });
+    const privateResult = evaluateOssGrant(
+      orgGrant(),
+      { ...unnamedPublicRepo, isPublic: false },
+      NOW,
+    );
+    expect(privateResult).not.toEqual({ eligible: false, reason: 'repo_not_granted' });
+  });
+
+  it('ignores a stale repo list left behind by an earlier repos-scoped grant', () => {
+    // Re-granting an installation org-wide should not leave the old list
+    // silently narrowing coverage.
+    const fields = orgGrant({
+      ossGrantRepos: [{ id: 4242, fullName: 'acme-corp/only-this-one' }],
+    });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({ eligible: true });
+  });
+
+  it('an org-scoped grant with no expiry is still no_grant', () => {
+    const fields = orgGrant({ ossGrantExpiresAt: undefined });
+    expect(evaluateOssGrant(fields, unnamedPublicRepo, NOW)).toEqual({
+      eligible: false,
+      reason: 'no_grant',
+    });
+  });
+});
+
+describe('evaluateOssGrant — back-compat with pre-#409 grants', () => {
+  it('treats an absent scope as repos scope', () => {
+    // Every grant written before #409 has no ossGrantScope. It must keep
+    // sponsoring exactly the repos it names and nothing else.
+    const legacy: BillingFields = {
+      ossGrantRepos: [{ id: GRANTED_REPO_ID, fullName: 'octocat/hello-world' }],
+      ossGrantExpiresAt: '2026-12-01T00:00:00.000Z',
+      ossMonthlyCapCents: 2000,
+    };
+    expect(legacy.ossGrantScope).toBeUndefined();
+
+    expect(evaluateOssGrant(legacy, grantedRepo, NOW)).toEqual({ eligible: true });
+    expect(evaluateOssGrant(legacy, { ...grantedRepo, repoId: 9999 }, NOW)).toEqual({
+      eligible: false,
+      reason: 'repo_not_granted',
+    });
+  });
+
+  it('an explicit repos scope behaves identically to an absent one', () => {
+    const explicit: BillingFields = {
+      ossGrantScope: 'repos',
+      ossGrantRepos: [{ id: GRANTED_REPO_ID, fullName: 'octocat/hello-world' }],
+      ossGrantExpiresAt: '2026-12-01T00:00:00.000Z',
+      ossMonthlyCapCents: 2000,
+    };
+    expect(evaluateOssGrant(explicit, grantedRepo, NOW)).toEqual({ eligible: true });
+    expect(evaluateOssGrant(explicit, { ...grantedRepo, repoId: 9999 }, NOW)).toEqual({
+      eligible: false,
+      reason: 'repo_not_granted',
+    });
   });
 });

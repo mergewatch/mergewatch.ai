@@ -189,3 +189,64 @@ describe('isLapsedOssGrant', () => {
     expect(isLapsedOssGrant(undefined)).toBe(false);
   });
 });
+
+describe('billingCheck — OSS Program org scope (#409)', () => {
+  const orgGrant = {
+    ossGrantScope: 'org' as const,
+    ossGrantAccount: { id: 9931, login: 'acme-corp' },
+    ossGrantExpiresAt: '2099-01-01T00:00:00.000Z',
+    ossMonthlyCapCents: 2000,
+  };
+  const unnamedPublicRepo = {
+    repoId: 777001,
+    repoFullName: 'acme-corp/brand-new-service',
+    isPublic: true,
+  };
+
+  it('allows with reason=oss for a repo the grant never named', async () => {
+    // Exhausted free tier and zero balance: without the org grant this blocks.
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 0,
+    });
+
+    const result = await billingCheck(client, table, installationId, unnamedPublicRepo);
+
+    expect(result.status).toBe('allow');
+    expect(result.reason).toBe('oss');
+  });
+
+  it('falls through to the standard gate for a private repo', async () => {
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: MIN_BALANCE_CENTS,
+    });
+
+    const result = await billingCheck(client, table, installationId, {
+      ...unnamedPublicRepo,
+      isPublic: false,
+    });
+
+    expect(result.status).toBe('allow');
+    expect(result.reason).toBe('paid');
+    expect(result.ossReason).toBe('repo_not_public');
+  });
+
+  it('reports cap_exceeded so the block copy can point at renewal, not a card', async () => {
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      ossPeriod: new Date().toISOString().slice(0, 7),
+      ossSponsoredCentsThisPeriod: 2000,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 0,
+    });
+
+    const result = await billingCheck(client, table, installationId, unnamedPublicRepo);
+
+    expect(result.status).toBe('block');
+    expect(result.ossReason).toBe('cap_exceeded');
+    expect(isLapsedOssGrant(result.ossReason)).toBe(true);
+  });
+});

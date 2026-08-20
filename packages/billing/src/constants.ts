@@ -15,9 +15,10 @@ export const MIN_BALANCE_CENTS = Math.round(MIN_BALANCE_USD * 100);
 
 /**
  * #261 — Default fair-use ceiling for an OSS grant, per calendar month, shared
- * across every repo named in the grant. At the $0.01–$0.10 per-review range
+ * across everything the grant covers (the named repos, or every public repo in
+ * the installation under #409 org scope). At the $0.01–$0.10 per-review range
  * this is ~200–2000 reviews: generous for any real OSS project while bounding
- * a runaway repo. Overridable per grant via `scripts/grant-oss.sh --cap`.
+ * a runaway repo. Overridable per grant via `scripts/grant-oss.ts --cap`.
  */
 export const OSS_DEFAULT_MONTHLY_CAP_CENTS = 2000;
 
