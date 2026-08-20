@@ -2933,8 +2933,9 @@ describe('reconcileMergeScore', () => {
       // The bug: review STATE was REQUEST_CHANGES (from the orchestrator's ≤2
       // score) while the CHECK was success (zero post-filter criticals). After
       // reconcile, the score must map to a NON-blocking review event for BOTH
-      // the warnings-remain (→ 3 / COMMENT) and nothing-remains (→ 5 / APPROVE)
-      // paths — so the review state can never contradict the success check.
+      // the warnings-remain and nothing-remains paths — both land on 3 /
+      // COMMENT since #385 stopped the nothing-remains case rendering a clean
+      // 5 — so the review state can never contradict the success check.
       for (const filteredFindings of [[warning()], [] as ReturnType<typeof warning>[]]) {
         const r = reconcileMergeScore({
           filteredFindings,
@@ -2964,6 +2965,49 @@ describe('reconcileMergeScore', () => {
       expect(r.mergeScore).toBe(3);
       expect(r.mergeScoreReason).toMatch(/3 critical findings were dropped/);
       expect(r.mergeScoreReason).toMatch(/1 warning\b/);
+    });
+
+    // #385 — the same drop, but with NOTHING left to render. This used to
+    // fall through to the clean-PR path: fixtures#610 shipped "🟢 5/5 — All
+    // clear!" on an unauthenticated admin endpoint whose missing auth the
+    // summary prose named in the same comment. An empty finding list is only
+    // evidence of a clean PR when nothing was filtered.
+    it('#385 — does not render a clean 5/5 when every flagged critical was filtered away', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 1,
+        orchestratorReason: 'Unauthenticated admin endpoint exposes all users; do not merge.',
+        orchestratorCriticalsCount: 2,
+      });
+
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScore).not.toBe(5);
+      expect(r.mergeScoreReason).toMatch(/2 critical findings were flagged/i);
+      expect(r.mergeScoreReason).toMatch(/dropped by post-orchestrator filtering/i);
+      // The verdict must not read as a clean pass…
+      expect(r.mergeScoreReason).toMatch(/NOT a clean-PR result/);
+      // …and the stale blocking prose must not leak through either.
+      expect(r.mergeScoreReason).not.toContain('do not merge');
+      // Advisory, not blocking — the check conclusion follows post-filter
+      // criticals (zero → success), so blocking here would contradict it.
+      expect(mergeScoreToReviewEvent(r.mergeScore)).not.toBe('REQUEST_CHANGES');
+    });
+
+    it('#385 — a genuinely clean PR (orchestrator flagged nothing) still scores 5/5', () => {
+      // The guard keys on the orchestrator having flagged criticals, so the
+      // FP-K quartet — where the verifier correctly drops a false-positive
+      // critical the orchestrator never scored on — keeps its clean verdict.
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 5,
+        orchestratorReason: 'No issues found on changed lines.',
+        orchestratorCriticalsCount: 0,
+      });
+
+      expect(r.mergeScore).toBe(5);
+      expect(r.mergeScoreReason).toBe('No issues found on changed lines.');
     });
 
     it('does NOT fire when even one Critical survives post-filter (the surviving one still blocks)', () => {
@@ -3014,9 +3058,12 @@ describe('reconcileMergeScore', () => {
       expect(r.mergeScore).toBe(2);
     });
 
-    it('falls through to the no-action-items branch (mergeScore=5) when the only critical was dropped AND only info remains', () => {
-      // No warnings either — actionFindings.length === 0 → noActionItems
-      // branch wins before the FP-L clamp is consulted, returning 5/5.
+    it('#385 — does NOT fall through to 5/5 when the only critical was dropped and just info remains', () => {
+      // Was: actionFindings.length === 0 let the noActionItems branch win
+      // before the FP-L clamp was consulted, so a dropped "critical security
+      // vuln" shipped as 5/5 "only informational notes". That ordering was
+      // the #385 defect — an info-only remainder is not evidence the critical
+      // never existed, so the drop is disclosed instead.
       const r = reconcileMergeScore({
         filteredFindings: [{ ...warning(), severity: 'info' }],
         previousFindings: undefined,
@@ -3024,8 +3071,9 @@ describe('reconcileMergeScore', () => {
         orchestratorReason: 'critical security vuln',
         orchestratorCriticalsCount: 1,
       });
-      expect(r.mergeScore).toBe(5);
-      expect(r.mergeScoreReason).toMatch(/only informational/i);
+      expect(r.mergeScore).toBe(3);
+      expect(r.mergeScoreReason).toMatch(/dropped by post-orchestrator filtering/i);
+      expect(r.mergeScoreReason).not.toMatch(/only informational/i);
     });
 
     it('W7 unverified-criticals clamp still takes precedence when criticals are present (FP-L only fires when post-filter criticals are 0)', () => {
@@ -3169,13 +3217,16 @@ describe('reconcileMergeScore', () => {
       // noActionItems branch returns 5/5 with its own reason — the FP-L
       // append only runs on the orchestrator-passthrough branch, so the
       // earlier-branch reasons are never touched.
+      // `orchestratorCriticalsCount: 0` keeps this on the clean-PR branch:
+      // with flagged-then-dropped criticals it would (correctly, per #385)
+      // land on the disclosure branch instead, which isn't what this asserts.
       const r = reconcileMergeScore({
         filteredFindings: [],
         previousFindings: undefined,
         orchestratorScore: 2,
         orchestratorReason: 'Multiple things flagged.',
         orchestratorWarningsCount: 3,
-        orchestratorCriticalsCount: 1,
+        orchestratorCriticalsCount: 0,
       });
       expect(r.mergeScore).toBe(5);
       expect(r.mergeScoreReason).not.toMatch(/dropped or clustered/);
