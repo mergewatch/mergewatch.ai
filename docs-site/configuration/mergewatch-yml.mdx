@@ -101,6 +101,10 @@ agentReview:
 # Minimum severity to report: info | warning | critical
 minSeverity: info
 
+# Minimum self-reported confidence (1-100) a finding needs to be reported.
+# Lower to surface more speculative findings; raise for near-certain defects only.
+minConfidence: 75
+
 # Maximum findings posted per review.
 maxFindings: 25
 
@@ -125,6 +129,7 @@ ux:
 | `lightModel` | `string` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Lighter model used for low-complexity tasks such as summary generation. |
 | `maxTokensPerAgent` | `number` | `4096` | Maximum output tokens per agent invocation. Increase for large PRs; decrease to reduce cost. |
 | `minSeverity` | `string` | `info` | Minimum severity level to report. One of `info`, `warning`, `critical`. Findings below this threshold are suppressed. |
+| `minConfidence` | `number` | `75` | Minimum self-reported confidence (`1`--`100`) a finding needs to be reported. **Lower it** (e.g. `50`) to surface the speculative tier MergeWatch normally withholds — useful when calibrating or when you suspect findings are being over-suppressed. **Raise it** to report only near-certain defects. Values outside `1`--`100` are ignored and the default applies. |
 | `maxFindings` | `number` | `25` | Maximum number of findings posted per review. Prevents noisy reviews on large PRs. |
 | `postSummaryOnClean` | `boolean` | `true` | When `true`, MergeWatch posts a summary comment even when no findings are detected. Set to `false` to stay silent on clean PRs. If an earlier review already posted a comment on the PR, it is still updated — a previously-flagged PR that comes back clean never keeps a stale review. |
 | `codebaseAwareness` | `boolean` | `true` | Enable agentic file fetching for cross-file context. When `true`, agents can request additional files from the repository. |
