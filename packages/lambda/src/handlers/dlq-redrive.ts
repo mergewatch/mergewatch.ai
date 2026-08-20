@@ -84,14 +84,44 @@ async function completeAbandonedCheck(payload: ReviewJobPayload): Promise<void> 
   }
 }
 
-export async function handler(): Promise<{ redriven: number; abandoned: number }> {
+/**
+ * Is this job still worth re-driving? A dead-lettered review outlives the PR
+ * that asked for it: the first production sweep re-drove jobs for
+ * mergewatch/fixtures#635-643, all closed ~15 minutes earlier, and the review
+ * agent dutifully started reviewing them — spending model calls on PRs nobody
+ * would ever read, and (worse, during an outage) competing for the very quota
+ * the live reviews were starved of.
+ *
+ * `null` means "couldn't tell" — treated as alive, because dropping a real
+ * review on a transient API blip is the worse error.
+ */
+async function isPrStillOpen(payload: ReviewJobPayload): Promise<boolean | null> {
+  const { installationId, owner, repo, prNumber } = payload;
+  if (!installationId || !owner || !repo || !prNumber) return null;
+
+  try {
+    const octokit = await authProvider.getInstallationOctokit(installationId);
+    const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
+    return data.state === 'open';
+  } catch (err) {
+    const status = (err as { status?: number } | null)?.status;
+    // A deleted PR is definitively not worth reviewing; anything else is
+    // indeterminate.
+    if (status === 404) return false;
+    console.warn(`Could not determine PR state for ${owner}/${repo}#${prNumber}:`, err);
+    return null;
+  }
+}
+
+export async function handler(): Promise<{ redriven: number; abandoned: number; stale: number }> {
   if (!REVIEW_QUEUE_URL || !REVIEW_DLQ_URL) {
     console.warn('REVIEW_QUEUE_URL / REVIEW_DLQ_URL unset — dlq-redrive is a no-op');
-    return { redriven: 0, abandoned: 0 };
+    return { redriven: 0, abandoned: 0, stale: 0 };
   }
 
   let redriven = 0;
   let abandoned = 0;
+  let stale = 0;
   let processed = 0;
 
   while (processed < MAX_MESSAGES_PER_RUN) {
@@ -132,6 +162,18 @@ export async function handler(): Promise<{ redriven: number; abandoned: number }
       }
 
       const label = `${payload.owner}/${payload.repo}#${payload.prNumber}`;
+
+      // Drop jobs whose PR has closed or merged while the job sat in the DLQ.
+      // No check run to complete — the PR is gone; reviving it would only
+      // burn model quota the live reviews need.
+      if ((await isPrStillOpen(payload)) === false) {
+        console.log(`Dropping dead-lettered review for ${label} — PR is no longer open`);
+        await sqs
+          .send(new DeleteMessageCommand({ QueueUrl: REVIEW_DLQ_URL, ReceiptHandle: message.ReceiptHandle }))
+          .catch((err) => console.error(`Failed to delete stale DLQ message for ${label}:`, err));
+        stale += 1;
+        continue;
+      }
 
       if (generation >= MAX_GENERATIONS) {
         console.warn(`Abandoning review after ${generation} redrive generations: ${label}`);
@@ -178,8 +220,10 @@ export async function handler(): Promise<{ redriven: number; abandoned: number }
     }
   }
 
-  if (redriven > 0 || abandoned > 0) {
-    console.log(`DLQ sweep complete: ${redriven} redriven, ${abandoned} abandoned`);
+  if (redriven > 0 || abandoned > 0 || stale > 0) {
+    console.log(
+      `DLQ sweep complete: ${redriven} redriven, ${abandoned} abandoned, ${stale} dropped (PR closed)`,
+    );
   }
-  return { redriven, abandoned };
+  return { redriven, abandoned, stale };
 }

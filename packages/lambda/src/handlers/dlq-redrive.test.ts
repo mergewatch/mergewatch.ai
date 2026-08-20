@@ -96,7 +96,7 @@ describe('dlq-redrive handler (#398)', () => {
 
     const result = await handler();
 
-    expect(result).toEqual({ redriven: 1, abandoned: 0 });
+    expect(result).toEqual({ redriven: 1, abandoned: 0, stale: 0 });
     const sends = sentCommands('send');
     expect(sends).toHaveLength(1);
     expect(sends[0].input.QueueUrl).toBe('https://sqs.test/queue');
@@ -134,7 +134,7 @@ describe('dlq-redrive handler (#398)', () => {
 
     const result = await handler();
 
-    expect(result).toEqual({ redriven: 0, abandoned: 1 });
+    expect(result).toEqual({ redriven: 0, abandoned: 1, stale: 0 });
     // Not re-sent — but the PR is not left with an in_progress check either.
     expect(sentCommands('send')).toHaveLength(0);
     expect(sentCommands('delete')).toHaveLength(1);
@@ -155,7 +155,7 @@ describe('dlq-redrive handler (#398)', () => {
 
     const result = await handler();
 
-    expect(result).toEqual({ redriven: 0, abandoned: 0 });
+    expect(result).toEqual({ redriven: 0, abandoned: 0, stale: 0 });
     // Never delete a message we failed to re-send — it must survive for the
     // next sweep.
     expect(sentCommands('delete')).toHaveLength(0);
@@ -166,9 +166,66 @@ describe('dlq-redrive handler (#398)', () => {
 
     const result = await handler();
 
-    expect(result).toEqual({ redriven: 0, abandoned: 0 });
+    expect(result).toEqual({ redriven: 0, abandoned: 0, stale: 0 });
     expect(sentCommands('send')).toHaveLength(0);
     expect(sentCommands('delete')).toHaveLength(1);
+  });
+
+  it('drops a dead-lettered job whose PR has since closed, without re-driving it', async () => {
+    // Observed in the first production sweep: jobs for PRs closed ~15 minutes
+    // earlier were re-driven and the agent started reviewing them, spending
+    // model calls nobody would read — and competing for the quota the live
+    // reviews were starved of.
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockResolvedValue({ data: { state: 'closed' } }) },
+    });
+    receiveOnce([{ Body: job(), ReceiptHandle: 'rh-1' }]);
+
+    const result = await handler();
+
+    expect(result).toEqual({ redriven: 0, abandoned: 0, stale: 1 });
+    expect(sentCommands('send')).toHaveLength(0);
+    expect(sentCommands('delete')).toHaveLength(1);
+    // The PR is gone — there is no check run worth completing.
+    expect(mockCreateCheckRun).not.toHaveBeenCalled();
+  });
+
+  it('drops a dead-lettered job whose PR 404s (deleted)', async () => {
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 })) },
+    });
+    receiveOnce([{ Body: job(), ReceiptHandle: 'rh-1' }]);
+
+    const result = await handler();
+
+    expect(result).toEqual({ redriven: 0, abandoned: 0, stale: 1 });
+    expect(sentCommands('send')).toHaveLength(0);
+  });
+
+  it('still re-drives when the PR state cannot be determined (transient API error)', async () => {
+    // Indeterminate must not drop a real review — a blip on the liveness
+    // check is a worse failure than one wasted redrive.
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockRejectedValue(Object.assign(new Error('boom'), { status: 500 })) },
+    });
+    receiveOnce([{ Body: job(), ReceiptHandle: 'rh-1' }]);
+
+    const result = await handler();
+
+    expect(result).toEqual({ redriven: 1, abandoned: 0, stale: 0 });
+    expect(sentCommands('send')).toHaveLength(1);
+  });
+
+  it('re-drives a job whose PR is still open', async () => {
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockResolvedValue({ data: { state: 'open' } }) },
+    });
+    receiveOnce([{ Body: job(), ReceiptHandle: 'rh-1' }]);
+
+    const result = await handler();
+
+    expect(result).toEqual({ redriven: 1, abandoned: 0, stale: 0 });
+    expect(sentCommands('send')).toHaveLength(1);
   });
 
   it('is a no-op on an empty DLQ', async () => {
@@ -176,7 +233,7 @@ describe('dlq-redrive handler (#398)', () => {
 
     const result = await handler();
 
-    expect(result).toEqual({ redriven: 0, abandoned: 0 });
+    expect(result).toEqual({ redriven: 0, abandoned: 0, stale: 0 });
     expect(sentCommands('send')).toHaveLength(0);
     expect(sentCommands('delete')).toHaveLength(0);
   });
