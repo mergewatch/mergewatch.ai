@@ -283,8 +283,10 @@ async function handlePullRequestEvent(
   // Resolve agentReview config (repo YAML overrides defaults) and classify
   // the PR source. Only opt-in via .mergewatch.yml triggers detection —
   // when the repo has no agentReview block we pass undefined, which short-
-  // circuits the classifier to 'human'.
-  const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+  // circuits the classifier to 'human'. Read at the PR's head SHA: a config
+  // that enables agentReview on the PR branch is invisible from the default
+  // branch, which silently classified every such PR as 'human' (#399).
+  const yamlConfig = await fetchRepoConfig(octokit, owner, repo, pr.head?.sha).catch(() => null);
   const agentReviewConfig: AgentReviewConfig | undefined = yamlConfig?.agentReview
     ? mergeConfig(yamlConfig).agentReview
     : undefined;
@@ -347,6 +349,25 @@ async function handleIssueCommentEvent(
   const existingCommentId =
     (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
 
+  // #400 — an issue_comment payload carries no head SHA, so without this fetch
+  // the job runs with `headSha: undefined` and every downstream config read
+  // (`fetchRepoConfig`, conventions) silently falls back to the DEFAULT BRANCH.
+  // That made the whole `.mergewatch.yml` on the PR branch inert for
+  // mention-triggered reviews: excludePatterns, ux, codebaseAwareness and
+  // customAgents all reverted to base. Degrade to the old behavior if the
+  // lookup fails rather than dropping the review.
+  const headSha = await octokit.pulls
+    .get({ owner, repo, pull_number: prNumber })
+    .then(({ data }) => data.head?.sha)
+    .catch((err) => {
+      console.warn(
+        'Failed to resolve head SHA for mention-triggered review — config will read from the default branch:',
+        `${owner}/${repo}#${prNumber}`,
+        err,
+      );
+      return undefined;
+    });
+
   const payload: ReviewJobPayload = {
     installationId,
     owner,
@@ -355,6 +376,7 @@ async function handleIssueCommentEvent(
     mode,
     existingCommentId,
     mentionTriggered: true,
+    headSha,
     ...ossRepoFields(event.repository),
   };
 
@@ -467,14 +489,34 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
 
   const octokit = await authProvider.getInstallationOctokit(installationId);
 
+  // The check_run event already names the commit the check ran on, so the
+  // config ref does not depend on the PR lookup succeeding.
+  const headSha = event.check_run.head_sha;
+
   // Classification: refetch the PR so we get a full object + labels for
   // agentReview detection, mirroring the pull_request.synchronize path.
-  const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+  // Best-effort — a re-run request should still produce a review if the PR
+  // lookup fails (deleted PR, transient 5xx); we just lose labels/draft and
+  // fall back to an unclassified job rather than dropping it on the floor.
+  const pr = await octokit.pulls
+    .get({ owner, repo, pull_number: prNumber })
+    .then(({ data }) => data)
+    .catch((err) => {
+      console.warn(
+        'Failed to fetch PR for check_run rerequest — enqueuing without labels/classification:',
+        `${owner}/${repo}#${prNumber}`,
+        err,
+      );
+      return null;
+    });
+
+  const yamlConfig = await fetchRepoConfig(octokit, owner, repo, headSha).catch(() => null);
   const agentReviewConfig: AgentReviewConfig | undefined = yamlConfig?.agentReview
     ? mergeConfig(yamlConfig).agentReview
     : undefined;
-  const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
-  const classification = await classifyPrSource(pr as never, octokit, agentReviewConfig);
+  const classification = pr
+    ? await classifyPrSource(pr as never, octokit, agentReviewConfig)
+    : { source: undefined, agentKind: undefined };
 
   const existingCommentId =
     (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
@@ -486,12 +528,12 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     prNumber,
     mode: 'review',
     existingCommentId,
-    isDraft: pr.draft ?? false,
-    prLabels: pr.labels?.map((l: { name: string }) => l.name) ?? [],
-    changedFileCount: pr.changed_files,
+    isDraft: pr?.draft ?? false,
+    prLabels: pr?.labels?.map((l: { name: string }) => l.name) ?? [],
+    changedFileCount: pr?.changed_files,
     source: classification.source,
     agentKind: classification.agentKind,
-    headSha: pr.head?.sha,
+    headSha,
     ...ossRepoFields(event.repository),
   });
 

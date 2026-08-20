@@ -162,7 +162,8 @@ async function handleInlineReplyJob(
     const ref = latestReview?.prNumberCommitSha
       ? (latestReview.prNumberCommitSha as string).split('#')[1]
       : undefined;
-    const yamlConfig = await fetchRepoConfig(octokit, owner, repo).catch(() => null);
+    // Same ref for config and conventions — see #400.
+    const yamlConfig = await fetchRepoConfig(octokit, owner, repo, ref).catch(() => null);
     const conventionsResult = await fetchConventions(octokit, owner, repo, ref, yamlConfig?.conventions).catch(() => null);
 
     const lightModelId = process.env.LLM_MODEL ?? 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
