@@ -28,6 +28,7 @@ Self-hosted deployments use a `.env` file alongside `docker-compose.yml`. See th
 | `DASHBOARD_URL` | No | `http://localhost:3001` | Consumed by `docker-compose.yml` to set `NEXTAUTH_URL` on the dashboard container. Set when serving the dashboard on a public domain. |
 | `LLM_MODEL_INPUT_PRICE_PER_1M` | No | — | USD per 1M **input** tokens for whatever `LLM_MODEL` is set to. Lets a self-hosted deployment show real per-PR and dashboard cost instead of "unpriced" — including for an opaque Bedrock inference-profile ARN. Must be set together with the output price. |
 | `LLM_MODEL_OUTPUT_PRICE_PER_1M` | No | — | USD per 1M **output** tokens for `LLM_MODEL`. Both prices must be finite and non-negative, and both must be present — if either is missing or invalid, neither is applied. `0` / `0` is valid and records a real $0 for a local model. |
+| `REVIEW_CONCURRENCY` | No | `3` | How many reviews the background worker processes at once. The worker drains a durable Postgres job queue, so a burst of pull requests becomes a paced stream instead of N simultaneous LLM calls against your provider's rate limit. Raise it if your provider quota allows more throughput; lower it to be gentler. Non-numeric or non-positive values fall back to the default. |
 | `INSIGHTS_ROLLUP_INTERVAL_MINUTES` | No | `60` | How often the insights rollup runs, in minutes. Raise it to reduce database load. Unset, non-numeric, or non-positive values fall back to the hourly default. |
 
 ### Provider-specific: Anthropic
