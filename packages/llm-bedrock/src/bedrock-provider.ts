@@ -22,6 +22,7 @@ import { StructuredOutputUnsupportedError } from '@mergewatch/core';
 // ─── Supported model IDs ───────────────────────────────────────────────────
 export const SUPPORTED_MODELS = {
   'claude-opus-4.6': 'us.anthropic.claude-opus-4-6-v1',
+  'claude-sonnet-4.5': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
   'claude-sonnet-4': 'us.anthropic.claude-sonnet-4-20250514-v1:0',
   'claude-haiku-4.5': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   'amazon-titan-text': 'amazon.titan-text-express-v1',

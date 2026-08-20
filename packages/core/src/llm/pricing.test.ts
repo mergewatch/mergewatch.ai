@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './pricing.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 describe('estimateCost', () => {
   it('returns correct cost for a known Bedrock model', () => {
@@ -38,6 +39,11 @@ describe('estimateCost', () => {
       expect(estimateCost('us.anthropic.claude-opus-4-6-v1', M, M)).toBeCloseTo(33, 6);
       // The published rate would have produced 30.
       expect(estimateCost('claude-opus-4-6', M, M)).toBeCloseTo(30, 6);
+    });
+
+    it('Sonnet 4.5 — the deployment default — bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
+      expect(estimateCost('us.anthropic.claude-sonnet-4-5-20250929-v1:0', M, M)).toBeCloseTo(19.8, 6);
+      expect(estimateCost('claude-sonnet-4-5-20250929', M, M)).toBeCloseTo(18, 6);
     });
 
     it('Sonnet 4.6 bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
@@ -189,5 +195,21 @@ describe('parseEnvModelPricing (#233)', () => {
     expect(estimateCost(ARN, 1_000_000, 1_000_000, pricing)).toBeCloseTo(30, 6);
     // ...and without it the same model is unpriced.
     expect(estimateCost(ARN, 1_000_000, 1_000_000)).toBeNull();
+  });
+});
+
+/**
+ * The failure this guards against is silent: `estimateCost` returns null for an
+ * unpriced model, so switching the default to one that isn't in the table
+ * records every review at zero cost — no error, no log line. That figure feeds
+ * calculateReviewCost, the OSS sponsored-spend counters, and Stripe billing.
+ */
+describe('the configured default model is always priced', () => {
+  it('DEFAULT_CONFIG.model has a pricing entry', () => {
+    expect(estimateCost(DEFAULT_CONFIG.model, 1_000_000, 1_000_000)).not.toBeNull();
+  });
+
+  it('DEFAULT_CONFIG.lightModel has a pricing entry', () => {
+    expect(estimateCost(DEFAULT_CONFIG.lightModel, 1_000_000, 1_000_000)).not.toBeNull();
   });
 });
