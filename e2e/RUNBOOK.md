@@ -215,6 +215,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
+| [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #409 |
 | [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #409 |
 | [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #409 |
 | [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
@@ -3205,6 +3206,45 @@ Then install the App on a test org that has **never** installed it before (an ex
 - ❌ A claim failure returns non-200 or aborts `storeInstallation` — the installation record is lost, which is far worse than a missed sponsorship
 - ❌ An expired pre-approval still fires — the 90-day TTL is the only forcing function to re-review a stale decision
 - ❌ The claim runs in self-hosted mode (`isSaas()` guard regressed) — Postgres has no billing columns and the write targets a table that doesn't exist
+
+---
+
+### E2E-93: #409 — OSS operator lifecycle: org grants, pre-approval, inspect
+
+**Status:** 🚧 In review (#409, stage 3).
+
+**Behavior:** `scripts/grant-oss.ts` gains three coverage models and the guards between them. `--org <login>` writes an org-scoped grant by resolving the org to its installation via the JWT-only `GET /orgs/{org}/installation` (falling back to the user endpoint for a personal account). `--preapprove <login>` parks an approval for an org that has **not** installed. `--list-preapprovals` renders every pending row and its state. `--inspect` reports the grant's scope and any pending pre-approval for the same account. `--revoke` works against either a repo or `--org`.
+
+**Setup.** Requires AWS credentials for the `mergewatch` profile and a dev-stage test org.
+
+**Expected outcomes — arg guards (no AWS needed).**
+- [ ] No `--stage` → refuses, naming both `dev` and `prod`
+- [ ] `--org acme octo/hello --stage dev` → refuses; says pick one coverage model
+- [ ] `--stage dev` with no target → refuses, naming both target forms
+- [ ] `--org octo/hello --stage dev` → refuses ("Not an org login … drop --org")
+- [ ] `--cap 0`, `--months 0`, `--ttl-days 0` → each refused as a probable typo
+- [ ] `--revoke --org acme --stage dev` parses as revoke-targeting-an-org, NOT as a repo literally named `--org`
+
+**Expected outcomes — org grants.**
+- [ ] `--org <test-org> --stage dev` prints every public repo currently known, the open-core warning, cap and expiry, then writes `ossGrantScope=org` + `ossGrantAccount`
+- [ ] `--inspect --org <test-org> --stage dev` shows `Scope: org — every PUBLIC repo`, the account, cap, and accrual counters
+- [ ] Granting `--org` over an installation that had a repos-scoped grant reports the old list as "IGNORED under org scope" and leaves it in place
+- [ ] `--revoke --org <test-org> --stage dev` sets expiry to the past and says the grant was org-scoped
+- [ ] Dashboard `/dashboard/billing` shows "All / Public repositories" and "Every public repository, including ones you create later" — **not** an empty repo list or a missing panel
+
+**Expected outcomes — pre-approval.**
+- [ ] `--preapprove <uninstalled-org> --stage dev` writes a pending row and warns that matching is on the login, not a numeric id
+- [ ] `--preapprove <ALREADY-installed-org>` → refuses and points at `--org`, because `installation.created` has already fired and will never fire again
+- [ ] `--list-preapprovals --stage dev` shows the row as `pending — expires …`
+- [ ] After the org installs (see E2E-92), `--list-preapprovals` shows `claimed … by installation <id>` and `--inspect --org` shows the org-scoped grant
+- [ ] Re-running `--preapprove` for an already-claimed org shows the existing row and warns that overwriting resets it to pending without touching the grant already written
+
+**Failure modes.**
+- ❌ `--org` writes a grant but leaves `ossGrantScope` unset — the gate would read `'repos'`, find no list, and sponsor nothing while `--inspect` claims the grant is active
+- ❌ `--revoke` rewrites `ossGrantScope` — a later renewal would silently change what the grant covers
+- ❌ The dashboard shows an org-scoped grant as "no grant" (the `ossStatus` regression this stage fixes) or renders a stale repo list as if it were the coverage
+- ❌ `--preapprove` succeeds for an already-installed org — the row would sit unclaimed forever with nobody looking at it
+- ❌ Script constants drift from `packages/billing/src/constants.ts` (cap, term, TTL, `#PENDING-OSS`) — they are duplicated by necessity, so a change on one side must be mirrored
 
 ---
 

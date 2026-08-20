@@ -237,16 +237,27 @@ async function handleWebhook(event: APIGatewayProxyEventV2): Promise<APIGatewayP
  * cap is actually applied — last month's spend never eats this month's
  * allowance.
  */
-function ossStatus(fields: Awaited<ReturnType<typeof getBillingFields>>) {
+export function ossStatus(fields: Awaited<ReturnType<typeof getBillingFields>>) {
   const repos = fields.ossGrantRepos ?? [];
-  if (!fields.ossGrantExpiresAt || repos.length === 0) return null;
+  const scope = fields.ossGrantScope ?? 'repos';
+
+  // #409 — an org-scoped grant has no repo list, so the old
+  // `repos.length === 0` bail would have reported "no grant" for every one of
+  // them. Coverage now mirrors evaluateOssGrant: org scope needs no list,
+  // repos scope is nothing without one.
+  const hasCoverage = scope === 'org' || repos.length > 0;
+  if (!fields.ossGrantExpiresAt || !hasCoverage) return null;
 
   const expiresAt = Date.parse(fields.ossGrantExpiresAt);
   const period = new Date().toISOString().slice(0, 7);
 
   return {
     active: Number.isFinite(expiresAt) && expiresAt > Date.now(),
-    repos: repos.map((r) => r.fullName),
+    scope,
+    account: fields.ossGrantAccount ?? null,
+    // Null rather than a stale list under org scope: the gate ignores any
+    // leftover repos there, and showing them would understate coverage.
+    repos: scope === 'org' ? null : repos.map((r) => r.fullName),
     expiresAt: fields.ossGrantExpiresAt,
     grantedAt: fields.ossGrantedAt ?? null,
     note: fields.ossGrantNote ?? null,

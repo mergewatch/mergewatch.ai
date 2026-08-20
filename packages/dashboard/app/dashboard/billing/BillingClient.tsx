@@ -17,13 +17,17 @@ interface BillingStatus {
   prCount: number;
   prTimestamps: string[];
   /**
-   * OSS Program (#261). Null for every installation without a grant.
-   * `active` is computed server-side so this panel can't drift from the
+   * OSS Program (#261, org scope #409). Null for every installation without a
+   * grant. `active` is computed server-side so this panel can't drift from the
    * billing gate's own notion of an active grant.
    */
   oss: {
     active: boolean;
-    repos: string[];
+    /** 'org' sponsors every public repo in the installation; 'repos' only those named. */
+    scope: "repos" | "org";
+    account: { id: number; login: string } | null;
+    /** Null under org scope — coverage is not a fixed list there. */
+    repos: string[] | null;
     expiresAt: string;
     grantedAt: string | null;
     note: string | null;
@@ -248,8 +252,17 @@ export default function BillingClient({ installationId, accountLogin, setupCompl
 
             {status.oss.active ? (
               <p className="text-sm text-fg-secondary">
-                Reviews on the repositories below are sponsored by MergeWatch — no charge, and
-                they don&rsquo;t use your free reviews or balance.
+                {status.oss.scope === "org" ? (
+                  <>
+                    Every public repository in this organization is sponsored by MergeWatch — no
+                    charge, and sponsored reviews don&rsquo;t use your free reviews or balance.
+                  </>
+                ) : (
+                  <>
+                    Reviews on the repositories below are sponsored by MergeWatch — no charge, and
+                    they don&rsquo;t use your free reviews or balance.
+                  </>
+                )}
               </p>
             ) : (
               <p className="text-sm text-fg-secondary">
@@ -304,26 +317,49 @@ export default function BillingClient({ installationId, accountLogin, setupCompl
 
               <div>
                 <div className="text-2xl font-bold text-fg-primary tabular-nums">
-                  {status.oss.repos.length}
+                  {status.oss.scope === "org" ? "All" : status.oss.repos?.length ?? 0}
                 </div>
                 <p className="mt-1 text-xs text-fg-tertiary">
-                  {status.oss.repos.length === 1 ? "Covered repository" : "Covered repositories"}
+                  {status.oss.scope === "org"
+                    ? "Public repositories"
+                    : status.oss.repos?.length === 1
+                      ? "Covered repository"
+                      : "Covered repositories"}
                 </p>
               </div>
             </div>
 
             <div className="mt-5 pt-4 border-t border-border-default">
-              <p className="text-xs text-fg-tertiary mb-2">Covered repositories</p>
-              <ul className="space-y-1">
-                {status.oss.repos.map((r) => (
-                  <li key={r} className="text-sm text-fg-secondary">{r}</li>
-                ))}
-              </ul>
-              <p className="mt-3 text-[11px] text-fg-muted">
-                Only these repositories are sponsored, and only while they are public. Anything
-                else in this installation bills normally.
-                {status.oss.active && ` Grant runs until ${new Date(status.oss.expiresAt).toLocaleDateString()}.`}
-              </p>
+              {status.oss.scope === "org" ? (
+                <>
+                  <p className="text-xs text-fg-tertiary mb-2">
+                    Coverage
+                    {status.oss.account ? ` — ${status.oss.account.login}` : ""}
+                  </p>
+                  <p className="text-sm text-fg-secondary">
+                    Every public repository, including ones you create later.
+                  </p>
+                  <p className="mt-3 text-[11px] text-fg-muted">
+                    Private repositories are never sponsored and bill normally — and a repository
+                    switched to private stops being sponsored on its next review.
+                    {status.oss.active && ` Grant runs until ${new Date(status.oss.expiresAt).toLocaleDateString()}.`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-fg-tertiary mb-2">Covered repositories</p>
+                  <ul className="space-y-1">
+                    {(status.oss.repos ?? []).map((r) => (
+                      <li key={r} className="text-sm text-fg-secondary">{r}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-[11px] text-fg-muted">
+                    Only these repositories are sponsored, and only while they are public. Anything
+                    else in this installation bills normally.
+                    {status.oss.active && ` Grant runs until ${new Date(status.oss.expiresAt).toLocaleDateString()}.`}
+                  </p>
+                </>
+              )}
             </div>
           </div>
         )}
