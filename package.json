@@ -1,6 +1,6 @@
 {
   "name": "mergewatch",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "description": "AI-powered GitHub PR review tool — runs in your AWS account via Amazon Bedrock",
   "license": "AGPL-3.0",
