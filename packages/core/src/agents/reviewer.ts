@@ -2314,6 +2314,24 @@ export function reconcileMergeScore(input: {
     ? `${highDisputeActionCount} of ${actionFindings.length} action finding${actionFindings.length === 1 ? '' : 's'} ${highDisputeActionCount === 1 ? 'is' : 'are'} from a category disputed ≥ ${Math.round(DISPUTE_RATE_HIGH_THRESHOLD * 100)}% of the time in this org's recent reviews — the verdict tier reflects that historical accuracy.`
     : undefined;
 
+  // #385 — "nothing to render" is only a clean PR when nothing was taken
+  // away. When the orchestrator scored blocking on criticals and every one of
+  // them vanished downstream, the clean-PR return below would ship
+  // "🟢 5/5 — All clear!" over the top of them: fixtures#610 approved an
+  // unauthenticated admin endpoint 5/5 while the summary prose in the very
+  // same comment named the missing auth. Disclose the loss instead. Gated on
+  // the orchestrator having flagged criticals, so a genuinely clean review —
+  // including one where the verifier correctly refuted a false positive the
+  // orchestrator never scored on (FP-K) — still returns 5.
+  if (noActionItems && (orchestratorCriticalsCount ?? 0) > 0 && orchestratorScore <= 2) {
+    const dropped = orchestratorCriticalsCount!;
+    return {
+      mergeScore: 3,
+      mergeScoreReason: `${dropped} critical finding${dropped === 1 ? ' was' : 's were'} flagged by the orchestrator and then dropped by post-orchestrator filtering, leaving nothing to render. This is an advisory verdict, NOT a clean-PR result — re-run the review or inspect the diff manually before merging.`,
+      ...(disputeDisclosure ? { disputeDisclosure } : {}),
+    };
+  }
+
   if (noActionItems) {
     return {
       mergeScore: 5,
@@ -2361,6 +2379,8 @@ export function reconcileMergeScore(input: {
   // conclusion.
   const droppedAllCriticals =
     (orchestratorCriticalsCount ?? 0) > 0 && currentCriticals.length === 0;
+  // (The zero-findings variant of this drop is handled earlier, before the
+  // clean-PR return — see #385 above.)
   if (droppedAllCriticals && orchestratorScore <= 2 && actionFindings.length > 0) {
     const w = actionFindings.length;
     const dropped = orchestratorCriticalsCount!;
