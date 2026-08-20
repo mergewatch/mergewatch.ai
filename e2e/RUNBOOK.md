@@ -215,9 +215,9 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
-| [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #409 |
-| [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #409 |
-| [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #409 |
+| [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #412 |
+| [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #411 |
+| [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #410 |
 | [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
 | [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 |
 
@@ -3133,18 +3133,15 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 
 ### E2E-91: #409 — OSS org-scoped grant covers every public repo
 
-**Status:** 🚧 In review (#409, stage 1).
+**Status:** ✅ SHIPPED (#410).
 
 **Behavior:** an OSS grant written with `ossGrantScope: 'org'` sponsors **every public repository in the installation**, including ones created after the grant was written — no `ossGrantRepos` list is consulted. The other three conditions are unchanged from #261 and still evaluated live on every review: the grant must not have expired, the repo must be public *right now*, and the month's accrued sponsored cost must be under `ossMonthlyCapCents` (still installation-level — org scope widens coverage, not the ceiling). A grant with no `ossGrantScope` field is unaffected and keeps matching only its named repo ids.
 
-**Setup.** Stage 1 ships no writer for the field, so seed the `#SETTINGS` row by hand on dev:
+**Setup.** Write the grant with the operator script (#412):
 
 ```bash
-aws dynamodb update-item --profile mergewatch --region us-west-2 \
-  --table-name mergewatch-installations-dev \
-  --key '{"installationId":{"S":"<id>"},"repoFullName":{"S":"#SETTINGS"}}' \
-  --update-expression 'SET ossGrantScope=:s, ossGrantExpiresAt=:e, ossMonthlyCapCents=:c' \
-  --expression-attribute-values '{":s":{"S":"org"},":e":{"S":"2027-01-01T00:00:00.000Z"},":c":{"N":"2000"}}'
+scripts/grant-oss.ts --org <test-org> --stage dev --note "e2e-91"
+scripts/grant-oss.ts --inspect --org <test-org> --stage dev   # confirm scope=org
 ```
 
 Then exhaust the free tier (or set `freeReviewsUsed` to 5 and `balanceCents` to 0) so an unsponsored review would visibly block.
@@ -3169,22 +3166,21 @@ Then exhaust the free tier (or set `freeReviewsUsed` to 5 and `balanceCents` to 
 
 ### E2E-92: #409 — OSS pre-approval claimed automatically on install
 
-**Status:** 🚧 In review (#409, stage 2).
+**Status:** ✅ SHIPPED (#411).
 
 **Behavior:** an operator can approve an org **before** it has installed the App. The approval is parked as a `#PENDING-OSS` row in the installations table, keyed by the lowercased org login. When `installation.created` arrives, the webhook claims it: an org-scoped grant is written to that installation's `#SETTINGS` row and the pending row is marked `claimedAt`. The org's very first PR is already sponsored — no operator step in between.
 
 The claim is guarded on `attribute_not_exists(ossGrantExpiresAt)`, so a webhook redelivery (or an operator who granted manually in the meantime) never resets an existing grant. A claimed row is inert: uninstall/reinstall does not re-grant.
 
-**Setup.** Stage 2 ships no operator command (`--preapprove` lands in stage 3), so write the pending row by hand on dev:
+**Setup.** Park the approval with the operator script (#412):
 
 ```bash
-aws dynamodb put-item --profile mergewatch --region us-west-2 \
-  --table-name mergewatch-installations-dev \
-  --item '{"installationId":{"S":"#PENDING-OSS"},"repoFullName":{"S":"<org-login-lowercased>"},
-           "orgLogin":{"S":"<Org-Login>"},"capCents":{"N":"2000"},"months":{"N":"12"},
-           "note":{"S":"e2e-92"},"preapprovedAt":{"S":"2026-08-20T12:00:00.000Z"},
-           "preapprovalExpiresAt":{"S":"2026-11-18T12:00:00.000Z"}}'
+scripts/grant-oss.ts --preapprove <org-login> --stage dev --note "e2e-92"
+scripts/grant-oss.ts --list-preapprovals --stage dev   # confirm: pending — expires …
 ```
+
+To exercise the expiry case, add `--ttl-days 1` and wait a day, or edit
+`preapprovalExpiresAt` on the row directly.
 
 Then install the App on a test org that has **never** installed it before (an existing installation won't emit `installation.created`).
 
@@ -3211,7 +3207,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 
 ### E2E-93: #409 — OSS operator lifecycle: org grants, pre-approval, inspect
 
-**Status:** 🚧 In review (#409, stage 3).
+**Status:** ✅ SHIPPED (#412).
 
 **Behavior:** `scripts/grant-oss.ts` gains three coverage models and the guards between them. `--org <login>` writes an org-scoped grant by resolving the org to its installation via the JWT-only `GET /orgs/{org}/installation` (falling back to the user endpoint for a personal account). `--preapprove <login>` parks an approval for an org that has **not** installed. `--list-preapprovals` renders every pending row and its state. `--inspect` reports the grant's scope and any pending pre-approval for the same account. `--revoke` works against either a repo or `--org`.
 
