@@ -534,6 +534,36 @@ describe('handler — check_run.rerequested', () => {
     expect(payload.changedFileCount).toBe(3);
   });
 
+  it('takes headSha from the check_run event, which names the commit the check ran on', async () => {
+    const body = JSON.stringify(makeCheckRunEvent());
+    await handler(makeCheckRunApiEvent(body));
+
+    const invokeInput = (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input;
+    expect(JSON.parse(invokeInput.Payload.toString()).headSha).toBe('abc123');
+    // …and the config is read at that same SHA, not the default branch (#399).
+    expect(mockFetchRepoConfig.mock.calls[0][3]).toBe('abc123');
+  });
+
+  it('still enqueues the review when the PR lookup fails (deleted PR / transient 5xx)', async () => {
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockRejectedValue(new Error('404')) },
+    });
+
+    const body = JSON.stringify(makeCheckRunEvent());
+    const res = await handler(makeCheckRunApiEvent(body));
+
+    expect(res.statusCode).toBe(200);
+    // A re-run request is an explicit user action — losing labels/draft is
+    // acceptable, silently dropping the review is not.
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(
+      (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input.Payload.toString(),
+    );
+    expect(payload.headSha).toBe('abc123');
+    expect(payload.prLabels).toEqual([]);
+    expect(payload.source).toBeUndefined();
+  });
+
   it('ignores check_run actions other than rerequested', async () => {
     const body = JSON.stringify(makeCheckRunEvent({ action: 'created' }));
     const res = await handler(makeCheckRunApiEvent(body));

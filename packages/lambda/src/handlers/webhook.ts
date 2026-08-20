@@ -489,14 +489,34 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
 
   const octokit = await authProvider.getInstallationOctokit(installationId);
 
+  // The check_run event already names the commit the check ran on, so the
+  // config ref does not depend on the PR lookup succeeding.
+  const headSha = event.check_run.head_sha;
+
   // Classification: refetch the PR so we get a full object + labels for
   // agentReview detection, mirroring the pull_request.synchronize path.
-  const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
-  const yamlConfig = await fetchRepoConfig(octokit, owner, repo, pr.head?.sha).catch(() => null);
+  // Best-effort — a re-run request should still produce a review if the PR
+  // lookup fails (deleted PR, transient 5xx); we just lose labels/draft and
+  // fall back to an unclassified job rather than dropping it on the floor.
+  const pr = await octokit.pulls
+    .get({ owner, repo, pull_number: prNumber })
+    .then(({ data }) => data)
+    .catch((err) => {
+      console.warn(
+        'Failed to fetch PR for check_run rerequest — enqueuing without labels/classification:',
+        `${owner}/${repo}#${prNumber}`,
+        err,
+      );
+      return null;
+    });
+
+  const yamlConfig = await fetchRepoConfig(octokit, owner, repo, headSha).catch(() => null);
   const agentReviewConfig: AgentReviewConfig | undefined = yamlConfig?.agentReview
     ? mergeConfig(yamlConfig).agentReview
     : undefined;
-  const classification = await classifyPrSource(pr as never, octokit, agentReviewConfig);
+  const classification = pr
+    ? await classifyPrSource(pr as never, octokit, agentReviewConfig)
+    : { source: undefined, agentKind: undefined };
 
   const existingCommentId =
     (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
@@ -508,12 +528,12 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     prNumber,
     mode: 'review',
     existingCommentId,
-    isDraft: pr.draft ?? false,
-    prLabels: pr.labels?.map((l: { name: string }) => l.name) ?? [],
-    changedFileCount: pr.changed_files,
+    isDraft: pr?.draft ?? false,
+    prLabels: pr?.labels?.map((l: { name: string }) => l.name) ?? [],
+    changedFileCount: pr?.changed_files,
     source: classification.source,
     agentKind: classification.agentKind,
-    headSha: pr.head?.sha,
+    headSha,
     ...ossRepoFields(event.repository),
   });
 
