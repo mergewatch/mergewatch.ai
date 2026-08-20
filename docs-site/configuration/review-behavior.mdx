@@ -114,12 +114,12 @@ Each finding produced by MergeWatch includes a **confidence score** from 1 to 10
 |---|---|
 | 90-100 | High confidence — obvious, clear-cut issue |
 | 75-89 | Medium-high confidence — likely a real issue |
-| 50-74 | Lower confidence — suppressed by the orchestrator |
-| 1-49 | Low confidence — suppressed by the orchestrator |
+| 50-74 | Lower confidence — suppressed at the default floor |
+| 1-49 | Low confidence — suppressed at the default floor |
 
-Findings with confidence below **75** are dropped. The orchestrator prompt asks for this, and a deterministic filter enforces it afterwards — a prompt instruction alone was not reliable enough to depend on, so the floor is applied in code regardless of what the orchestrator returns.
+Findings with confidence below the floor (**75** by default) are dropped. The orchestrator prompt asks for this, and a deterministic filter enforces it afterwards — a prompt instruction alone was not reliable enough to depend on, so the floor is applied in code regardless of what the orchestrator returns.
 
-The threshold is not user-configurable. It is set to minimize false positives while surfacing real issues; see [How MergeWatch avoids false positives](/configuration/false-positives) for the other guards that run alongside it.
+The threshold defaults to **75** and is configurable per repo with [`minConfidence`](/configuration/mergewatch-yml) (`1`--`100`). Lower it (e.g. `minConfidence: 50`) to surface the speculative tier shown above as suppressed; raise it to report only near-certain defects. The default is set to minimize false positives while surfacing real issues; see [How MergeWatch avoids false positives](/configuration/false-positives) for the other guards that run alongside it.
 
 <Tip>
 If you notice a legitimate issue being suppressed, consider adding a [custom agent](/configuration/mergewatch-yml#custom-agents) with a targeted prompt. Custom agents with focused prompts tend to produce higher-confidence findings for domain-specific concerns.

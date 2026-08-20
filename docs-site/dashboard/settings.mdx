@@ -25,7 +25,7 @@ The stored settings object (`InstallationSettings` in `@mergewatch/core`) has th
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `severityThreshold` | `"Low" \| "Med" \| "High"` | `"Med"` | Minimum severity level to post as a comment. Findings below this threshold are suppressed. |
+| `severityThreshold` | `"Low" \| "Med" \| "High"` | `"Low"` | Minimum severity level to post as a comment. Findings below this threshold are suppressed. The default reports every tier including info; `Med` and `High` are explicit opt-ins that suppress lower tiers. |
 | `commentTypes.syntax` | boolean | `true` | Include syntax-category findings. |
 | `commentTypes.logic` | boolean | `true` | Include logic / bug-category findings. |
 | `commentTypes.style` | boolean | `true` | Include style-category findings. |

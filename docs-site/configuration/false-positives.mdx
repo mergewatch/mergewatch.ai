@@ -19,7 +19,7 @@ The single worst failure mode for a reviewer is confident nonsense — a critica
 
 Findings are **grounded against the diff**: a claim is checked against the code it cites before it is reported. Warnings get the same treatment as criticals, and Mermaid diagrams that reference files outside the PR are dropped rather than shown.
 
-There is also a **confidence floor**. An agent that is guessing does not get to file a critical.
+There is also a **confidence floor**. An agent that is guessing does not get to file a critical. The floor defaults to `75` and is tunable per repo with [`minConfidence`](/configuration/mergewatch-yml): lower it (e.g. `minConfidence: 50`) to surface the speculative tier MergeWatch normally withholds, or raise it to report only near-certain defects.
 
 </Accordion>
 
