@@ -317,27 +317,40 @@ async function resolveRepo(gh: GitHubClients, fullName: string): Promise<Resolve
   };
 }
 
+interface OrgInstallation {
+  installationId: string;
+  account: { id: number; login: string };
+  targetType: string;
+}
+
 /**
- * Resolve an org (or user) login to its installation, without needing a repo.
+ * Look up an installation by account login, distinguishing "not installed"
+ * from "could not tell".
  *
  * `GET /orgs/{org}/installation` and `GET /users/{username}/installation` are
- * both App-JWT-only endpoints, same as the per-repo lookup. An org login is
- * tried first because that is the overwhelmingly common case; a personal
- * account falls through to the user endpoint.
+ * both App-JWT-only, same as the per-repo lookup. An org login is tried first
+ * because that is the overwhelmingly common case; a personal account falls
+ * through to the user endpoint.
+ *
+ * Returns null ONLY when GitHub answered 404 on both — that is the real "no
+ * installation" signal. Any other failure (5xx, rate limit, network) aborts
+ * rather than being swallowed: treating a transient error as "not installed"
+ * would let `--preapprove` write a row for an org that IS installed, and such a
+ * row can never be claimed because `installation.created` has already fired.
+ * Nobody would notice until someone ran `--list-preapprovals`.
  */
-async function resolveOrgInstallation(
+async function findInstallationByLogin(
   gh: GitHubClients,
   login: string,
-): Promise<{ installationId: string; account: { id: number; login: string }; targetType: string }> {
-  const attempts: (() => Promise<{ data: { id: number; account: unknown; target_type: string } }>)[] = [
-    () => gh.jwt.apps.getOrgInstallation({ org: login }) as never,
-    () => gh.jwt.apps.getUserInstallation({ username: login }) as never,
+): Promise<OrgInstallation | null> {
+  const attempts: { label: string; run: () => Promise<{ data: { id: number; account: unknown; target_type: string } }> }[] = [
+    { label: `orgs/${login}/installation`, run: () => gh.jwt.apps.getOrgInstallation({ org: login }) as never },
+    { label: `users/${login}/installation`, run: () => gh.jwt.apps.getUserInstallation({ username: login }) as never },
   ];
 
-  let lastErr: unknown;
-  for (const attempt of attempts) {
+  for (const { label, run } of attempts) {
     try {
-      const { data } = await attempt();
+      const { data } = await run();
       const account = data.account as { id: number; login: string } | null;
       if (!account) {
         fail(`Installation ${data.id} for ${login} has no account attached — cannot grant.`);
@@ -348,15 +361,30 @@ async function resolveOrgInstallation(
         targetType: data.target_type,
       };
     } catch (err) {
-      lastErr = err;
+      const status = (err as { status?: number }).status;
+      if (status === 404) continue;
+      fail(
+        `Could not determine whether ${login} has installed the App.\n`
+        + `GET ${label} returned ${status ?? 'an error'}: ${(err as Error).message}\n\n`
+        + 'Refusing to guess. Treating this as "not installed" would write a\n'
+        + 'pre-approval that can never be claimed; treating it as "installed"\n'
+        + 'would refuse a legitimate one. Retry once GitHub is responding.',
+      );
     }
   }
+
+  return null;
+}
+
+/** As above, but for modes that require an existing installation. */
+async function resolveOrgInstallation(gh: GitHubClients, login: string): Promise<OrgInstallation> {
+  const found = await findInstallationByLogin(gh, login);
+  if (found) return found;
 
   fail(
     `The MergeWatch App is not installed on ${login} (or it does not exist).\n`
     + 'If they have not installed it yet, that is what --preapprove is for:\n'
-    + `  scripts/grant-oss.ts --preapprove ${login} --stage <stage>\n`
-    + `GitHub said: ${(lastErr as Error)?.message}`,
+    + `  scripts/grant-oss.ts --preapprove ${login} --stage <stage>`,
   );
 }
 
@@ -584,17 +612,9 @@ async function main() {
     // If they are already installed, a pre-approval would sit unclaimed
     // forever: `installation.created` has already fired and will not fire
     // again. Point at the mode that actually does something.
-    let alreadyInstalled: string | undefined;
-    try {
-      const { data } = await gh.jwt.apps.getOrgInstallation({ org: login });
-      alreadyInstalled = String(data.id);
-    } catch {
-      try {
-        const { data } = await gh.jwt.apps.getUserInstallation({ username: login });
-        alreadyInstalled = String(data.id);
-      } catch { /* not installed — the expected case here */ }
-    }
-    if (alreadyInstalled) {
+    const existingInstall = await findInstallationByLogin(gh, login);
+    if (existingInstall) {
+      const alreadyInstalled = existingInstall.installationId;
       fail(
         `${login} has ALREADY installed the App (installation ${alreadyInstalled}).\n`
         + 'A pre-approval is only claimed on installation.created, so this one would\n'

@@ -3235,6 +3235,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 **Expected outcomes — pre-approval.**
 - [ ] `--preapprove <uninstalled-org> --stage dev` writes a pending row and warns that matching is on the login, not a numeric id
 - [ ] `--preapprove <ALREADY-installed-org>` → refuses and points at `--org`, because `installation.created` has already fired and will never fire again
+- [ ] A **transient** GitHub failure during that check (5xx / rate limit — simulate by revoking the App key mid-run) aborts with "Refusing to guess" rather than writing a pre-approval that could never be claimed
 - [ ] `--list-preapprovals --stage dev` shows the row as `pending — expires …`
 - [ ] After the org installs (see E2E-92), `--list-preapprovals` shows `claimed … by installation <id>` and `--inspect --org` shows the org-scoped grant
 - [ ] Re-running `--preapprove` for an already-claimed org shows the existing row and warns that overwriting resets it to pending without touching the grant already written
@@ -3244,6 +3245,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 - ❌ `--revoke` rewrites `ossGrantScope` — a later renewal would silently change what the grant covers
 - ❌ The dashboard shows an org-scoped grant as "no grant" (the `ossStatus` regression this stage fixes) or renders a stale repo list as if it were the coverage
 - ❌ `--preapprove` succeeds for an already-installed org — the row would sit unclaimed forever with nobody looking at it
+- ❌ A non-404 installation-lookup failure is swallowed as "not installed" — same outcome, but triggered by a transient blip rather than operator error, so it is even less likely to be noticed
 - ❌ Script constants drift from `packages/billing/src/constants.ts` (cap, term, TTL, `#PENDING-OSS`) — they are duplicated by necessity, so a change on one side must be mirrored
 
 ---
