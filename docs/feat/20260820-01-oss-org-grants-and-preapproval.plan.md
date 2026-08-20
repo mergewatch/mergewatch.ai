@@ -1,8 +1,12 @@
 # OSS Program — org-scoped grants and pre-approval
 
-**Status:** In progress
+**Status:** Shipped
 
 **Tracking issue:** #409 · Follow-up to #261 (`docs/oss-program.md`).
+
+Shipped as #410 (stage 1) → #411 (stage 2) → #412 (stage 3). Runtime behavior is documented in `docs/oss-program.md`; the scenarios are E2E-91/92/93.
+
+**Not yet exercised against live infrastructure.** E2E-91/92/93 have never been run — the AWS session was expired throughout implementation, so no code path in this feature has touched DynamoDB. Unit coverage is thorough, but the claim-on-install path especially is worth a manual pass.
 
 ## Summary
 
