@@ -3233,6 +3233,8 @@ Then install the App on a test org that has **never** installed it before (an ex
 - [ ] `--preapprove <ALREADY-installed-org>` → refuses and points at `--org`, because `installation.created` has already fired and will never fire again
 - [ ] A **transient** GitHub failure during that check (5xx / rate limit — simulate by revoking the App key mid-run) aborts with "Refusing to guess" rather than writing a pre-approval that could never be claimed
 - [ ] `--list-preapprovals --stage dev` shows the row as `pending — expires …`
+- [ ] `--inspect --org <uninstalled-org>` renders the pending pre-approval instead of failing — auditing an org that has only ever been pre-approved is the point of the mode
+- [ ] `--inspect --org <org with neither>` fails with "Nothing on record", naming both what's missing
 - [ ] After the org installs (see E2E-92), `--list-preapprovals` shows `claimed … by installation <id>` and `--inspect --org` shows the org-scoped grant
 - [ ] Re-running `--preapprove` for an already-claimed org shows the existing row and warns that overwriting resets it to pending without touching the grant already written
 

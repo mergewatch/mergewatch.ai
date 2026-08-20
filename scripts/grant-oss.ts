@@ -672,6 +672,35 @@ async function main() {
   let resolved: ResolvedRepo[] = [];
 
   if (args.orgLogin && args.repos.length === 0) {
+    // `--inspect` must not require an installation. Auditing an org that has
+    // only ever been pre-approved is a real case, and failing with "use
+    // --preapprove" when a pre-approval is already sitting there is worse than
+    // useless — it tells the operator to create the thing they came to look at.
+    if (args.mode === 'inspect') {
+      const found = await findInstallationByLogin(gh, args.orgLogin);
+      const pending = await readPreapproval(args.stage, args.orgLogin);
+
+      if (!found) {
+        if (pending) {
+          console.log(`\n${args.orgLogin} has not installed the App. Pre-approval on record:`);
+          renderPreapproval(pending);
+          console.log();
+          return;
+        }
+        fail(
+          `Nothing on record for ${args.orgLogin} on ${args.stage}: no installation,\n`
+          + 'and no pre-approval. To approve them ahead of installing:\n'
+          + `  scripts/grant-oss.ts --preapprove ${args.orgLogin} --stage ${args.stage}`,
+        );
+      }
+
+      console.log(`✓ ${found!.account.login} — ${found!.targetType}, installation ${found!.installationId}`);
+      renderGrant(await readGrant(args.stage, found!.installationId), found!.installationId);
+      if (pending) renderPreapproval(pending);
+      console.log();
+      return;
+    }
+
     const org = await resolveOrgInstallation(gh, args.orgLogin);
     installationId = org.installationId;
     account = org.account;
