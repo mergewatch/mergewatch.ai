@@ -434,6 +434,16 @@ export function formatReviewComment(options: FormatOptions): string {
     if (unverifiedCriticalCount > 0) {
       lines.push('No blocking issues \u2014 see unverified concerns below.');
       lines.push('');
+    // `?? 5` keeps callers that omit mergeScore on the pre-#385 behavior.
+    } else if (findings.length === 0 && (mergeScore ?? 5) <= 3) {
+      // #385 \u2014 an empty finding list is not always a clean bill of health. When
+      // every finding the orchestrator raised was filtered away, the verdict is
+      // clamped to advisory and its subtitle says so; celebrating "All clear!"
+      // four lines under that subtitle contradicts it, and a reader who skims
+      // to the body merges on the strength of the wrong half. Defer to the
+      // verdict line rather than talking over it.
+      lines.push('Nothing rendered \u2014 see the verdict above before merging.');
+      lines.push('');
     } else if (ux?.allClearMessage !== false) {
       lines.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
       lines.push('');
