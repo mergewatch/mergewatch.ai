@@ -443,6 +443,45 @@ describe('buildWorkDoneSection', () => {
   });
 });
 
+// ─── #385 — all-clear vs a filtered-away-criticals verdict ───────────────────
+
+describe('formatReviewComment — criticals dropped by filtering (#385)', () => {
+  // The verdict line already says "NOT a clean-PR result"; the body used to
+  // answer it four lines later with "All clear! … looks good to go". On
+  // fixtures#668 that sentence sat under an unauthenticated admin endpoint
+  // that returned every user — a reader who skims to the body merges on the
+  // strength of the wrong half.
+  it('does not celebrate "All clear!" when the verdict was clamped to advisory', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [],
+      mergeScore: 3,
+      mergeScoreReason:
+        '1 critical finding was flagged by the orchestrator and then dropped by post-orchestrator '
+        + 'filtering, leaving nothing to render. This is an advisory verdict, NOT a clean-PR result.',
+    }));
+    expect(result).not.toContain('All clear!');
+    expect(result).not.toContain('looks good to go');
+    expect(result).toContain('Nothing rendered — see the verdict above before merging.');
+    // The verdict itself must still be present and unaltered.
+    expect(result).toContain('NOT a clean-PR result');
+  });
+
+  it('still celebrates a genuinely clean 5/5 review', () => {
+    const result = formatReviewComment(baseOptions({ findings: [], mergeScore: 5 }));
+    expect(result).toContain('All clear!');
+    expect(result).not.toContain('Nothing rendered');
+  });
+
+  it('leaves an info-only review alone even at an advisory score', () => {
+    // Info findings DO render, so "nothing rendered" would be false here.
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'info', title: 'Nit' })],
+      mergeScore: 3,
+    }));
+    expect(result).not.toContain('Nothing rendered');
+  });
+});
+
 // ─── #240 — all-clear vs unverified concerns coherence ───────────────────────
 
 describe('formatReviewComment — unverified-only criticals (#240)', () => {
