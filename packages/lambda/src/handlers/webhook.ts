@@ -26,6 +26,7 @@ import {
   isBotActor,
   sweepInlineReactionsOnClose,
 } from '@mergewatch/core';
+import { claimOssPreapproval, isSaas } from '@mergewatch/billing';
 import type {
   PullRequestEvent,
   IssueCommentEvent,
@@ -546,10 +547,55 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
 // Installation event handler
 // ---------------------------------------------------------------------------
 
+/**
+ * #409 — apply a pending OSS pre-approval, if this account has one.
+ *
+ * Best-effort by design: an installation must still be recorded even if the
+ * OSS claim throws, so this never propagates. Same posture as
+ * `recordPrLifecycle`. A missing pre-approval is the overwhelmingly common
+ * case and is not logged as anything notable.
+ */
+async function claimOssPreapprovalIfAny(event: InstallationEvent): Promise<void> {
+  if (!isSaas()) return;
+
+  const { account, id } = event.installation;
+  const table = process.env.INSTALLATIONS_TABLE ?? "mergewatch-installations";
+
+  try {
+    const result = await claimOssPreapproval(
+      dynamodb,
+      table,
+      String(id),
+      { id: account.id, login: account.login },
+    );
+
+    if (result.claimed) {
+      console.log(
+        `[oss] pre-approval claimed for ${account.login} install=${id} `
+        + `scope=org cap=${result.capCents}c expires=${result.expiresAt}`
+      );
+    } else if (result.reason !== 'no_preapproval') {
+      console.log(
+        `[oss] pre-approval not applied for ${account.login} install=${id} reason=${result.reason}`
+      );
+    }
+  } catch (err) {
+    console.warn(`[oss] pre-approval claim failed for ${account.login} (install=${id}):`, err);
+  }
+}
+
 async function handleInstallationEvent(
   event: InstallationEvent
 ): Promise<void> {
   await storeInstallation(event);
+
+  // Only on `created`. A `deleted` / `suspend` / `new_permissions_accepted`
+  // event carries the same account, and claiming on any of those would burn a
+  // pre-approval against an installation that is going away or already granted.
+  if (event.action === "created") {
+    await claimOssPreapprovalIfAny(event);
+  }
+
   console.log(
     `Installation ${event.action}: ${event.installation.account.login} (id=${event.installation.id})`
   );

@@ -11,6 +11,7 @@ export {
   MIN_BALANCE_CENTS,
   OSS_DEFAULT_MONTHLY_CAP_CENTS,
   OSS_DEFAULT_TERM_MONTHS,
+  OSS_PREAPPROVAL_TTL_DAYS,
 } from './constants';
 
 // ─── OSS Program grant (#261) ───────────────────────────────────────────────
@@ -20,6 +21,22 @@ export {
   sponsoredCentsThisPeriod,
 } from './oss-grant';
 export type { RepoContext, OssEligibility, OssIneligibleReason } from './oss-grant';
+
+// ─── OSS Program pre-approval (#409) ────────────────────────────────────────
+export {
+  PREAPPROVAL_PK,
+  normalizeLogin,
+  putPreapproval,
+  getPreapproval,
+  listPreapprovals,
+  claimOssPreapproval,
+} from './oss-preapproval';
+export type {
+  OssPreapproval,
+  PreapprovalInput,
+  ClaimResult,
+  ClaimSkipReason,
+} from './oss-preapproval';
 
 // ─── Cost calculation ───────────────────────────────────────────────────────
 export { calculateReviewCost } from './cost';
