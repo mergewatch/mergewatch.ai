@@ -60,10 +60,27 @@ Every review tracked by MergeWatch has one of the following statuses, visible in
 | **Reviewed** | The review completed successfully and findings have been posted to GitHub. |
 | **Skipped** | The PR matched a skip rule. The reason is logged and visible in the detail drawer. |
 | **Failed** | A Lambda error or Bedrock failure occurred. The review can be re-triggered. |
+| **Queued** | The LLM provider rate-limited the review, so it was parked and will retry automatically. The GitHub check stays in progress and its title shows the attempt number — no action needed unless it persists past the final attempt. |
 
 <Tip>
 Failed reviews can always be retried by commenting `@mergewatch review` on the pull request.
 </Tip>
+
+## What the GitHub check run shows
+
+MergeWatch posts a single **MergeWatch Review** check run on every reviewed commit. Its title leads with the merge score so the verdict is visible from the checks tab without opening the summary comment:
+
+| Check title | Conclusion | Meaning |
+|---|---|---|
+| `5/5 — No issues found` | success | Nothing to report on the changed lines. |
+| `3/5 — 2 findings (no blocking critical)` | success | Findings exist and are worth reading, but none of them block. |
+| `1/5 — 2 critical issues found` | failure | At least one **verified** critical finding. |
+| `2/5 — Blocked by org agent: no-todo` | failure | An organization custom agent set to *blocking* raised a critical. |
+| `Review queued — rate limited (attempt 2)` | in progress | Parked after a provider rate limit; retries automatically. |
+
+<Note>
+Only **verified** critical findings fail the check. A critical the verification pass could not confirm is reported as an advisory concern and the check still succeeds — the score is clamped instead, so a green check never means "the review found nothing worth reading". Read the score in the title.
+</Note>
 
 ## Comment editing behavior
 

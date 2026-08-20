@@ -7,6 +7,29 @@ All notable changes to MergeWatch are documented here. The changelog in the sour
 
 ---
 
+## [0.5.0] — 2026-08-19
+
+First tagged release since `0.1.0`. Four months of work: competitive parity, org-level controls, and a sustained push on review reliability.
+
+### Highlights
+
+- **Org custom agents** — define review agents once in the dashboard and enforce them across every repository, with path/language targeting and an optional *blocking* mode that fails the check on a critical finding. See [Custom agents](/dashboard/custom-agents).
+- **MCP server** — expose MergeWatch review to MCP-compatible clients for pre-commit review.
+- **Structured LLM output** — agents now emit findings against an enforced JSON schema on every supported provider, eliminating a class of failure where a malformed response silently discarded findings.
+- **Burst resilience** — a durable job queue with bounded concurrency (SQS on SaaS, Postgres on self-hosted) paces a flood of pull requests instead of hitting the provider's rate limit all at once. Rate-limited reviews park and retry rather than failing. Tunable via [`REVIEW_CONCURRENCY`](/reference/env-vars).
+- **Merge score in the check title** — the GitHub check run leads with the verdict (`3/5 — 2 findings`), so a passing check no longer hides an advisory result. See [Review behavior](/configuration/review-behavior).
+- **False-positive reduction** — grounding findings against the diff, a claim-verification pass, cross-agent deduplication, clustering of related concerns, and a configurable confidence floor ([`minConfidence`](/configuration/mergewatch-yml)).
+- **Configuration that actually applies** — `minSeverity`, `maxTokensPerAgent`, and `postSummaryOnClean` are now read by the pipeline; several were previously documented but unwired.
+- **Analytics** — windowed rollups, p95 time-to-merge, and per-day counters, with the 500-review ceiling removed.
+- **Cost visibility** — per-PR and dashboard cost for self-hosted deployments, including custom model pricing for models MergeWatch does not price by default.
+
+### Notes
+
+- The default dashboard severity threshold is **Low** (report every tier). `Med` and `High` are explicit opt-ins.
+- Docker images are published per release: `ghcr.io/mergewatch/mergewatch:0.5.0` and `ghcr.io/mergewatch/mergewatch-dashboard:0.5.0`.
+
+---
+
 ## [0.1.0] — 2026-04-04
 
 Initial release of MergeWatch — AI-powered GitHub PR review with a multi-agent pipeline.
