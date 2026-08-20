@@ -251,3 +251,93 @@ describe('recordReview — OSS Program (#261)', () => {
     expect(mockIncrement).toHaveBeenCalled();
   });
 });
+
+describe('recordReview — OSS Program org scope (#409)', () => {
+  const orgGrant = {
+    ossGrantScope: 'org' as const,
+    ossGrantAccount: { id: 9931, login: 'acme-corp' },
+    ossGrantExpiresAt: '2099-01-01T00:00:00.000Z',
+    ossMonthlyCapCents: 2000,
+  };
+  /** A repo no grant has ever named — covered only because the scope is org. */
+  const unnamedPublicRepo = {
+    repoId: 777001,
+    repoFullName: 'acme-corp/brand-new-service',
+    isPublic: true,
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('accrues sponsored cost for a repo the grant never named', async () => {
+    mockGetFields.mockResolvedValue({ ...orgGrant, freeReviewsUsed: FREE_REVIEW_LIMIT });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, unnamedPublicRepo);
+
+    expect(mockAccrueOss).toHaveBeenCalledWith(
+      client,
+      table,
+      installationId,
+      4,
+      new Date().toISOString().slice(0, 7),
+    );
+    expect(mockDeductAndRecord).not.toHaveBeenCalled();
+  });
+
+  it('does NOT consume the free tier under org scope', async () => {
+    mockGetFields.mockResolvedValue({ ...orgGrant, freeReviewsUsed: 0 });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, unnamedPublicRepo);
+
+    expect(mockIncrement).not.toHaveBeenCalled();
+    expect(mockAccrueOss).toHaveBeenCalled();
+  });
+
+  it('never touches Stripe under org scope', async () => {
+    const mockStripe = { customers: { createBalanceTransaction: vi.fn() } } as any;
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+      stripeCustomerId: 'cus_123',
+    });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, mockStripe, unnamedPublicRepo);
+
+    expect(mockStripe.customers.createBalanceTransaction).not.toHaveBeenCalled();
+    expect(mockAccrueOss).toHaveBeenCalled();
+  });
+
+  it('charges normally for a private repo under an org grant', async () => {
+    // The gate and the accrual path must agree that private is never sponsored,
+    // or a private repo would be reviewed free and billed to nobody.
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+    });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, {
+      ...unnamedPublicRepo,
+      isPublic: false,
+    });
+
+    expect(mockAccrueOss).not.toHaveBeenCalled();
+    expect(mockDeductAndRecord).toHaveBeenCalled();
+  });
+
+  it('charges normally once an org grant has expired', async () => {
+    mockGetFields.mockResolvedValue({
+      ...orgGrant,
+      ossGrantExpiresAt: '2020-01-01T00:00:00.000Z',
+      freeReviewsUsed: FREE_REVIEW_LIMIT,
+      balanceCents: 10_000,
+    });
+
+    await recordReview(client, table, installationId, 0.02, reviewKey, undefined, unnamedPublicRepo);
+
+    expect(mockAccrueOss).not.toHaveBeenCalled();
+    expect(mockDeductAndRecord).toHaveBeenCalled();
+  });
+});

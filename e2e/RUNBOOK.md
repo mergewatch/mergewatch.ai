@@ -215,6 +215,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
+| [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #409 |
 | [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
 | [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 |
 
@@ -3125,6 +3126,42 @@ Branch: `fixture/85-time-ordered-reviews`. Seed one repo with reviews for PR num
 - ❌ Any review that LOSES findings relative to text mode (schema over-constraining — check `required` fields vs. what the model emits)
 - ❌ `[structured]` fallback warnings on EVERY call (provider integration broken; the run silently became a text-mode run — quality identical but #390's guarantee is not exercised)
 - ❌ Throttle storms doubling: a parked review re-invoking structured AND text per agent (the throttle-rethrow guard regressed)
+
+---
+
+### E2E-91: #409 — OSS org-scoped grant covers every public repo
+
+**Status:** 🚧 In review (#409, stage 1).
+
+**Behavior:** an OSS grant written with `ossGrantScope: 'org'` sponsors **every public repository in the installation**, including ones created after the grant was written — no `ossGrantRepos` list is consulted. The other three conditions are unchanged from #261 and still evaluated live on every review: the grant must not have expired, the repo must be public *right now*, and the month's accrued sponsored cost must be under `ossMonthlyCapCents` (still installation-level — org scope widens coverage, not the ceiling). A grant with no `ossGrantScope` field is unaffected and keeps matching only its named repo ids.
+
+**Setup.** Stage 1 ships no writer for the field, so seed the `#SETTINGS` row by hand on dev:
+
+```bash
+aws dynamodb update-item --profile mergewatch --region us-west-2 \
+  --table-name mergewatch-installations-dev \
+  --key '{"installationId":{"S":"<id>"},"repoFullName":{"S":"#SETTINGS"}}' \
+  --update-expression 'SET ossGrantScope=:s, ossGrantExpiresAt=:e, ossMonthlyCapCents=:c' \
+  --expression-attribute-values '{":s":{"S":"org"},":e":{"S":"2027-01-01T00:00:00.000Z"},":c":{"N":"2000"}}'
+```
+
+Then exhaust the free tier (or set `freeReviewsUsed` to 5 and `balanceCents` to 0) so an unsponsored review would visibly block.
+
+**Expected outcomes.**
+- [ ] A PR on a **brand-new public repo** in that installation — one never named in any grant — is reviewed, and the agent log shows `[billing] allow install=<id> reason=oss`
+- [ ] `freeReviewsUsed` does NOT increment and `balanceCents` does NOT decrease
+- [ ] `ossSponsoredCentsThisPeriod` / `ossSponsoredCentsLifetime` increase by the review's full cost (llm + infra + margin)
+- [ ] No Stripe balance transaction is created for that review
+- [ ] Flip the repo to **private**, push again → the review is NOT sponsored; log shows `reason=repo_not_public` and the review falls through to the standard gate (blocked here, since free tier is exhausted and balance is 0)
+- [ ] Set `ossGrantExpiresAt` to the past → `reason=grant_expired`, and the block copy points at renewal/BYOK/self-hosting rather than at a credit card
+- [ ] A separate installation with a pre-#409 `ossGrantRepos` grant and no `ossGrantScope` still sponsors only its named repos (unnamed public repo → `reason=repo_not_granted`)
+
+**Failure modes.**
+- ❌ A **private** repo gets sponsored — the visibility check is the only thing standing between an org grant and unbounded private-repo spend
+- ❌ A sponsored review increments `freeReviewsUsed` — a later lapse would then instantly block the account and file a "credits required" issue on a public OSS repo
+- ❌ A pre-#409 grant starts covering unnamed repos (absent `ossGrantScope` misread as org) — this silently sponsors open-core commercial repos
+- ❌ The cap stops applying under org scope (`cap_exceeded` never fires) — a runaway org has no ceiling
+- ❌ Gate and accrual disagree: `billingCheck` says `oss` but `recordReview` charges anyway, or vice versa
 
 ---
 
