@@ -882,3 +882,34 @@ describe('handler — OSS pre-approval claim on install (#409)', () => {
     expect(mockClaimOssPreapproval).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #416 — isMergeWatchCheckRun must match its own stage's check-run name
+// ---------------------------------------------------------------------------
+
+describe('isMergeWatchCheckRun — stage scoping (#416)', () => {
+  const ev = (name: string) => ({ check_run: { name } } as any);
+
+  it('prod matches the prod check name', () => {
+    expect(isMergeWatchCheckRun(ev('MergeWatch Review'))).toBe(true);
+    expect(isMergeWatchCheckRun(ev('MergeWatch Review'), 'prod')).toBe(true);
+  });
+
+  it('prod ignores a dev check run', () => {
+    // Otherwise prod would re-review on a "Re-run" click that belongs to dev.
+    expect(isMergeWatchCheckRun(ev('MergeWatch Review (dev)'))).toBe(false);
+  });
+
+  it('dev matches its own check run, not prod\'s', () => {
+    // The direction that breaks silently: scoping only the write side leaves
+    // dev publishing "MergeWatch Review (dev)" while still matching the bare
+    // prod name here, so its own Re-run button does nothing.
+    expect(isMergeWatchCheckRun(ev('MergeWatch Review (dev)'), 'dev')).toBe(true);
+    expect(isMergeWatchCheckRun(ev('MergeWatch Review'), 'dev')).toBe(false);
+  });
+
+  it('still ignores unrelated check runs in every stage', () => {
+    expect(isMergeWatchCheckRun(ev('CodeQL'))).toBe(false);
+    expect(isMergeWatchCheckRun(ev('CodeQL'), 'dev')).toBe(false);
+  });
+});

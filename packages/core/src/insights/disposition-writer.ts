@@ -17,7 +17,9 @@ import type { IFindingDispositionStore, IReviewStore } from '../storage/types.js
 import type { OrchestratedFinding, PreviousFinding } from '../agents/reviewer.js';
 import { findingMatchKeys, fingerprintFromCode } from '../review-delta.js';
 import { extractSignificantTokens } from '../finding-clustering.js';
-import { INLINE_BOT_COMMENT_MARKER, extractInlineCommentTitle } from '../github/client.js';
+import { extractInlineCommentTitle } from '../github/client.js';
+import { inlineMarker } from '../stage.js';
+import type { Stage } from '../stage.js';
 import type { Octokit } from '@octokit/rest';
 
 /**
@@ -267,6 +269,7 @@ export async function pollAndRecordInlineReactions(
   store: IFindingDispositionStore | undefined,
   installationId: string | number | undefined,
   repoFullName: string,
+  stage?: Stage,
 ): Promise<Record<string, Record<string, number>>> {
   const newSnapshot: Record<string, Record<string, number>> = {};
   if (!store || installationId == null) return newSnapshot;
@@ -307,7 +310,7 @@ export async function pollAndRecordInlineReactions(
     // the inline marker. Same guard the inline-reply path uses (so
     // CopilotAI / dependabot / human review comments don't sneak in).
     if (c.userType !== 'Bot') continue;
-    if (!c.body.includes(INLINE_BOT_COMMENT_MARKER)) continue;
+    if (!c.body.includes(inlineMarker(stage))) continue;
     if (!c.reactions) continue;
 
     // Capture current counts for the next-poll baseline regardless of

@@ -100,6 +100,10 @@ export {
 } from './agents/prompts.js';
 
 // ─── GitHub client (portable Octokit ops) ───────────────────────────────────
+// #416 — stage-scoped review identity (dev/prod A/B on one repo).
+export { reviewMarker, inlineMarker, checkRunName } from './stage.js';
+export type { Stage } from './stage.js';
+
 export {
   BOT_COMMENT_MARKER,
   INLINE_BOT_COMMENT_MARKER,

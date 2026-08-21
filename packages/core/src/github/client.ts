@@ -22,6 +22,8 @@ import type {
   PassThreshold,
 } from '../config/defaults.js';
 import { PASS_THRESHOLDS } from '../config/defaults.js';
+import { reviewMarker, inlineMarker, checkRunName } from '../stage.js';
+import type { Stage } from '../stage.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,6 +32,11 @@ import { PASS_THRESHOLDS } from '../config/defaults.js';
 /**
  * HTML comment injected at the top of every MergeWatch review comment.
  * Used as a stable marker to locate an existing bot comment on a PR.
+ *
+ * This is the **production** marker. Prefer {@link reviewMarker} when a stage
+ * is available (#416) — with dev and prod both installed on one repo, each
+ * stage needs its own marker or they clobber each other's comments. Kept
+ * exported for self-hosted callers and back-compat; the value is frozen.
  */
 export const BOT_COMMENT_MARKER = "<!-- mergewatch-review -->";
 
@@ -40,6 +47,9 @@ export const BOT_COMMENT_MARKER = "<!-- mergewatch-review -->";
  * or any other reviewer bot. The marker is invisible to humans in the GitHub
  * UI but reliably distinguishes our inline findings from third-party ones,
  * regardless of the App name (SaaS or self-hosted).
+ *
+ * This is the **production** marker; prefer {@link inlineMarker} when a stage
+ * is available (#416). Frozen — see `stage.ts`.
  */
 export const INLINE_BOT_COMMENT_MARKER = "<!-- mergewatch-inline -->";
 
@@ -185,9 +195,10 @@ export async function postReviewComment(
   owner: string,
   repo: string,
   prNumber: number,
-  body: string
+  body: string,
+  stage?: Stage,
 ): Promise<number> {
-  const markedBody = `${BOT_COMMENT_MARKER}\n${body}`;
+  const markedBody = `${reviewMarker(stage)}\n${body}`;
 
   const { data } = await octokit.issues.createComment({
     owner,
@@ -214,9 +225,10 @@ export async function updateReviewComment(
   owner: string,
   repo: string,
   commentId: number,
-  body: string
+  body: string,
+  stage?: Stage,
 ): Promise<void> {
-  const markedBody = `${BOT_COMMENT_MARKER}\n${body}`;
+  const markedBody = `${reviewMarker(stage)}\n${body}`;
 
   await octokit.issues.updateComment({
     owner,
@@ -237,8 +249,12 @@ export async function findExistingBotComment(
   octokit: Octokit,
   owner: string,
   repo: string,
-  prNumber: number
+  prNumber: number,
+  stage?: Stage,
 ): Promise<number | null> {
+  // Must resolve from the same stage the writer used, or the lookup silently
+  // misses and the next review posts a duplicate instead of updating.
+  const marker = reviewMarker(stage);
   const iterator = octokit.paginate.iterator(octokit.issues.listComments, {
     owner,
     repo,
@@ -248,7 +264,7 @@ export async function findExistingBotComment(
 
   for await (const { data: comments } of iterator) {
     for (const comment of comments) {
-      if (comment.body?.includes(BOT_COMMENT_MARKER)) {
+      if (comment.body?.includes(marker)) {
         return comment.id;
       }
     }
@@ -304,6 +320,11 @@ export async function getCommentReactions(
  * Check Run name reported to GitHub. Also used by the webhook handler to
  * identify MergeWatch check runs in check_run.rerequested events so the
  * native "Re-run" button in the PR Checks UI triggers a fresh review.
+ *
+ * This is the **production** name; prefer {@link checkRunName} when a stage is
+ * available (#416). Both sides must resolve from the same stage — the webhook
+ * matches an incoming re-request against this name, so scoping only the write
+ * side leaves a non-prod stage ignoring its own re-run clicks.
  */
 export const MERGEWATCH_CHECK_RUN_NAME = 'MergeWatch Review';
 
@@ -326,13 +347,14 @@ export async function createCheckRun(
     summary: string;
     detailsUrl?: string;
   },
+  stage?: Stage,
 ): Promise<void> {
   try {
     await octokit.checks.create({
       owner,
       repo,
       head_sha: headSha,
-      name: MERGEWATCH_CHECK_RUN_NAME,
+      name: checkRunName(stage),
       status: params.status,
       ...(params.conclusion && { conclusion: params.conclusion }),
       ...(params.detailsUrl && { details_url: params.detailsUrl }),
@@ -495,7 +517,11 @@ export function buildInlineComments(
   findings: InlineCommentCandidate[],
   changedFiles: string[],
   changedLines?: Map<string, Set<number>>,
+  stage?: Stage,
 ): Array<{ path: string; line: number; side: string; body: string }> {
+  // Matched later by the disposition writer and the inline-reply guard, so
+  // both must resolve from the same stage (#416).
+  const marker = inlineMarker(stage);
   const changedSet = new Set(changedFiles);
 
   return findings
@@ -516,7 +542,7 @@ export function buildInlineComments(
       path: f.file,
       line: f.line,
       side: 'RIGHT',
-      body: `${INLINE_BOT_COMMENT_MARKER}\n**🔴 ${f.title}**\n\n${f.description}${f.suggestion ? `\n\n> **Suggestion:** ${f.suggestion}` : ''}${f.fingerprint ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->` : ''}`,
+      body: `${marker}\n**🔴 ${f.title}**\n\n${f.description}${f.suggestion ? `\n\n> **Suggestion:** ${f.suggestion}` : ''}${f.fingerprint ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->` : ''}`,
     }));
 }
 

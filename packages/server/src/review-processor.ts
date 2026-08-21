@@ -21,6 +21,11 @@ import {
   findingMatchKeys,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
+// #416 — deployment stage, so review artifacts (comment marker, check-run
+// name) are scoped per stage. Absent means prod, which is the frozen
+// production identity — see packages/core/src/stage.ts.
+const STAGE = process.env.STAGE;
+
 
 // -- LLM cost pricing (#233) -------------------------------------------------
 
@@ -373,7 +378,7 @@ export async function processReviewJob(
     status: 'in_progress',
     title: 'Review in progress',
     summary: `MergeWatch is reviewing PR #${prNumber}...`,
-  }).catch((err) => console.warn('Failed to create in-progress check run:', err));
+  }, STAGE).catch((err) => console.warn('Failed to create in-progress check run:', err));
 
   // yamlConfig was fetched earlier for the autoReview silent-skip gate and
   // is reused below for includePatterns + runtimeConfig — no second round-trip.
@@ -391,7 +396,7 @@ export async function processReviewJob(
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: skipReason,
-    }).catch((err) => console.warn('Failed to create skip check run:', err));
+    }, STAGE).catch((err) => console.warn('Failed to create skip check run:', err));
     console.log(`Skipped ${repoFullName}#${prNumber}: ${skipReason}`);
     await clearEyes();
     return;
@@ -472,7 +477,7 @@ export async function processReviewJob(
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: rulesSkip.reason,
-    }).catch((err) => console.warn('Failed to create rules skip check run:', err));
+    }, STAGE).catch((err) => console.warn('Failed to create rules skip check run:', err));
     console.log(`Rules skip ${repoFullName}#${prNumber} (${rulesSkip.kind}): ${rulesSkip.reason}`);
     await clearEyes();
     return;
@@ -724,7 +729,7 @@ export async function processReviewJob(
       deps.dispositionStore,
       installationId,
       repoFullName,
-    );
+    STAGE);
 
     // Compute cumulative cost across all reviews on this PR
     const prevCost = prevReviewsResult.reduce((sum, r) => sum + (r.estimatedCostUsd ?? 0), 0);
@@ -781,7 +786,7 @@ export async function processReviewJob(
     // Look up existing comment: job payload → store → API scan
     let targetCommentId = job.existingCommentId
       || (prevReviewsResult.find((r) => r.commentId && r.prNumberCommitSha !== prNumberCommitSha)?.commentId as number | undefined)
-      || (await findExistingBotComment(octokit, owner, repo, prNumber)) || undefined;
+      || (await findExistingBotComment(octokit, owner, repo, prNumber, STAGE)) || undefined;
 
     // #350 — postSummaryOnClean: false means a clean PR gets no comment. Only
     // the INITIAL post is gated: an existing MergeWatch comment is always
@@ -792,10 +797,10 @@ export async function processReviewJob(
     if (stayingSilent) {
       console.log('[post-summary] clean PR and postSummaryOnClean=false — staying silent on %s#%d', repoFullName, prNumber);
     } else if (targetCommentId) {
-      await updateReviewComment(octokit, owner, repo, targetCommentId, comment);
+      await updateReviewComment(octokit, owner, repo, targetCommentId, comment, STAGE);
       commentId = targetCommentId;
     } else {
-      commentId = await postReviewComment(octokit, owner, repo, prNumber, comment);
+      commentId = await postReviewComment(octokit, owner, repo, prNumber, comment, STAGE);
     }
 
     if (!commentId && !stayingSilent) {
@@ -803,7 +808,7 @@ export async function processReviewJob(
     }
 
     // ── Step B: Build inline comments for critical findings ──────────────
-    let inlineComments = buildInlineComments(result.findings, prContext.files, result.changedLines);
+    let inlineComments = buildInlineComments(result.findings, prContext.files, result.changedLines, STAGE);
 
     // Filter out carried-over findings (same file+line+title as previous review)
     if (prevComplete?.findings && inlineComments.length > 0) {
@@ -969,7 +974,7 @@ export async function processReviewJob(
       detailsUrl: deps.dashboardBaseUrl
         ? `${deps.dashboardBaseUrl}/dashboard/reviews/${encodeURIComponent(repoFullName)}/${encodeURIComponent(prNumberCommitSha)}`
         : undefined,
-    }).catch((err) => console.warn('Failed to create completion check run:', err));
+    }, STAGE).catch((err) => console.warn('Failed to create completion check run:', err));
 
     console.log(`Review complete: ${repoFullName}#${prNumber} — score ${result.mergeScore}/5, ${result.findings.length} findings, ${durationMs}ms`);
   } catch (err) {
@@ -985,7 +990,7 @@ export async function processReviewJob(
         status: 'in_progress',
         title: 'Review queued — rate limited',
         summary: 'The model provider is rate limiting requests. MergeWatch will retry this review shortly.',
-      }).catch((checkErr) => console.warn('Failed to post rate-limited check run:', checkErr));
+      }, STAGE).catch((checkErr) => console.warn('Failed to post rate-limited check run:', checkErr));
       throw err;
     }
 
@@ -998,7 +1003,7 @@ export async function processReviewJob(
       conclusion: 'failure',
       title: 'Review failed',
       summary: 'MergeWatch encountered an error while reviewing this PR. Please try again or contact support if the issue persists.',
-    }).catch((checkErr) => console.warn('Failed to create error check run:', checkErr));
+    }, STAGE).catch((checkErr) => console.warn('Failed to create error check run:', checkErr));
     throw err;
   } finally {
     await clearEyes();

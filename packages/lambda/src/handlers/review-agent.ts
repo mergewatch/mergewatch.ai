@@ -76,6 +76,7 @@ import type {
 import { buildWorkDoneSection, computeReviewDelta } from '@mergewatch/core';
 import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
 import {
+
   DynamoReviewStore,
   DynamoFindingDispositionStore,
   DEFAULT_FINDING_DISPOSITIONS_TABLE,
@@ -92,6 +93,10 @@ import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe, isLapsedOssGrant } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
 import { payloadFromEvent, attemptFromEvent, rateLimitedCheckSummary, type ReviewAgentEvent } from './review-agent-event.js';
+// #416 — deployment stage, so review artifacts (comment marker, check-run
+// name) are scoped per stage. Absent means prod, which is the frozen
+// production identity — see packages/core/src/stage.ts.
+const STAGE = process.env.STAGE;
 
 // -- Singletons (re-used across warm invocations) ----------------------------
 
@@ -453,7 +458,7 @@ export async function handler(
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: skipReason,
-    });
+    }, STAGE);
 
     return {
       statusCode: 200,
@@ -533,7 +538,7 @@ export async function handler(
     status: 'in_progress',
     title: 'Review in progress',
     summary: `MergeWatch is reviewing PR #${prNumber}...`,
-  });
+  }, STAGE);
 
   try {
     const diff = await getPRDiff(octokit, owner, repo, prNumber);
@@ -605,7 +610,7 @@ export async function handler(
         conclusion: 'neutral',
         title: 'Review skipped',
         summary: rulesSkip.reason,
-      });
+      }, STAGE);
 
       return {
         statusCode: 200,
@@ -855,7 +860,7 @@ export async function handler(
       dispositionStore,
       installationId,
       repoFullName,
-    );
+    STAGE);
 
     const durationMs = Date.now() - new Date(reviewStartedAt).getTime();
 
@@ -920,7 +925,7 @@ export async function handler(
     }
 
     if (!targetCommentId) {
-      targetCommentId = (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
+      targetCommentId = (await findExistingBotComment(octokit, owner, repo, prNumber, STAGE)) ?? undefined;
     }
 
     // #350 — postSummaryOnClean: false means a clean PR gets no comment. Only
@@ -932,10 +937,10 @@ export async function handler(
     if (stayingSilent) {
       console.log(`[post-summary] clean PR and postSummaryOnClean=false — staying silent on ${repoFullName}#${prNumber}`);
     } else if (targetCommentId) {
-      await updateReviewComment(octokit, owner, repo, targetCommentId, commentBody);
+      await updateReviewComment(octokit, owner, repo, targetCommentId, commentBody, STAGE);
       commentId = targetCommentId;
     } else {
-      commentId = await postReviewComment(octokit, owner, repo, prNumber, commentBody);
+      commentId = await postReviewComment(octokit, owner, repo, prNumber, commentBody, STAGE);
     }
 
     if (!commentId && !stayingSilent) {
@@ -943,7 +948,7 @@ export async function handler(
     }
 
     // ── Step B: Build inline comments for critical findings ──────────────
-    let inlineComments = buildInlineComments(result.findings, prContext.files, result.changedLines);
+    let inlineComments = buildInlineComments(result.findings, prContext.files, result.changedLines, STAGE);
 
     // Filter out carried-over findings (same file+line+title as previous review)
     if (prevComplete?.findings && inlineComments.length > 0) {
@@ -1138,7 +1143,7 @@ export async function handler(
         ? `Found: ${findingSummaryParts.join(', ')}`
         : 'No issues detected in this PR.',
       detailsUrl: reviewDetailUrl,
-    });
+    }, STAGE);
 
     console.log(
       `Review complete for ${repoFullName}#${prNumber}: ${result.findings.length} findings`,
@@ -1170,7 +1175,7 @@ export async function handler(
         // #370 — attempt + parked-at + expectations: a parked review must be
         // distinguishable from a hung one at a glance.
         summary: rateLimitedCheckSummary(deliveryAttempt, new Date().toISOString()),
-      }).catch((checkErr) => {
+      }, STAGE).catch((checkErr) => {
         console.error('Failed to post rate-limited check run:', checkErr);
       });
 
@@ -1190,7 +1195,7 @@ export async function handler(
       conclusion: 'failure',
       title: 'Review failed',
       summary: `MergeWatch encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    });
+    }, STAGE);
 
     return {
       statusCode: 500,

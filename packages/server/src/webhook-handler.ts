@@ -2,8 +2,13 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, IReviewJobQueue } from '@mergewatch/core';
-import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
+import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
+// #416 — deployment stage, so review artifacts (comment marker, check-run
+// name) are scoped per stage. Absent means prod, which is the frozen
+// production identity — see packages/core/src/stage.ts.
+const STAGE = process.env.STAGE;
+
 
 /**
  * #355 — route a review job through the durable queue when wired, else run
@@ -215,7 +220,7 @@ async function handlePullRequest(payload: PullRequestEvent, deps: WebhookDeps) {
   let existingCommentId: number | undefined;
   if (octokit && (COMMENT_LOOKUP_ACTIONS as readonly string[]).includes(action)) {
     try {
-      const commentId = await findExistingBotComment(octokit, owner, repo, prNumber);
+      const commentId = await findExistingBotComment(octokit, owner, repo, prNumber, STAGE);
       if (commentId) existingCommentId = commentId;
     } catch (err) {
       console.warn('Failed to look up existing bot comment:', err);
@@ -338,8 +343,11 @@ async function handleReviewComment(payload: PullRequestReviewCommentEvent, deps:
  * True when a check_run event describes a MergeWatch-created check. Matches
  * by name since check_run.app.id requires knowing the GitHub App ID at runtime.
  */
-export function isMergeWatchCheckRun(event: CheckRunEvent): boolean {
-  return event.check_run?.name === MERGEWATCH_CHECK_RUN_NAME;
+export function isMergeWatchCheckRun(event: CheckRunEvent, stage?: string): boolean {
+  // #416 — must resolve from the same stage `createCheckRun` wrote with. A
+  // non-prod stage publishes "MergeWatch Review (dev)"; matching only the prod
+  // name here would make it ignore its own "Re-run" clicks.
+  return event.check_run?.name === checkRunName(stage);
 }
 
 /**
@@ -349,7 +357,7 @@ export function isMergeWatchCheckRun(event: CheckRunEvent): boolean {
  */
 async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
   if (payload.action !== 'rerequested') return;
-  if (!isMergeWatchCheckRun(payload)) return;
+  if (!isMergeWatchCheckRun(payload, STAGE)) return;
 
   const installationId = payload.installation?.id;
   if (!installationId) return;
@@ -386,7 +394,7 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
   const classification = await classifyPrSource(pr as never, octokit, agentReviewConfig);
 
   const existingCommentId =
-    (await findExistingBotComment(octokit, owner, repo, prNumber).catch(() => null)) ?? undefined;
+    (await findExistingBotComment(octokit, owner, repo, prNumber, STAGE).catch(() => null)) ?? undefined;
 
   const job: ReviewJobPayload = {
     installationId,

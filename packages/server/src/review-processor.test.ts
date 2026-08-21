@@ -159,6 +159,7 @@ describe('processReviewJob — check runs', () => {
         title: 'Review in progress',
         summary: 'MergeWatch is reviewing PR #1...',
       }),
+      undefined, // #416 stage — unset in tests means prod
     );
   });
 
@@ -175,6 +176,7 @@ describe('processReviewJob — check runs', () => {
         title: 'Review skipped',
         summary: 'Only lockfile changes',
       }),
+      undefined, // #416 stage — unset in tests means prod
     );
   });
 
@@ -200,6 +202,7 @@ describe('processReviewJob — check runs', () => {
         title: 'Review skipped',
         summary: 'Draft PR skipped',
       }),
+      undefined, // #416 stage — unset in tests means prod
     );
   });
 
@@ -243,6 +246,7 @@ describe('processReviewJob — check runs', () => {
         title: 'Review failed',
         summary: 'MergeWatch encountered an error while reviewing this PR. Please try again or contact support if the issue persists.',
       }),
+      undefined, // #416 stage — unset in tests means prod
     );
   });
 
@@ -1085,7 +1089,7 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
     const deps = makeDeps();
     await processReviewJob(makeJob(), deps);
 
-    expect(updateReviewComment).toHaveBeenCalledWith(mockOctokit, 'test', 'repo', 42, 'formatted comment');
+    expect(updateReviewComment).toHaveBeenCalledWith(mockOctokit, 'test', 'repo', 42, 'formatted comment', undefined);
     expect(postReviewComment).not.toHaveBeenCalled();
   });
 
