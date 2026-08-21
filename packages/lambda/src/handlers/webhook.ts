@@ -20,6 +20,7 @@ import {
   REVIEW_TRIGGERING_ACTIONS,
   COMMENT_LOOKUP_ACTIONS,
   MERGEWATCH_CHECK_RUN_NAME,
+  checkRunName,
   classifyPrSource,
   fetchRepoConfig,
   mergeConfig,
@@ -42,6 +43,11 @@ import {
   DynamoReviewStore, DynamoFindingDispositionStore, DEFAULT_FINDING_DISPOSITIONS_TABLE,
 } from '@mergewatch/storage-dynamo';
 import { SSMGitHubAuthProvider, getWebhookSecret } from '../github-auth-ssm.js';
+// #416 — deployment stage, so review artifacts (comment marker, check-run
+// name) are scoped per stage. Absent means prod, which is the frozen
+// production identity — see packages/core/src/stage.ts.
+const STAGE = process.env.STAGE;
+
 
 // ---------------------------------------------------------------------------
 // AWS clients (re-used across warm invocations)
@@ -275,7 +281,7 @@ async function handlePullRequestEvent(
 
   let existingCommentId: number | undefined;
   if ((COMMENT_LOOKUP_ACTIONS as readonly string[]).includes(action)) {
-    const commentId = await findExistingBotComment(octokit, owner, repo, prNumber);
+    const commentId = await findExistingBotComment(octokit, owner, repo, prNumber, STAGE);
     if (commentId) {
       existingCommentId = commentId;
     }
@@ -348,7 +354,7 @@ async function handleIssueCommentEvent(
 
   const octokit = await authProvider.getInstallationOctokit(installationId);
   const existingCommentId =
-    (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
+    (await findExistingBotComment(octokit, owner, repo, prNumber, STAGE)) ?? undefined;
 
   // #400 — an issue_comment payload carries no head SHA, so without this fetch
   // the job runs with `headSha: undefined` and every downstream config read
@@ -455,8 +461,11 @@ async function handleReviewCommentEvent(
  * Exported for unit testing. We match by name (stable across deploys) since
  * check_run.app.id requires knowing our GitHub App ID at runtime.
  */
-export function isMergeWatchCheckRun(event: CheckRunEvent): boolean {
-  return event.check_run?.name === MERGEWATCH_CHECK_RUN_NAME;
+export function isMergeWatchCheckRun(event: CheckRunEvent, stage?: string): boolean {
+  // #416 — must resolve from the same stage `createCheckRun` wrote with. A
+  // non-prod stage publishes "MergeWatch Review (dev)"; matching only the prod
+  // name here would make it ignore its own "Re-run" clicks.
+  return event.check_run?.name === checkRunName(stage);
 }
 
 /**
@@ -466,7 +475,7 @@ export function isMergeWatchCheckRun(event: CheckRunEvent): boolean {
  */
 async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
   if (event.action !== 'rerequested') return;
-  if (!isMergeWatchCheckRun(event)) return;
+  if (!isMergeWatchCheckRun(event, STAGE)) return;
 
   const installationId = event.installation?.id;
   if (!installationId) {
@@ -520,7 +529,7 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     : { source: undefined, agentKind: undefined };
 
   const existingCommentId =
-    (await findExistingBotComment(octokit, owner, repo, prNumber)) ?? undefined;
+    (await findExistingBotComment(octokit, owner, repo, prNumber, STAGE)) ?? undefined;
 
   await enqueueReviewJob({
     installationId,

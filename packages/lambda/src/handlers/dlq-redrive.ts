@@ -28,6 +28,11 @@ import {
 import { createCheckRun } from '@mergewatch/core';
 import type { ReviewJobPayload } from '@mergewatch/core';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
+// #416 — deployment stage, so review artifacts (comment marker, check-run
+// name) are scoped per stage. Absent means prod, which is the frozen
+// production identity — see packages/core/src/stage.ts.
+const STAGE = process.env.STAGE;
+
 
 const sqs = new SQSClient({});
 const authProvider = new SSMGitHubAuthProvider();
@@ -77,7 +82,7 @@ async function completeAbandonedCheck(payload: ReviewJobPayload): Promise<void> 
         'MergeWatch retried this review across several queue generations and the model provider '
         + 'was still rate limiting. The job has been dropped so it does not cycle indefinitely. '
         + 'Re-run this check or comment `@mergewatch review` to try again.',
-    });
+    }, STAGE);
     console.log(`Completed abandoned check run for ${owner}/${repo}#${prNumber}`);
   } catch (err) {
     console.error(`Failed to complete abandoned check run for ${owner}/${repo}#${prNumber}:`, err);

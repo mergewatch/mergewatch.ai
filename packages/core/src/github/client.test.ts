@@ -9,6 +9,7 @@ import {
   addPRReaction,
   removePRReaction,
   submitPRReview,
+  findExistingBotComment,
 } from './client.js';
 import type { Octokit } from '@octokit/rest';
 
@@ -744,5 +745,46 @@ describe('submitPRReview body handling (W6)', () => {
     const { octokit, calls } = captureCall();
     await submitPRReview(octokit, 'o', 'r', 1, '', 'COMMENT');
     expect('comments' in calls[0]).toBe(false);
+  });
+});
+
+describe('findExistingBotComment — stage scoping (#416)', () => {
+  // With dev and prod both installed on one repo, each stage must find only
+  // its own comment. Matching the other's would make the second reviewer try
+  // to edit a comment it does not own, which GitHub rejects.
+  function octokitWith(bodies: string[]) {
+    return {
+      paginate: {
+        iterator: () => (async function* () {
+          yield { data: bodies.map((body, i) => ({ id: 100 + i, body })) };
+        })(),
+      },
+      issues: { listComments: {} },
+    } as any;
+  }
+
+  it('prod ignores a dev comment', async () => {
+    const octokit = octokitWith(['<!-- mergewatch-review:dev -->\nreview']);
+    expect(await findExistingBotComment(octokit, 'o', 'r', 1)).toBeNull();
+  });
+
+  it('dev ignores a prod comment', async () => {
+    const octokit = octokitWith(['<!-- mergewatch-review -->\nreview']);
+    expect(await findExistingBotComment(octokit, 'o', 'r', 1, 'dev')).toBeNull();
+  });
+
+  it('each stage finds its own comment when both are present', async () => {
+    const octokit = octokitWith([
+      '<!-- mergewatch-review -->\nprod review',
+      '<!-- mergewatch-review:dev -->\ndev review',
+    ]);
+    expect(await findExistingBotComment(octokit, 'o', 'r', 1)).toBe(100);
+    expect(await findExistingBotComment(octokit, 'o', 'r', 1, 'dev')).toBe(101);
+  });
+
+  it('an absent stage still finds the legacy prod comment', async () => {
+    // Back-compat: every comment written before #416 carries the bare marker.
+    const octokit = octokitWith(['<!-- mergewatch-review -->\nold review']);
+    expect(await findExistingBotComment(octokit, 'o', 'r', 1)).toBe(100);
   });
 });

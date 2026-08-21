@@ -215,6 +215,7 @@ Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 | [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
+| [E2E-94](#e2e-94-416--dev-and-prod-review-the-same-pr-without-colliding) | With both Apps installed on one repo, a single PR gets two independent reviews — separate comment markers, separate check runs, each stage updating only its own and re-running only from its own button; prod's identity is byte-identical to pre-#416 (#416) | 5m | 2m | #416 |
 | [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #412 |
 | [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #411 |
 | [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #410 |
@@ -3245,6 +3246,39 @@ Then install the App on a test org that has **never** installed it before (an ex
 - ❌ `--preapprove` succeeds for an already-installed org — the row would sit unclaimed forever with nobody looking at it
 - ❌ A non-404 installation-lookup failure is swallowed as "not installed" — same outcome, but triggered by a transient blip rather than operator error, so it is even less likely to be noticed
 - ❌ Script constants drift from `packages/billing/src/constants.ts` (cap, term, TTL, `#PENDING-OSS`) — they are duplicated by necessity, so a change on one side must be mirrored
+
+---
+
+### E2E-94: #416 — dev and prod review the same PR without colliding
+
+**Status:** 🚧 In review (#416, stage 1).
+
+**Behavior:** with both GitHub Apps installed on `mergewatch/fixtures`, one PR is reviewed twice — once per stage — on a byte-identical diff. Each stage writes its own comment marker (`<!-- mergewatch-review -->` for prod, `<!-- mergewatch-review:dev -->` for dev) and its own check-run name (`MergeWatch Review` / `MergeWatch Review (dev)`), so neither finds or edits the other's artifacts. This is the A/B substrate: same PR, same commit SHA, same diff, two independent reviews side by side.
+
+Prod's identity is unchanged and frozen. A repo with only the prod App installed behaves exactly as before, and every comment written before #416 is still found by prod.
+
+**Setup.** Requires the operator steps in #416 first — none of this is reachable until they're done:
+1. Dev App webhook → `https://fukmc5gjhk.execute-api.us-west-2.amazonaws.com/dev/webhook`, **Active**, secret matching SSM `/mergewatch/dev/github-webhook-secret`.
+2. Dev App's `mergewatch` installation scoped to **`fixtures` only** (it currently sees `kitchensink`, which prod also sees → double reviews on a repo you're not A/B-ing).
+
+Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
+
+**Expected outcomes.**
+- [ ] The PR carries **two** bot comments — one per App identity — not one comment being overwritten
+- [ ] Prod's comment body starts with `<!-- mergewatch-review -->`; dev's with `<!-- mergewatch-review:dev -->`
+- [ ] **Two** check runs: `MergeWatch Review` and `MergeWatch Review (dev)`
+- [ ] Push a second commit → each stage **updates its own** comment in place; neither posts a duplicate and neither 403s trying to edit the other's
+- [ ] Click "Re-run" on the **dev** check → only dev re-reviews; prod's comment and check are untouched
+- [ ] Click "Re-run" on the **prod** check → only prod re-reviews
+- [ ] Inline findings carry the stage-scoped inline marker, and a 👍 on a dev inline comment is recorded against dev's stores only
+- [ ] On a repo with **only** the prod App, behavior is identical to before #416 — one comment, one check named `MergeWatch Review`
+
+**Failure modes.**
+- ❌ One comment that flips between two authors' content — the marker isn't scoped and each stage is overwriting the other
+- ❌ A 403 in either stage's logs when updating a comment — it matched the other App's comment and tried to edit what it doesn't own
+- ❌ **Prod posts a duplicate comment on an existing PR** — the prod marker changed. This is the severe one: it orphans every bot comment in the wild, not just fixtures
+- ❌ Dev's "Re-run" button does nothing — `isMergeWatchCheckRun` still matches only the prod name, so dev ignores its own re-request
+- ❌ Both stages reviewing `kitchensink` or any repo outside the A/B — the dev installation wasn't scoped down
 
 ---
 

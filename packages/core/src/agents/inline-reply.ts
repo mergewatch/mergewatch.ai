@@ -34,11 +34,12 @@ import {
   fetchReviewCommentThread,
   resolveReviewThread,
   findReviewThreadIdForComment,
-  INLINE_BOT_COMMENT_MARKER,
   extractInlineCommentTitle,
   extractInlineCommentFingerprint,
   type ReviewThreadComment,
 } from '../github/client.js';
+import { inlineMarker } from '../stage.js';
+import type { Stage } from '../stage.js';
 import { findingMatchKeys, type FindingLike } from '../review-delta.js';
 import type { IReviewStore } from '../storage/types.js';
 import type { ReviewItem } from '../types/db.js';
@@ -180,6 +181,12 @@ export interface InlineReplyContext {
   replyCommentId: number;
   /** Optional: repo conventions markdown to inject (caller already size-capped). */
   conventions?: string;
+  /**
+   * #416 — deployment stage, used to resolve the inline marker when checking
+   * that a thread root is ours. Absent means prod, so self-hosted and existing
+   * callers are unaffected.
+   */
+  stage?: Stage;
 }
 
 export interface InlineReplyDeps {
@@ -474,7 +481,7 @@ export async function handleInlineReply(
   // any other reviewer bot's threads would qualify and MergeWatch would
   // interfere in conversations it didn't start.
   const root = thread[0];
-  if (!root || !root.isBot || !root.body.includes(INLINE_BOT_COMMENT_MARKER)) {
+  if (!root || !root.isBot || !root.body.includes(inlineMarker(ctx.stage))) {
     return { action: 'skipped', reason: 'thread root is not a MergeWatch comment', inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
   }
 
