@@ -54,6 +54,7 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   'us.anthropic.claude-opus-4-20250514-v1:0': { inputPer1M: 16.50, outputPer1M: 82.50 },
 
   // Sonnet tier — base $3/$15
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0': { inputPer1M: 3.30, outputPer1M: 16.50 },
   'us.anthropic.claude-sonnet-4-6': { inputPer1M: 3.30, outputPer1M: 16.50 },
   'us.anthropic.claude-sonnet-4-20250514-v1:0': { inputPer1M: 3.30, outputPer1M: 16.50 },
 
@@ -72,6 +73,7 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-8': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-6': { inputPer1M: 5, outputPer1M: 25 },
   'claude-opus-4-20250514': { inputPer1M: 15, outputPer1M: 75 },
+  'claude-sonnet-4-5-20250929': { inputPer1M: 3, outputPer1M: 15 },
   'claude-sonnet-4-6': { inputPer1M: 3, outputPer1M: 15 },
   'claude-sonnet-4-20250514': { inputPer1M: 3, outputPer1M: 15 },
   'claude-haiku-4-5-20251001': { inputPer1M: 1, outputPer1M: 5 },

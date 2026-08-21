@@ -71,7 +71,7 @@ MergeWatch runs the full pipeline on AWS — API Gateway, Lambda functions, Dyna
 ```
 PR opened → GitHub webhook → MergeWatch API Gateway
   → WebhookHandler Lambda (512 MB, 30s) → ReviewAgent Lambda (1024 MB, 300s)
-  → Bedrock (us.anthropic.claude-opus-4-6-v1)
+  → Bedrock (us.anthropic.claude-sonnet-4-5-20250929-v1:0)
   → Review posted to GitHub
   → DynamoDB (review history)
 ```

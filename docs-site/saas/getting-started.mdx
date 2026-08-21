@@ -33,7 +33,7 @@ When you open or update a pull request, the following happens in seconds:
 1. GitHub sends a `pull_request` webhook to MergeWatch's API Gateway.
 2. The **WebhookHandler** Lambda (512 MB, 30s timeout) validates the HMAC signature and invokes the **ReviewAgent** asynchronously.
 3. The **ReviewAgent** Lambda (1024 MB, 300s timeout) fetches the diff via the GitHub API.
-4. Eight specialized agents — **security**, **bugs**, **style**, **error handling**, **test coverage**, **comment accuracy**, **summary**, and **diagram** — run in parallel via `Promise.all()`, each calling Amazon Bedrock (`us.anthropic.claude-opus-4-6-v1`).
+4. Eight specialized agents — **security**, **bugs**, **style**, **error handling**, **test coverage**, **comment accuracy**, **summary**, and **diagram** — run in parallel via `Promise.all()`, each calling Amazon Bedrock (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`).
 5. Results are deduplicated, ranked by severity, and posted as inline review comments and a summary check run on your PR.
 
 <Note>
