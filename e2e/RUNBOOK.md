@@ -3225,6 +3225,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 - [ ] `--org <test-org> --stage dev` prints every public repo currently known, the open-core warning, cap and expiry, then writes `ossGrantScope=org` + `ossGrantAccount`
 - [ ] `--inspect --org <test-org> --stage dev` shows `Scope: org — every PUBLIC repo`, the account, cap, and accrual counters
 - [ ] Granting `--org` over an installation that had a repos-scoped grant reports the old list as "IGNORED under org scope" and leaves it in place
+- [ ] **Narrowing works**: granting a repo list over an existing ORG-scoped grant sets `ossGrantScope=repos`, so the list actually takes effect — `--inspect` shows `Scope: repos` and the named repos, and an unnamed public repo in the same installation stops being sponsored
 - [ ] `--revoke --org <test-org> --stage dev` sets expiry to the past and says the grant was org-scoped
 - [ ] Dashboard `/dashboard/billing` shows "All / Public repositories" and "Every public repository, including ones you create later" — **not** an empty repo list or a missing panel
 
@@ -3239,6 +3240,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 **Failure modes.**
 - ❌ `--org` writes a grant but leaves `ossGrantScope` unset — the gate would read `'repos'`, find no list, and sponsor nothing while `--inspect` claims the grant is active
 - ❌ `--revoke` rewrites `ossGrantScope` — a later renewal would silently change what the grant covers
+- ❌ A repo-list grant leaves a previous `ossGrantScope=org` in place — the operator believes they narrowed an org-wide grant to a few repos, the gate keeps sponsoring everything public, and only `--inspect` reveals it
 - ❌ The dashboard shows an org-scoped grant as "no grant" (the `ossStatus` regression this stage fixes) or renders a stale repo list as if it were the coverage
 - ❌ `--preapprove` succeeds for an already-installed org — the row would sit unclaimed forever with nobody looking at it
 - ❌ A non-404 installation-lookup failure is swallowed as "not installed" — same outcome, but triggered by a transient blip rather than operator error, so it is even less likely to be noticed

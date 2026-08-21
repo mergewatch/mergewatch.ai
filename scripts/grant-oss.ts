@@ -793,9 +793,16 @@ async function main() {
   }
 
   await writeGrant(args.stage, installationId, {
-    // Revoking leaves scope alone — the expiry is what ends a grant, and
-    // rewriting scope here would quietly change what a later renewal covers.
-    ...(orgScoped ? { ossGrantScope: 'org' as const } : {}),
+    // Scope is written explicitly by every mode that changes coverage, so
+    // narrowing actually narrows: a repo list left `ossGrantScope: 'org'` in
+    // place (every claimed pre-approval sets it) would be silently ignored by
+    // the gate, and the operator would believe they had restricted an org-wide
+    // grant to a handful of repos.
+    //
+    // Revoking is the exception — it leaves scope alone, because the expiry is
+    // what ends a grant and rewriting scope here would quietly change what a
+    // later renewal covers.
+    ...(revoking ? {} : { ossGrantScope: orgScoped ? ('org' as const) : ('repos' as const) }),
     ...(orgScoped && account ? { ossGrantAccount: account } : {}),
     ...(orgScoped ? {} : { ossGrantRepos: next }),
     ossGrantExpiresAt: expiresAt,
