@@ -128,6 +128,7 @@ export {
   submitPRReview,
   createStandaloneReviewComment,
   dismissStaleReviews,
+  resolveAppLogin,
   buildInlineComments,
   extractInlineCommentTitle,
   extractInlineCommentFingerprint,

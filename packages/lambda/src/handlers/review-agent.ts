@@ -73,7 +73,7 @@ import type {
   FileFetchOptions,
   ReviewDelta,
 } from '@mergewatch/core';
-import { buildWorkDoneSection, computeReviewDelta } from '@mergewatch/core';
+import { buildWorkDoneSection, computeReviewDelta, resolveAppLogin } from '@mergewatch/core';
 import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
 import {
 
@@ -978,7 +978,13 @@ export async function handler(
     // batched inline comments — no duplicate "Critical issues found" body.
     const reviewBody = '';
     try {
-      await dismissStaleReviews(octokit, owner, repo, prNumber);
+      // #418 — dismiss only OUR reviews. Our App login is read from the summary
+      // comment we just posted (cached per process); without it we skip
+      // dismissal rather than risk dismissing another App's or vendor's review.
+      const selfLogin = commentId
+        ? await resolveAppLogin(octokit, owner, repo, commentId, `lambda:${STAGE ?? 'prod'}`)
+        : null;
+      await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
     } catch (err) {
       console.warn('PR review submission failed — issue comment has the full review:', err);

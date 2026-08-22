@@ -6,7 +6,7 @@ import {
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
-  BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, mergeScoreToReviewEvent,
+  BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, resolveAppLogin, mergeScoreToReviewEvent,
   buildInlineComments, extractInlineCommentTitle,
   fetchRepoConfig, fetchConventions,
   buildWorkDoneSection, computeReviewDelta,
@@ -837,7 +837,12 @@ export async function processReviewJob(
     // issues found" body.
     const reviewBody = '';
     try {
-      await dismissStaleReviews(octokit, owner, repo, prNumber);
+      // #418 — dismiss only OUR reviews; see the Lambda handler for the
+      // rationale. Identity comes from the comment we just wrote.
+      const selfLogin = commentId
+        ? await resolveAppLogin(octokit, owner, repo, commentId, `server:${STAGE ?? 'prod'}`)
+        : null;
+      await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
     } catch (err) {
       console.warn('PR review submission failed — issue comment has the full review:', err);
