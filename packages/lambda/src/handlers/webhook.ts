@@ -27,12 +27,18 @@ import {
   isBotActor,
   sweepInlineReactionsOnClose,
 } from '@mergewatch/core';
-import { claimOssPreapproval, isSaas } from '@mergewatch/billing';
+import {
+  claimOssPreapproval,
+  isSaas,
+  recordMarketplaceEvent,
+  attachMarketplaceToInstallation,
+} from '@mergewatch/billing';
 import type {
   PullRequestEvent,
   IssueCommentEvent,
   PullRequestReviewCommentEvent,
   InstallationEvent,
+  MarketplacePurchaseEvent,
   CheckRunEvent,
   ReviewMode,
   ReviewJobPayload,
@@ -593,6 +599,80 @@ async function claimOssPreapprovalIfAny(event: InstallationEvent): Promise<void>
   }
 }
 
+/**
+ * #421 — GitHub Marketplace purchase events.
+ *
+ * The listing's webhook points at this same endpoint; `X-GitHub-Event`
+ * distinguishes it. The listing carries a **free plan only** — paid conversion
+ * stays on MergeWatch's own SaaS billing — so this grants nothing and revokes
+ * nothing. It records the purchase for attribution: which installations came
+ * from Marketplace, on what plan, and when.
+ *
+ * Best-effort. A failure here must not 500: GitHub surfaces failed deliveries
+ * on the listing, and a retry storm over an attribution record would be a
+ * self-inflicted outage.
+ */
+async function handleMarketplaceEvent(event: MarketplacePurchaseEvent): Promise<void> {
+  if (!isSaas()) return;
+
+  const account = event.marketplace_purchase?.account;
+  if (!account?.login) {
+    console.warn('[marketplace] event has no account — ignoring', { action: event.action });
+    return;
+  }
+
+  const table = process.env.INSTALLATIONS_TABLE ?? "mergewatch-installations";
+
+  // A free-plan listing should only ever produce `purchased` and `cancelled`.
+  // Anything else means a paid plan was added to the listing and this handler
+  // is now under-scoped (#421) — say so loudly rather than recording it as
+  // though it were understood.
+  if (event.action !== 'purchased' && event.action !== 'cancelled') {
+    console.warn(
+      `[marketplace] UNDER-SCOPED: action=${event.action} for ${account.login}. `
+      + 'The listing is supposed to carry a free plan only — a plan change implies '
+      + 'paid plans were added, which needs entitlement mapping (see #421).',
+    );
+  }
+
+  try {
+    const record = await recordMarketplaceEvent(dynamodb, table, event);
+    console.log(
+      `[marketplace] ${event.action} recorded for ${record.accountLogin} `
+      + `(id=${record.accountId}, plan=${record.planName ?? 'unknown'})`
+      + (event.action === 'cancelled' ? ' — recorded only, nothing revoked' : ''),
+    );
+  } catch (err) {
+    console.warn(`[marketplace] failed to record ${event.action} for ${account.login}:`, err);
+  }
+}
+
+/**
+ * #421 — attach an account's Marketplace record to the installation it landed
+ * on. Best-effort for the same reason the OSS claim is: losing the installation
+ * record would be far worse than losing attribution.
+ */
+async function attachMarketplaceIfAny(event: InstallationEvent): Promise<void> {
+  if (!isSaas()) return;
+
+  const { account, id } = event.installation;
+  const table = process.env.INSTALLATIONS_TABLE ?? "mergewatch-installations";
+
+  try {
+    const result = await attachMarketplaceToInstallation(dynamodb, table, String(id), account.login);
+    if (result.attached) {
+      console.log(
+        `[marketplace] attached ${account.login} to install=${id} `
+        + `(plan=${result.record.planName ?? 'unknown'})`,
+      );
+    } else if (result.reason !== 'no_record') {
+      console.log(`[marketplace] not attached for ${account.login} install=${id} reason=${result.reason}`);
+    }
+  } catch (err) {
+    console.warn(`[marketplace] attach failed for ${account.login} (install=${id}):`, err);
+  }
+}
+
 async function handleInstallationEvent(
   event: InstallationEvent
 ): Promise<void> {
@@ -603,6 +683,7 @@ async function handleInstallationEvent(
   // pre-approval against an installation that is going away or already granted.
   if (event.action === "created") {
     await claimOssPreapprovalIfAny(event);
+    await attachMarketplaceIfAny(event);
   }
 
   console.log(
@@ -663,6 +744,10 @@ export async function handler(
 
       case "installation":
         await handleInstallationEvent(payload as InstallationEvent);
+        break;
+
+      case "marketplace_purchase":
+        await handleMarketplaceEvent(payload as MarketplacePurchaseEvent);
         break;
 
       default:

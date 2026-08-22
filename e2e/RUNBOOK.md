@@ -227,6 +227,7 @@ A **`—`** in the Tags column means the scenario has **no fixture directory** a
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` |
+| [E2E-97](#e2e-97-421--marketplace-purchase-recorded-and-attached) | A Marketplace `purchased` is recorded under `#MARKETPLACE` and attached to the installation on `installation.created`; redelivery does not double-record or move `purchasedAt`; `cancelled` revokes nothing (#421) | 5m | 60s | #422 | `marketplace` |
 | [E2E-96](#e2e-96-416--deterministic-grading-of-a-suite-run) | `grade-run.mjs` asserts a run against `expect.json` with no model, exits 1 on regression; UNGRADED is never PASS; `--compare` reports dev/prod divergence (#416) | 3m | n/a | fixtures#706 | `tooling` |
 | [E2E-94](#e2e-94-416--dev-and-prod-review-the-same-pr-without-colliding) | With both Apps installed on one repo, a single PR gets two independent reviews — separate comment markers, separate check runs, each stage updating only its own and re-running only from its own button; prod's identity is byte-identical to pre-#416 (#416) | 5m | 2m | #416 | — |
 | [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #412 | — |
@@ -3351,6 +3352,38 @@ A fixture with no `expect.json` reports **UNGRADED**, never PASS. 10 of 98 fixtu
 - ❌ An UNGRADED fixture counted as PASS — makes the whole layer worthless
 - ❌ A fetch error reported as PASS: unverified is not the same as fine, so ERROR fails the gate
 - ❌ The grader agrees with itself on a deterministic field the LLM pass disagrees with — one of them has a bug worth reporting rather than papering over
+
+---
+
+### E2E-97: #421 — Marketplace purchase recorded and attached
+
+**Status:** 🚧 In review (#421).
+
+**Behavior:** the Marketplace listing's webhook points at the same `/webhook` endpoint as App events, distinguished by `X-GitHub-Event: marketplace_purchase`. A purchase is recorded under the `#MARKETPLACE` sentinel partition (SK = lowercased account login) for **attribution**, and attached to the installation on `installation.created`.
+
+The listing carries a **free plan only** — paid conversion stays on Stripe — so this grants nothing and **revokes nothing**. See `docs/marketplace-listing.md`.
+
+**Setup.** Requires the listing's Manage webhook configured: payload URL = the stage's `WebhookUrl`, content type **`application/json`**, secret = SSM `/mergewatch/{stage}/github-webhook-secret`.
+
+Trigger by installing the App from the Marketplace listing (which processes the free-plan purchase first), or by redelivering a `marketplace_purchase` from the listing's webhook delivery log.
+
+**Expected outcomes.**
+- [ ] `marketplace_purchase.purchased` returns 200 and logs `[marketplace] purchased recorded for <account> (id=…, plan=…)`
+- [ ] A row exists at PK `#MARKETPLACE`, SK = lowercased login, carrying `accountId`, `planName`, `purchasedAt`
+- [ ] After `installation.created`, that installation's `#SETTINGS` row carries `marketplaceAccountLogin` / `marketplaceAccountId` / `marketplacePlanName` / `marketplaceAttachedAt`, and the `#MARKETPLACE` row carries `attachedInstallationId`
+- [ ] Redeliver the purchase from the listing's delivery log → still **one** row, and `purchasedAt` is **unchanged**
+- [ ] `cancelled` sets `cancelledAt` and logs `— recorded only, nothing revoked`; the installation's OSS grant, balance, and `freeReviewsUsed` are all untouched
+- [ ] An install with **no** Marketplace record proceeds normally with no `[marketplace]` log line
+- [ ] Uninstall and reinstall → `attachedInstallationId` still points at the **first** installation, not the new one
+- [ ] A bad signature returns 401 and records nothing
+
+**Failure modes.**
+- ❌ The event falls through the dispatch `default:` and is silently ignored — 200 with nothing recorded, which is what shipped before #421 and is invisible from GitHub's delivery log
+- ❌ Content type set to `x-www-form-urlencoded` on the listing — the payload arrives as `payload=<urlencoded>`, so the signature fails and every delivery 401s
+- ❌ **`cancelled` revokes an entitlement** — with a free plan and Stripe-side billing the customer may still have the App installed and credits on file
+- ❌ A redelivery creates a second row or moves `purchasedAt` — attribution timestamps become meaningless
+- ❌ A `changed` / `pending_change` arrives without the `UNDER-SCOPED` warning — paid plans were added to the listing and nothing said so
+- ❌ A recording failure returns non-200 — GitHub retries, and a retry storm over an attribution record is self-inflicted
 
 ---
 

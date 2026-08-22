@@ -56,9 +56,13 @@ vi.mock('@aws-sdk/lib-dynamodb', () => ({
 
 const mockClaimOssPreapproval = vi.fn();
 const mockIsSaas = vi.fn(() => true);
+const mockRecordMarketplaceEvent = vi.fn();
+const mockAttachMarketplace = vi.fn();
 vi.mock('@mergewatch/billing', () => ({
   claimOssPreapproval: (...args: unknown[]) => mockClaimOssPreapproval(...args),
   isSaas: () => mockIsSaas(),
+  recordMarketplaceEvent: (...args: unknown[]) => mockRecordMarketplaceEvent(...args),
+  attachMarketplaceToInstallation: (...args: unknown[]) => mockAttachMarketplace(...args),
 }));
 
 vi.mock('../github-auth-ssm.js', () => ({
@@ -911,5 +915,159 @@ describe('isMergeWatchCheckRun — stage scoping (#416)', () => {
   it('still ignores unrelated check runs in every stage', () => {
     expect(isMergeWatchCheckRun(ev('CodeQL'))).toBe(false);
     expect(isMergeWatchCheckRun(ev('CodeQL'), 'dev')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #421 — GitHub Marketplace purchase events
+// ---------------------------------------------------------------------------
+
+describe('handler — marketplace_purchase (#421)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSaas.mockReturnValue(true);
+    mockRecordMarketplaceEvent.mockResolvedValue({
+      accountLogin: 'Acme-Corp', accountId: 9931, planName: 'Free',
+    });
+  });
+
+  function marketplaceEvent(action = 'purchased') {
+    return {
+      action,
+      effective_date: '2026-08-22T12:00:00Z',
+      sender: { login: 'someone', id: 1, type: 'User' },
+      marketplace_purchase: {
+        account: { type: 'Organization', id: 9931, login: 'Acme-Corp' },
+        plan: { id: 77, name: 'Free', monthly_price_in_cents: 0 },
+      },
+    };
+  }
+
+  function apiEvent(payload: unknown, eventName = 'marketplace_purchase'): any {
+    const body = JSON.stringify(payload);
+    return {
+      body,
+      headers: { 'x-hub-signature-256': signBody(body), 'x-github-event': eventName },
+    };
+  }
+
+  it('records a purchase instead of silently ignoring it', async () => {
+    // Before #421 this fell through the dispatch `default:` — 200 OK, nothing
+    // recorded, and GitHub showing green deliveries the whole time.
+    const result = await handler(apiEvent(marketplaceEvent('purchased')));
+
+    expect(result.statusCode).toBe(200);
+    expect(mockRecordMarketplaceEvent).toHaveBeenCalledTimes(1);
+    const [, , passed] = mockRecordMarketplaceEvent.mock.calls[0];
+    expect(passed.action).toBe('purchased');
+    expect(passed.marketplace_purchase.account.login).toBe('Acme-Corp');
+  });
+
+  it('records a cancellation', async () => {
+    await handler(apiEvent(marketplaceEvent('cancelled')));
+    expect(mockRecordMarketplaceEvent).toHaveBeenCalledTimes(1);
+    expect(mockRecordMarketplaceEvent.mock.calls[0][2].action).toBe('cancelled');
+  });
+
+  for (const action of ['changed', 'pending_change', 'pending_change_cancelled']) {
+    it(`still records ${action}, and warns that the handler is under-scoped`, async () => {
+      // A free-only listing should not produce these. If one arrives it means
+      // paid plans were added — it must be visible, not swallowed.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await handler(apiEvent(marketplaceEvent(action)));
+
+      expect(mockRecordMarketplaceEvent).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls.flat().join(' ')).toMatch(/UNDER-SCOPED/);
+      warn.mockRestore();
+    });
+  }
+
+  it('ignores an event with no account rather than throwing', async () => {
+    const bad = { action: 'purchased', sender: {}, marketplace_purchase: {} };
+    const result = await handler(apiEvent(bad));
+
+    expect(result.statusCode).toBe(200);
+    expect(mockRecordMarketplaceEvent).not.toHaveBeenCalled();
+  });
+
+  it('still returns 200 when recording throws', async () => {
+    // GitHub surfaces failed deliveries on the listing and retries. A retry
+    // storm over an attribution record would be self-inflicted.
+    mockRecordMarketplaceEvent.mockRejectedValue(new Error('dynamo down'));
+    const result = await handler(apiEvent(marketplaceEvent('purchased')));
+    expect(result.statusCode).toBe(200);
+  });
+
+  it('does nothing in self-hosted mode', async () => {
+    mockIsSaas.mockReturnValue(false);
+    await handler(apiEvent(marketplaceEvent('purchased')));
+    expect(mockRecordMarketplaceEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid signature before doing any work', async () => {
+    const body = JSON.stringify(marketplaceEvent('purchased'));
+    const result = await handler({
+      body,
+      headers: { 'x-hub-signature-256': 'sha256=deadbeef', 'x-github-event': 'marketplace_purchase' },
+    } as any);
+
+    expect(result.statusCode).toBe(401);
+    expect(mockRecordMarketplaceEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('handler — marketplace attach on install (#421)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSaas.mockReturnValue(true);
+    mockClaimOssPreapproval.mockResolvedValue({ claimed: false, reason: 'no_preapproval' });
+    mockAttachMarketplace.mockResolvedValue({ attached: false, reason: 'no_record' });
+  });
+
+  function installEvent(action = 'created') {
+    return {
+      action,
+      installation: {
+        id: 48210231,
+        account: { id: 9931, login: 'Acme-Corp' },
+        app_id: 1, target_type: 'Organization',
+        created_at: '2026-08-22T12:00:00Z', updated_at: '2026-08-22T12:00:00Z',
+      },
+      repositories: [{ id: 1, full_name: 'Acme-Corp/api', private: false }],
+      sender: { login: 'someone', id: 1, type: 'User' },
+    };
+  }
+
+  function apiEvent(payload: unknown): any {
+    const body = JSON.stringify(payload);
+    return { body, headers: { 'x-hub-signature-256': signBody(body), 'x-github-event': 'installation' } };
+  }
+
+  it('attempts an attach on installation.created', async () => {
+    await handler(apiEvent(installEvent('created')));
+
+    expect(mockAttachMarketplace).toHaveBeenCalledTimes(1);
+    const [, , installationId, login] = mockAttachMarketplace.mock.calls[0];
+    expect(installationId).toBe('48210231');
+    expect(login).toBe('Acme-Corp');
+  });
+
+  for (const action of ['deleted', 'suspend', 'new_permissions_accepted']) {
+    it(`never attaches on installation.${action}`, async () => {
+      await handler(apiEvent(installEvent(action)));
+      expect(mockAttachMarketplace).not.toHaveBeenCalled();
+    });
+  }
+
+  it('does not attach in self-hosted mode', async () => {
+    mockIsSaas.mockReturnValue(false);
+    await handler(apiEvent(installEvent('created')));
+    expect(mockAttachMarketplace).not.toHaveBeenCalled();
+  });
+
+  it('still returns 200 when the attach throws', async () => {
+    mockAttachMarketplace.mockRejectedValue(new Error('dynamo down'));
+    const result = await handler(apiEvent(installEvent('created')));
+    expect(result.statusCode).toBe(200);
   });
 });
