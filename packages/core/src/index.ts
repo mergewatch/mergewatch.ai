@@ -261,6 +261,8 @@ export type {
   PullRequestReviewCommentEvent,
   GitHubReviewComment,
   InstallationEvent,
+  MarketplacePurchaseEvent,
+  MarketplacePurchase,
   CheckRunEvent,
   CheckRunPullRequestRef,
   WebhookEvent,

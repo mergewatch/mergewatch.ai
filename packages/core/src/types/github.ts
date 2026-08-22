@@ -200,6 +200,56 @@ export interface InstallationEvent {
 }
 
 /**
+ * GitHub Marketplace purchase event (#421).
+ *
+ * Delivered to the **listing's** webhook URL, which we point at the same
+ * `/webhook` endpoint as App events — the `X-GitHub-Event` header is what
+ * distinguishes them.
+ *
+ * Note this carries an `account`, not an installation: a purchase can arrive
+ * before the App is installed, and for a free plan GitHub processes the
+ * purchase *before* redirecting to install, so that is the normal order.
+ */
+export interface MarketplacePurchaseEvent {
+  action:
+    | 'purchased'
+    | 'changed'
+    | 'cancelled'
+    | 'pending_change'
+    | 'pending_change_cancelled';
+  /** ISO 8601 date the action takes effect. Pending changes are future-dated. */
+  effective_date?: string;
+  sender: GitHubUser;
+  marketplace_purchase: MarketplacePurchase;
+  /** Present on `changed` / `cancelled` for diffing against the prior plan. */
+  previous_marketplace_purchase?: MarketplacePurchase;
+}
+
+/** The purchase itself — plan, cycle, and the account that bought it. */
+export interface MarketplacePurchase {
+  account: {
+    type: string;
+    id: number;
+    login: string;
+    organization_billing_email?: string | null;
+  };
+  billing_cycle?: string | null;
+  unit_count?: number | null;
+  on_free_trial?: boolean;
+  free_trial_ends_on?: string | null;
+  next_billing_date?: string | null;
+  plan?: {
+    id: number;
+    name: string;
+    description?: string;
+    monthly_price_in_cents?: number;
+    yearly_price_in_cents?: number;
+    price_model?: string;
+    unit_name?: string | null;
+  };
+}
+
+/**
  * Minimal pull-request descriptor attached to a check_run event.
  * The full PR object isn't delivered on check_run webhooks — only a ref
  * pair + number. We resolve the full PR via the API when we need it.

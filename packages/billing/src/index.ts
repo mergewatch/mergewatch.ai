@@ -38,6 +38,17 @@ export type {
   ClaimSkipReason,
 } from './oss-preapproval';
 
+// ─── GitHub Marketplace records (#421) ──────────────────────────────────────
+export {
+  MARKETPLACE_PK,
+  normalizeAccount,
+  getMarketplaceRecord,
+  listMarketplaceRecords,
+  recordMarketplaceEvent,
+  attachMarketplaceToInstallation,
+} from './marketplace';
+export type { MarketplaceRecord, AttachResult } from './marketplace';
+
 // ─── Cost calculation ───────────────────────────────────────────────────────
 export { calculateReviewCost } from './cost';
 export type { ReviewCost } from './cost';
