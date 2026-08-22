@@ -187,6 +187,26 @@ describe('attachMarketplaceToInstallation', () => {
     expect(h.of('UpdateCommand')).toHaveLength(0);
   });
 
+  it('KNOWN LIMITATION: install-then-purchase leaves the record unattached', async () => {
+    // Attach only runs on installation.created. If an already-installed account
+    // later buys the free plan from the listing, the record is written but
+    // never denormalized onto #SETTINGS, because a Marketplace event carries an
+    // account and resolving it to an installation would need a table scan or an
+    // App JWT — neither is cheap, and neither is in scope for attribution.
+    //
+    // Attribution is NOT lost: the #MARKETPLACE row exists and is queryable by
+    // account. Only the #SETTINGS convenience copy is missing. Pinned here so
+    // the behavior is a known tradeoff rather than an accident.
+    const h = makeClient();
+    await recordMarketplaceEvent(h.client, table, event('purchased'), NOW);
+
+    const record = await getMarketplaceRecord(h.client, table, 'Acme-Corp');
+    expect(record).not.toBeNull();
+    expect(record!.attachedInstallationId).toBeUndefined();
+    // Nothing was written to any installation row.
+    expect(h.of('UpdateCommand')).toHaveLength(0);
+  });
+
   it('resolves the record regardless of login casing', async () => {
     const h = makeClient(seeded());
     const res = await attachMarketplaceToInstallation(h.client, table, '4242', 'acme-corp', LATER);

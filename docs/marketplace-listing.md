@@ -44,6 +44,16 @@ A Marketplace event carries an **account** (login + numeric id), never an instal
 
 For a free plan GitHub processes the purchase **before** redirecting to install, so purchase-then-install is the normal order and the one that must work. Because the record is account-keyed and durable, neither ordering loses the purchase.
 
+### Known limitation — install-then-purchase is not attached
+
+Attachment runs on `installation.created`. If an account that **already** has the App installed later buys the free plan from the listing, the `#MARKETPLACE` record is written but never denormalized onto that installation's `#SETTINGS` row.
+
+Attribution is not lost — the record exists and is queryable by account login. Only the convenience copy is missing, so a query joining on `marketplaceAccountLogin` would miss those installations while a query over the `#MARKETPLACE` partition would not.
+
+Fixing it properly requires resolving an account login to an installation, which needs either a table scan (the installations table is partitioned by `installationId`) or an App JWT the review path does not hold. Neither is justified for attribution. Pinned by a test so the behavior is a deliberate tradeoff rather than an accident.
+
+Under a free plan GitHub processes the purchase before redirecting to install, so this is the uncommon ordering.
+
 ### Deliberate non-behaviors
 
 **`cancelled` revokes nothing.** With a free plan and Stripe-side paid billing, a Marketplace cancellation says nothing about whether the customer still has the App installed or credits on file. Revoking would look like obvious symmetry and would quietly break a paying customer.
