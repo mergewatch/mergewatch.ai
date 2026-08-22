@@ -1,6 +1,6 @@
 # E2E A/B testing — dev and prod on one fixtures repo
 
-**Status:** 🚧 In progress (#416) — stage 1 of 3 shipped.
+**Status:** ✅ Shipped (#416) — PRs #417, fixtures#705, fixtures#706.
 
 MergeWatch runs as two GitHub Apps: a dev App and a prod App. Installing **both** on `mergewatch/fixtures` is how a change gets tested before it reaches production: the same PR, at the same commit, reviewed twice, side by side in one thread.
 
@@ -57,9 +57,31 @@ Stage 1 is inert until these are done by hand — they are GitHub App settings a
 
 Both Apps reviewing every fixture PR roughly doubles fixture spend (~$0.07–0.50 per review, so a full 93-fixture A/B run is roughly $15–30). Scoping the dev App to `fixtures` alone is what keeps that contained.
 
-## Still to come
+## Selective runs
 
-- **Stage 2** — `TAGS=` in each fixture's `meta.env` plus a path→tag map, so `run-suite.sh --tag agents` and `--impacted-by <ref>` run a subset instead of all 93.
-- **Stage 3** — `expect.json` deterministic assertions and `grade-run.sh`, so a subset run hard-fails CI without a model in the loop, plus `--compare` to report dev/prod divergence directly.
+Every fixture's `meta.env` carries `TAGS=` (what it covers) and `MODE=` (how it is verified — `pr` 66, `dynamo` 14, `dashboard` 13, `mcp` 4, `checks-api` 1). `MODE` doubles as the automation roadmap for the 36 fixtures still marked `MANUAL_ONLY`.
 
-Scenario: **E2E-94**.
+```bash
+scripts/run-suite.sh --tag agents --dry-run
+git -C ../mergewatch.ai diff --name-only main... | scripts/run-suite.sh --changed-files -
+```
+
+`e2e/impact-map.yml` maps paths to tags. An unmapped path runs the **whole** suite (`--explain` names it) and an unknown tag exits 2 — silent under-selection is the failure that matters, because a missed regression costs far more than a slow run.
+
+## Grading
+
+`scripts/grade-run.mjs` evaluates each fixture's `expect.json` with no model in the loop and exits 1 on a regression. A fixture with no `expect.json` reports **UNGRADED**, never PASS. `/verify-suite` runs it first and confines LLM judgement to what assertions cannot express.
+
+`--compare` grades both stages off one PR and reports score divergence.
+
+## Verified in production
+
+First live A/B ran on `fixtures#707` (2026-08-22): two check runs (`MergeWatch Review` / `MergeWatch Review (dev)`), two comments with distinct markers, from two App identities (`mergewatch` / `mergewatch-ai-dev`), neither clobbering the other.
+
+It also immediately found a real defect — `dismissStaleReviews` dismissed **any** bot's review, so whichever stage ran second dismissed the other's (and, far worse, MergeWatch had been dismissing CopilotAI/dependabot/CodeQL reviews on customer repos). Fixed in #419.
+
+## Known gap
+
+E2E-88 through E2E-94 have **no fixture directory**, so the suite cannot run them — they are verifiable only by hand. The Tags column in `e2e/RUNBOOK.md` renders `—` for exactly those rows.
+
+Scenarios: **E2E-94**, **E2E-95**, **E2E-96**.

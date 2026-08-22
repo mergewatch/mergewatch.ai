@@ -125,102 +125,115 @@ For re-runs on the same fixture, you can amend + force-push (cheap) instead of c
 
 Run these in order — they cover all current behaviors. ~30 minutes end-to-end.
 
-| ID | Behavior tested | Setup time | Wait | Verifies PR # |
-|---|---|---|---|---|
-| [E2E-01](#e2e-01-clean-pr--full-review) | Happy path: clean PR → 5/5 + APPROVE + empty review body | 1m | 60s | #132 |
-| [E2E-02](#e2e-02-info-only-findings) | Info-only findings → 5/5, "All clear" + Info collapsible | 1m | 60s | #134 |
-| [E2E-03](#e2e-03-critical-finding--inline-comment) | Critical finding → inline comment + REQUEST_CHANGES | 1m | 60s | core |
-| [E2E-04](#e2e-04-autoreview-off--silent) | `autoReview: false` → zero PR trace | 1m | 30s | #136 |
-| [E2E-05](#e2e-05-autoreview-off--mergewatch-override) | `autoReview: false` + `@mergewatch review` → review runs | 1m | 60s | #136 |
-| [E2E-06](#e2e-06-smart-skip--docs-only) | Docs-only PR → visible "Review skipped" check run | 30s | 30s | core |
-| [E2E-07](#e2e-07-smart-skip-bypass-via-includepatterns) | Docs-only + `includePatterns` → review runs | 1m | 60s | core |
-| [E2E-08](#e2e-08-smart-skip-bypass-via-mention) | Docs-only + `@mergewatch review` → review runs | 1m | 60s | core |
-| [E2E-09](#e2e-09-draft-pr-skip) | Draft PR → "Review skipped — Draft PR" | 30s | 30s | core |
-| [E2E-10](#e2e-10-ignorelabels-skip) | `skip-review` label → "Review skipped — label" | 30s | 30s | core |
-| [E2E-11](#e2e-11-re-review-on-synchronize) | Push new commit → old review dismissed + comment edited in place | 2m | 90s | core |
-| [E2E-12](#e2e-12-re-run-check-via-github-ui) | Click "Re-run" on the check → new review fires | 30s | 60s | core |
-| [E2E-13](#e2e-13-inline-reply-engages-on-mergewatch-thread) | Human replies in a MergeWatch inline thread → MergeWatch responds | 2m | 60s | #133 |
-| [E2E-14](#e2e-14-inline-reply-skips-third-party-bot-thread) | Human replies in a non-MergeWatch inline thread → no engagement | 2m | 60s | #133 |
-| [E2E-15](#e2e-15-mermaid-diagram-renders) | Complex diff produces a renderable Mermaid diagram | 2m | 60s | #128–#130 |
-| [E2E-16](#e2e-16-agent-authored-pr-detection) | PR from `claude/*` branch → flagged as agent-authored | 1m | 60s | core |
-| [E2E-17](#e2e-17-finding-grounding-drops-hallucinated-anchors) | Critical finding anchored at a comment line gets dropped or snapped | 2m | 60s | tier-1 |
-| [E2E-18](#e2e-18-delta-aware-verdict-on-security-improvement) | PR that resolves prior criticals → green verdict (≥4/5), not orange | 3m | 90s | tier-1 |
-| [E2E-19](#e2e-19-confidence-scores-hidden-by-default) | New install sees no `85%` etc. badges in finding rows | 30s | 60s | tier-1 |
-| [E2E-20](#e2e-20-pr-description-vs-code-drift-catch) | Stale "we now use X" in PR body → reviewer flags the mismatch | 2m | 60s | feedback |
-| [E2E-21](#e2e-21-no-op-suggestion-guard-w1) | Finding whose suggested fix already exists in the file → dropped | 1m | 60s | #145 |
-| [E2E-22](#e2e-22-claim-aware-critical-verification-w2) | "Missing await" critical on code that already awaits (truncated-diff artifact) → dropped by full-file verification | 1m | 60s | #145 |
-| [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new" (W9); a triage-rebutted finding is not re-raised (W3) | 3m | 90s | W9 / W3 |
-| [E2E-24](#e2e-24-triage-author-filter-security-boundary) | A `## mergewatch triage` from a NON-PR-author does not suppress findings (W3 security boundary) | 2m | 60s | #148 |
-| [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 |
-| [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 |
-| [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 |
-| [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 |
-| [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 |
-| [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) | 1m | 60s | FP-A |
-| [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B |
-| [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C |
-| [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D |
-| [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E |
-| [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F |
-| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Lint-equivalent nits (semicolons, import order) are NEVER bot findings — the style prompt's anti-noise hard list excludes them unconditionally (#376 decision); the prompt is LINTER-INVARIANT (#387 removed the FP-G directive after the model inverted it into a reporting rationale); the style agent stays alive for concrete-impact findings | 2m | 60s | FP-G, #376, #387 |
-| [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A |
-| [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B |
-| [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C |
-| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + confirms by editing the finding comment (footer), creating NO extra bot Review event (FB-D, #190) | 3m | 90s | FB-D |
-| [E2E-41](#e2e-41-fb-e--hourly-installationfpinsight-rollup) | Hourly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E |
-| [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F |
-| [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G |
-| [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) | 2m | 60s | FB-H |
-| [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart) | Warnings dispute-rate vs criticals dispute-rate across 7d/30d/90d windows, with annotation when warnings exceed criticals × 1.5 across two adjacent windows (FB-I) | 2m | 60s | FB-I |
-| [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J |
-| [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K |
-| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection--target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L |
-| [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H |
-| [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I |
-| [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2) | 2m | 60s | FP-J |
-| [E2E-52](#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces) | An unverified critical drops off the inline / action-table surfaces and lands in a dedicated "Unverified concerns" sub-section (FP-L) | 2m | 60s | FP-L |
-| [E2E-53](#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) | Red verdict (orchestrator score ≤ 2) is softened to advisory when majority of action findings come from chronically-disputed categories (FP-J L1); disclosure footer renders under the merge score (FP-J L3) | 3m | 60s | FP-J |
-| [E2E-54](#e2e-54-fp-k--abstraction-aware-verifier) | Findings alleging "SQL injection on Drizzle eq()", "URL injection on encodeURIComponent", "XSS on JSX text" are dropped by the verifier as abstraction-safe; raw string-concat SQL is still kept (FP-K) | 4m | 90s | FP-K |
-| [E2E-55](#e2e-55-ttm--pr-lifecycle-capture-time-to-merge-stage-1) | Every PR writes one `PRLifecycleRecord`; open/synchronize/merge/close transitions captured; `closed` doesn't trigger a review; terminal-state + set-once discipline holds (TTM) | 3m | 90s | #196 |
-| [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Hourly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 |
-| [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/analytics` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 |
-| [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 |
-| [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Hourly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 |
-| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/analytics` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 |
-| [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; hourly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 |
-| [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/analytics` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 |
-| [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; hourly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 |
-| [E2E-64](#e2e-64-dashboard-restructure--analytics-value--accuracy-correctness-hourly-rollup-218) | Dashboard split by intent: Analytics = Activity + Impact (cost/cycle/engagement); FP Insights renamed Accuracy at `/dashboard/accuracy` (old `/dashboard/insights` 308-redirects, query preserved); rollup hourly both runtimes; both backends (#218) | 3m | 30s | #218 |
-| [E2E-65](#e2e-65-analytics-tabbed-view--accuracy-folded-in-227) | `/dashboard/analytics` is a tabbed view (Overview · Cost & Impact · Findings · Activity · Accuracy); active tab in `?tab=` (shareable, `?org=` preserved); `/dashboard/accuracy` redirects to `?tab=accuracy`; Accuracy nav item removed; filter bar scoped to data tabs (#227) | 2m | 30s | #227 |
-| [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 |
-| [E2E-67](#e2e-67-global-env-pricing-for-the-llm_model-233) | Self-hosted global pricing: `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` price whatever `LLM_MODEL` is set to (e.g. a Bedrock inference-profile ARN) for full reviews **and** inline replies — no per-repo config; per-repo `pricing:` wins; `0`/`0` = real $0; partial/invalid → one-time warn (#233) | 3m | 30s | #233 |
-| [E2E-68](#e2e-68-org-custom-agents-235) | Org admins define custom review agents in the dashboard (Settings → Custom Agents), scoped to all/selected repos with optional path/language targeting; advisory vs blocking (blocking critical → REQUEST_CHANGES + failing check); union with repo `.mergewatch.yml` (org wins on name clash); admin-only edit, members read-only; both backends (#235) | 3m | 60s | #235 |
-| [E2E-69](#e2e-69-mcp--review_diff-runs-the-pipeline-on-a-supplied-diff) | MCP `review_diff` reviews a supplied diff with no PR; `repo` loads that repo's config + conventions; review recorded `agentAuthored: true`; HTTP + stdio parity | 3m | 60s | MCP |
-| [E2E-70](#e2e-70-mcp--get_review_status-and-the-conventions-resource) | MCP `get_review_status` returns the latest review row; `mergewatch://conventions/{owner}/{repo}` serves resolved conventions as `text/markdown` | 2m | 30s | MCP |
-| [E2E-71](#e2e-71-mcp--api-key-scope-enforcement-and-revocation) | API keys are admin-only, shown once, hashed at rest; scoped keys rejected off-scope (`-32001`); revocation effective on the next request | 3m | 30s | MCP |
-| [E2E-72](#e2e-72-mcp--session-billing-dedup-30-minute-window) | Repeat `review_diff` calls sharing a `sessionId` bill only the positive delta within a 30-minute window | 4m | 60s | MCP |
-| [E2E-73](#e2e-73-billing--free-tier-exhaustion-blocks-reviews) | 5 lifetime free reviews per installation; the 6th blocks **before** the LLM call; MCP returns `-32002`; one notification, not one per PR | 4m | 60s | billing |
-| [E2E-74](#e2e-74-billing--top-up-and-auto-reload) | Manual top-up; auto-reload off by default; concurrent drops below threshold produce exactly one charge (`autoReloadInFlight` mutex) | 4m | 60s | billing |
-| [E2E-75](#e2e-75-skip--maxfiles-ceiling) | Over-`maxFiles` PRs skip with a **visible** check run (default 50, inclusive boundary); `@mergewatch review` overrides | 1m | 30s | core |
-| [E2E-76](#e2e-76-skip--reviewonmention-false) | `reviewOnMention: false` suppresses mention-triggered reviews; skip attributed to `reviewOnMentionOff`, not `autoReviewOff` | 1m | 30s | core |
-| [E2E-77](#e2e-77-diff-filter--excludepatterns) | `excludePatterns` removes files from the diff sent to agents without changing the PR-skip decision; excluding everything yields a clean review, not a crash | 2m | 60s | core |
-| [E2E-78](#e2e-78-output-shaping--minseverity-maxfindings-postsummaryonclean) | `minSeverity` filters by tier; `maxFindings` truncates **by rank** and discloses it; `postSummaryOnClean` gates the clean-PR comment | 3m | 60s | core |
-| [E2E-79](#e2e-79-ux-block--comment-presentation) | `ux` toggles change only their own section; `tone` rewords without changing findings; `commentHeader` is escaped against injection | 3m | 60s | core |
-| [E2E-80](#e2e-80-conventions--discovery-order-and-the-16-kb-cap) | Conventions resolve first-hit-wins in documented order; explicit `conventions:` never falls back on miss; >16 KB truncates with a visible marker | 3m | 60s | core |
-| [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core |
-| [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 |
-| [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 |
-| [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 |
-| [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 |
-| [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 |
-| [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 |
-| [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 |
-| [E2E-94](#e2e-94-416--dev-and-prod-review-the-same-pr-without-colliding) | With both Apps installed on one repo, a single PR gets two independent reviews — separate comment markers, separate check runs, each stage updating only its own and re-running only from its own button; prod's identity is byte-identical to pre-#416 (#416) | 5m | 2m | #416 |
-| [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #412 |
-| [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #411 |
-| [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #410 |
-| [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 |
-| [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 |
+**Tags** (#416) mirror `TAGS=` in each fixture's `meta.env` over in `mergewatch/fixtures`, which is the source of truth — that repo's `runbook-sync` command keeps this column in step. They drive selective runs:
+
+```bash
+scripts/run-suite.sh --tag agents --dry-run          # what would run
+scripts/run-suite.sh --tag billing                   # run a subset
+git -C ../mergewatch.ai diff --name-only main... \
+  | scripts/run-suite.sh --changed-files -           # only what a change could affect
+```
+
+A **`—`** in the Tags column means the scenario has **no fixture directory** and therefore cannot be run by the suite at all — it is documented here but only verifiable by hand. That currently applies to E2E-88 through E2E-94. Authoring fixtures for those is tracked work, not an oversight in this table.
+
+| ID | Behavior tested | Setup time | Wait | Verifies PR # | Tags |
+|---|---|---|---|---|---|
+| [E2E-01](#e2e-01-clean-pr--full-review) | Happy path: clean PR → 5/5 + APPROVE + empty review body | 1m | 60s | #132 | `output`, `review-core` |
+| [E2E-02](#e2e-02-info-only-findings) | Info-only findings → 5/5, "All clear" + Info collapsible | 1m | 60s | #134 | `output`, `review-core` |
+| [E2E-03](#e2e-03-critical-finding--inline-comment) | Critical finding → inline comment + REQUEST_CHANGES | 1m | 60s | core | `agents`, `review-core` |
+| [E2E-04](#e2e-04-autoreview-off--silent) | `autoReview: false` → zero PR trace | 1m | 30s | #136 | `config`, `skip` |
+| [E2E-05](#e2e-05-autoreview-off--mergewatch-override) | `autoReview: false` + `@mergewatch review` → review runs | 1m | 60s | #136 | `config`, `skip`, `triggers` |
+| [E2E-06](#e2e-06-smart-skip--docs-only) | Docs-only PR → visible "Review skipped" check run | 30s | 30s | core | `skip` |
+| [E2E-07](#e2e-07-smart-skip-bypass-via-includepatterns) | Docs-only + `includePatterns` → review runs | 1m | 60s | core | `config`, `skip` |
+| [E2E-08](#e2e-08-smart-skip-bypass-via-mention) | Docs-only + `@mergewatch review` → review runs | 1m | 60s | core | `config`, `skip`, `triggers` |
+| [E2E-09](#e2e-09-draft-pr-skip) | Draft PR → "Review skipped — Draft PR" | 30s | 30s | core | `skip`, `triggers` |
+| [E2E-10](#e2e-10-ignorelabels-skip) | `skip-review` label → "Review skipped — label" | 30s | 30s | core | `skip`, `triggers` |
+| [E2E-11](#e2e-11-re-review-on-synchronize) | Push new commit → old review dismissed + comment edited in place | 2m | 90s | core | `review-core`, `triggers` |
+| [E2E-12](#e2e-12-re-run-check-via-github-ui) | Click "Re-run" on the check → new review fires | 30s | 60s | core | `checks`, `triggers` |
+| [E2E-13](#e2e-13-inline-reply-engages-on-mergewatch-thread) | Human replies in a MergeWatch inline thread → MergeWatch responds | 2m | 60s | #133 | `inline` |
+| [E2E-14](#e2e-14-inline-reply-skips-third-party-bot-thread) | Human replies in a non-MergeWatch inline thread → no engagement | 2m | 60s | #133 | `inline` |
+| [E2E-15](#e2e-15-mermaid-diagram-renders) | Complex diff produces a renderable Mermaid diagram | 2m | 60s | #128–#130 | `diagram`, `output` |
+| [E2E-16](#e2e-16-agent-authored-pr-detection) | PR from `claude/*` branch → flagged as agent-authored | 1m | 60s | core | `agent-authored`, `config` |
+| [E2E-17](#e2e-17-finding-grounding-drops-hallucinated-anchors) | Critical finding anchored at a comment line gets dropped or snapped | 2m | 60s | tier-1 | `agents`, `grounding` |
+| [E2E-18](#e2e-18-delta-aware-verdict-on-security-improvement) | PR that resolves prior criticals → green verdict (≥4/5), not orange | 3m | 90s | tier-1 | `agents`, `delta` |
+| [E2E-19](#e2e-19-confidence-scores-hidden-by-default) | New install sees no `85%` etc. badges in finding rows | 30s | 60s | tier-1 | `agents`, `config` |
+| [E2E-20](#e2e-20-pr-description-vs-code-drift-catch) | Stale "we now use X" in PR body → reviewer flags the mismatch | 2m | 60s | feedback | `agents`, `output` |
+| [E2E-21](#e2e-21-no-op-suggestion-guard-w1) | Finding whose suggested fix already exists in the file → dropped | 1m | 60s | #145 | `agents`, `output` |
+| [E2E-22](#e2e-22-claim-aware-critical-verification-w2) | "Missing await" critical on code that already awaits (truncated-diff artifact) → dropped by full-file verification | 1m | 60s | #145 | `agents`, `verification` |
+| [E2E-23](#e2e-23-re-review-convergence--no-whack-a-mole-w9w3) | Re-review never reports the same finding as both "✅ resolved" and "🆕 new" (W9); a triage-rebutted finding is not re-raised (W3) | 3m | 90s | W9 / W3 | `agents`, `verification` |
+| [E2E-24](#e2e-24-triage-author-filter-security-boundary) | A `## mergewatch triage` from a NON-PR-author does not suppress findings (W3 security boundary) | 2m | 60s | #148 | `triage` |
+| [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 | `agents`, `verification` |
+| [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 | `agents`, `grounding` |
+| [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 | `agents` |
+| [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 | `output`, `review-core` |
+| [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 | `agents`, `dedup` |
+| [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) | 1m | 60s | FP-A | `agents`, `config` |
+| [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B | `agents`, `fp` |
+| [E2E-32](#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup) | Same-file-same-line cross-agent doubles merge before the orchestrator sees them (FP-C) | 1m | 60s | FP-C | `agents`, `dedup` |
+| [E2E-33](#e2e-33-fp-d--diagram-path-validation) | Diagram citing a file NOT in the PR's changed-files set is dropped entirely (FP-D) | 1m | 60s | FP-D | `diagram`, `grounding` |
+| [E2E-34](#e2e-34-fp-e--w2-verification-extended-to-warnings) | Warning-severity findings go through the W2 verification pass and get a `verification` tag (FP-E) | 2m | 60s | FP-E | `agents`, `verification` |
+| [E2E-35](#e2e-35-fp-f--inline-reply-resolve-memory) | An inline `/resolve` reply persists the finding's key so the next review doesn't re-emit it (FP-F) | 3m | 90s | FP-F | `inline` |
+| [E2E-36](#e2e-36-fp-g--linter-aware-style-agent) | Lint-equivalent nits (semicolons, import order) are NEVER bot findings — the style prompt's anti-noise hard list excludes them unconditionally (#376 decision); the prompt is LINTER-INVARIANT (#387 removed the FP-G directive after the model inverted it into a reporting rationale); the style agent stays alive for concrete-impact findings | 2m | 60s | FP-G, #376, #387 | `agents`, `config` |
+| [E2E-37](#e2e-37-fb-a--findingdispositionrecord-storage--writers) | FindingDispositionRecord rows are written on every surfacing, W3 dispute, FP-F inline-resolve (FB-A) | 2m | 60s | FB-A | `fp`, `storage` |
+| [E2E-38](#e2e-38-fb-b--quiet-drop-derived-counter) | Quiet-drop (finding gone without code change) increments `silentDropCount` on the matching record (FB-B) | 2m | 60s | FB-B | `delta`, `fp` |
+| [E2E-39](#e2e-39-fb-c--inline-comment--reactions--disputes) | 👎 / 🤔 on a bot inline comment increments `disputeCount`; 👍 / ❤️ / 🚀 increments `agreementCount` (FB-C) | 2m | 60s | FB-C | `fp`, `inline` |
+| [E2E-40](#e2e-40-fb-d--mergewatch-reject-slash-command) | `/mergewatch reject <category> [reason]` on an inline thread persists a categorised rejection + confirms by editing the finding comment (footer), creating NO extra bot Review event (FB-D, #190) | 3m | 90s | FB-D | `fp`, `inline` |
+| [E2E-41](#e2e-41-fb-e--hourly-installationfpinsight-rollup) | Hourly scheduled job produces InstallationFPInsight rollups for 7d / 30d / 90d windows per installation (FB-E) | 3m | 90s | FB-E | `fp`, `rollup` |
+| [E2E-42](#e2e-42-fb-f--dashboard-fp-funnel-chart) | Org dashboard renders the FP funnel: unsignaled + agreed + silently-dropped + disputed segments per window (FB-F) | 2m | 60s | FB-F | `dashboard`, `fp` |
+| [E2E-43](#e2e-43-fb-g--dispute-rate-by-agent-bar-chart) | Org dashboard renders dispute-rate by agent category as a horizontal bar chart with severity colouring (FB-G) | 2m | 60s | FB-G | `dashboard`, `fp` |
+| [E2E-44](#e2e-44-fb-h--top-recurring-fp-themes-table) | Org dashboard renders a sortable table of the top-10 disputed clusters with drill-through (FB-H) | 2m | 60s | FB-H | `dashboard`, `fp` |
+| [E2E-45](#e2e-45-fb-i--severity-shopping-detector-chart) | Warnings dispute-rate vs criticals dispute-rate across 7d/30d/90d windows, with annotation when warnings exceed criticals × 1.5 across two adjacent windows (FB-I) | 2m | 60s | FB-I | `dashboard`, `fp` |
+| [E2E-46](#e2e-46-fb-j--per-repo-fp-heatmap) | Org dashboard renders a per-repo dispute heatmap (FB-J) | 2m | 60s | FB-J | `dashboard`, `fp` |
+| [E2E-47](#e2e-47-fb-k--suggest-mergewatchyml-rule-cta) | Cluster with `disputeRate > 80%` & `surfaceCount ≥ 5` gets a copy-able `.mergewatch.yml` snippet suggestion (FB-K) | 2m | 60s | FB-K | `fp`, `output` |
+| [E2E-48](#e2e-48-fb-l--known_fp_patterns-prompt-injection--target) | Opt-in `feedback.learnFromDisputes` injects top-K disputed clusters as soft guidance into every finding agent's prompt (FB-L) — **TARGET** | 3m | 90s | FB-L | `agents`, `fp`, `prompts` |
+| [E2E-49](#e2e-49-fp-h--anti-anchoring-on-prior-findings) | Re-review on a fix commit does NOT produce findings that pattern-match against the prior round's framing (FP-H L1 + L2) | 3m | 90s | FP-H | `agents`, `delta` |
+| [E2E-50](#e2e-50-fp-i--verify-suggestion-already-implemented) | A finding whose `suggestion` is byte-equivalent to existing code at the cited line is dropped by the verifier (FP-I L1 + L2) | 1m | 60s | FP-I | `agents`, `output` |
+| [E2E-51](#e2e-51-fp-j--verifier-honours-prior-recommendations) | Re-review on a fix commit does NOT critique the application of a prior recommendation (FP-J L2) | 2m | 60s | FP-J | `agents`, `output` |
+| [E2E-52](#e2e-52-fp-l--propagate-w2-verification-to-rendering-surfaces) | An unverified critical drops off the inline / action-table surfaces and lands in a dedicated "Unverified concerns" sub-section (FP-L) | 2m | 60s | FP-L | `agents`, `output`, `verification` |
+| [E2E-53](#e2e-53-fp-j-l1l3--dispute-aware-verdict-softening--disclosure) | Red verdict (orchestrator score ≤ 2) is softened to advisory when majority of action findings come from chronically-disputed categories (FP-J L1); disclosure footer renders under the merge score (FP-J L3) | 3m | 60s | FP-J | `agents`, `fp` |
+| [E2E-54](#e2e-54-fp-k--abstraction-aware-verifier) | Findings alleging "SQL injection on Drizzle eq()", "URL injection on encodeURIComponent", "XSS on JSX text" are dropped by the verifier as abstraction-safe; raw string-concat SQL is still kept (FP-K) | 4m | 90s | FP-K | `abstraction`, `agents` |
+| [E2E-55](#e2e-55-ttm--pr-lifecycle-capture-time-to-merge-stage-1) | Every PR writes one `PRLifecycleRecord`; open/synchronize/merge/close transitions captured; `closed` doesn't trigger a review; terminal-state + set-once discipline holds (TTM) | 3m | 90s | #196 | `storage`, `ttm` |
+| [E2E-56](#e2e-56-ttm--cycle-time-rollup-time-to-merge-stage-2) | Hourly rollup attaches a `cycleTime` block (merge counts + median/p75/p90 time-to-merge, from-first-review, round-trips) segmented reviewed vs unreviewed; open/closed excluded from time stats (TTM) | 3m | 90s | #198 | `rollup`, `ttm` |
+| [E2E-57](#e2e-57-ttm--dashboard-cycle-time-section-time-to-merge-stage-3) | `/dashboard/analytics` Cycle time section: StatCards + reviewed-vs-unreviewed bar chart; relaxed zero-state gate; `null` percentile renders `—` (TTM) | 2m | 30s | #199 | `dashboard`, `ttm` |
+| [E2E-58](#e2e-58-engagement--resolve-capture-engagement-metrics-stage-1) | `/resolve` on an inline thread increments a new `resolveCount` on the `FindingDispositionRecord` (positive engagement signal) alongside the existing `disputeCount`; defaults to 0 with no backfill; both backends (engagement) | 2m | 30s | #207 | `engagement`, `inline` |
+| [E2E-59](#e2e-59-engagement--tier-1-rollup-engagement-metrics-stage-2) | Hourly rollup attaches an `engagement` block (acceptance rate, command usage, approx finding-action rate, re-review rate, reviewed-PR count) per window; `null` rates for empty denominators; rejects windowed by `at`; both backends (engagement) | 3m | 90s | #208 | `engagement`, `rollup` |
+| [E2E-60](#e2e-60-engagement--dashboard-section-engagement-metrics-stage-3) | `/dashboard/analytics` Developer engagement section: StatCards (acceptance, approx action, command usage, re-review) + cross-window trend line; relaxed zero-state gate; `null` renders `—`; trend gaps on null windows (engagement) | 2m | 30s | #209 | `dashboard`, `engagement` |
+| [E2E-61](#e2e-61-engagement--helpful-footer-prompt-engagement-metrics-stage-4) | Summary comment renders "Was this review helpful? 👍 / 👎"; reacting on the comment records a snapshot-delta into the satisfaction store; hourly rollup fills `helpful*`; dashboard shows Helpful rate; both backends (engagement, tier 2) | 3m | 30s | #210 | `engagement`, `output` |
+| [E2E-62](#e2e-62-engagement--dashboard-nps-survey-engagement-metrics-stage-5) | `/dashboard/analytics` NPS prompt shown to eligible admin (0–10), throttled to once / 90d per `githubUserId`; response recorded; rollup computes NPS = %promoters − %detractors; dashboard renders NPS StatCard (engagement, tier 2) | 3m | 30s | #210 | `dashboard`, `engagement` |
+| [E2E-63](#e2e-63-cost--llm-spend-rollup--dashboard-193) | Each review writes a `ReviewCostRecord`; hourly rollup aggregates a `cost` block (total spend, avg cost/review, cost/finding, per-repo); `/api/insights` returns it; dashboard LLM cost section renders; unknown-model reviews counted as "unpriced", excluded from money; both backends (cost) | 3m | 30s | #212 | `cost`, `dashboard`, `rollup` |
+| [E2E-64](#e2e-64-dashboard-restructure--analytics-value--accuracy-correctness-hourly-rollup-218) | Dashboard split by intent: Analytics = Activity + Impact (cost/cycle/engagement); FP Insights renamed Accuracy at `/dashboard/accuracy` (old `/dashboard/insights` 308-redirects, query preserved); rollup hourly both runtimes; both backends (#218) | 3m | 30s | #218 | `dashboard` |
+| [E2E-65](#e2e-65-analytics-tabbed-view--accuracy-folded-in-227) | `/dashboard/analytics` is a tabbed view (Overview · Cost & Impact · Findings · Activity · Accuracy); active tab in `?tab=` (shareable, `?org=` preserved); `/dashboard/accuracy` redirects to `?tab=accuracy`; Accuracy nav item removed; filter bar scoped to data tabs (#227) | 2m | 30s | #227 | `dashboard` |
+| [E2E-66](#e2e-66-self-hosted-cost-shows-when-the-model-is-priced-231) | Self-hosted LLM cost: current-gen Anthropic IDs priced out of the box; `.mergewatch.yml` `pricing:` override now parsed (was dropped); unpriced model → one-time server warn + dashboard "set pricing" hint (not silent $0); `0`/`0` records a real $0 (#231) | 3m | 30s | #231 | `cost`, `pricing`, `selfhosted` |
+| [E2E-67](#e2e-67-global-env-pricing-for-the-llm_model-233) | Self-hosted global pricing: `LLM_MODEL_INPUT_PRICE_PER_1M` / `LLM_MODEL_OUTPUT_PRICE_PER_1M` price whatever `LLM_MODEL` is set to (e.g. a Bedrock inference-profile ARN) for full reviews **and** inline replies — no per-repo config; per-repo `pricing:` wins; `0`/`0` = real $0; partial/invalid → one-time warn (#233) | 3m | 30s | #233 | `cost`, `pricing`, `selfhosted` |
+| [E2E-68](#e2e-68-org-custom-agents-235) | Org admins define custom review agents in the dashboard (Settings → Custom Agents), scoped to all/selected repos with optional path/language targeting; advisory vs blocking (blocking critical → REQUEST_CHANGES + failing check); union with repo `.mergewatch.yml` (org wins on name clash); admin-only edit, members read-only; both backends (#235) | 3m | 60s | #235 | `agents`, `config`, `org-agents` |
+| [E2E-69](#e2e-69-mcp--review_diff-runs-the-pipeline-on-a-supplied-diff) | MCP `review_diff` reviews a supplied diff with no PR; `repo` loads that repo's config + conventions; review recorded `agentAuthored: true`; HTTP + stdio parity | 3m | 60s | MCP | `mcp` |
+| [E2E-70](#e2e-70-mcp--get_review_status-and-the-conventions-resource) | MCP `get_review_status` returns the latest review row; `mergewatch://conventions/{owner}/{repo}` serves resolved conventions as `text/markdown` | 2m | 30s | MCP | `mcp` |
+| [E2E-71](#e2e-71-mcp--api-key-scope-enforcement-and-revocation) | API keys are admin-only, shown once, hashed at rest; scoped keys rejected off-scope (`-32001`); revocation effective on the next request | 3m | 30s | MCP | `auth`, `mcp` |
+| [E2E-72](#e2e-72-mcp--session-billing-dedup-30-minute-window) | Repeat `review_diff` calls sharing a `sessionId` bill only the positive delta within a 30-minute window | 4m | 60s | MCP | `billing`, `mcp` |
+| [E2E-73](#e2e-73-billing--free-tier-exhaustion-blocks-reviews) | 5 lifetime free reviews per installation; the 6th blocks **before** the LLM call; MCP returns `-32002`; one notification, not one per PR | 4m | 60s | billing | `billing` |
+| [E2E-74](#e2e-74-billing--top-up-and-auto-reload) | Manual top-up; auto-reload off by default; concurrent drops below threshold produce exactly one charge (`autoReloadInFlight` mutex) | 4m | 60s | billing | `billing`, `stripe` |
+| [E2E-75](#e2e-75-skip--maxfiles-ceiling) | Over-`maxFiles` PRs skip with a **visible** check run (default 50, inclusive boundary); `@mergewatch review` overrides | 1m | 30s | core | `config`, `skip` |
+| [E2E-76](#e2e-76-skip--reviewonmention-false) | `reviewOnMention: false` suppresses mention-triggered reviews; skip attributed to `reviewOnMentionOff`, not `autoReviewOff` | 1m | 30s | core | `config`, `triggers` |
+| [E2E-77](#e2e-77-diff-filter--excludepatterns) | `excludePatterns` removes files from the diff sent to agents without changing the PR-skip decision; excluding everything yields a clean review, not a crash | 2m | 60s | core | `config`, `skip` |
+| [E2E-78](#e2e-78-output-shaping--minseverity-maxfindings-postsummaryonclean) | `minSeverity` filters by tier; `maxFindings` truncates **by rank** and discloses it; `postSummaryOnClean` gates the clean-PR comment | 3m | 60s | core | `config`, `output` |
+| [E2E-79](#e2e-79-ux-block--comment-presentation) | `ux` toggles change only their own section; `tone` rewords without changing findings; `commentHeader` is escaped against injection | 3m | 60s | core | `config`, `output`, `ux` |
+| [E2E-80](#e2e-80-conventions--discovery-order-and-the-16-kb-cap) | Conventions resolve first-hit-wins in documented order; explicit `conventions:` never falls back on miss; >16 KB truncates with a visible marker | 3m | 60s | core | `config`, `conventions`, `prompts` |
+| [E2E-81](#e2e-81-codebase-awareness--file-request-budget) | `codebaseAwareness` fetches out-of-diff files; `maxFileRequestRounds` / `maxContextKB` enforced; hitting the budget degrades gracefully | 3m | 60s | core | `agents`, `config`, `context` |
+| [E2E-82](#e2e-82-oss-program--sponsored-review-on-a-granted-public-repo) | OSS grant sponsors a named public repo; unnamed/private/expired all fall back correctly; rename keeps the grant | 5m | 60s | #263, #265 | `billing`, `oss` |
+| [E2E-83](#e2e-83-oss-program--operator-grant-lifecycle) | `grant-oss.ts` grant/add/remove/revoke/inspect; `--stage` guard; private repo rejected | 5m | n/a | #266 | `oss` |
+| [E2E-84](#e2e-84-334--time-bounded-insight-rollup-windows) | Counter increments write per-UTC-day `periodCounts` buckets alongside lifetime counters; rollup windows sum only in-window activity (7d ≤ 30d ≤ 90d guaranteed); pre-#334 long-lived records ramp up instead of injecting lifetime history; both backends (#334) | 3m | 90s | #334 | `rollup`, `storage` |
+| [E2E-85](#e2e-85-335--time-ordered-dynamodb-review-listing) | SaaS `listReviews` queries the `ByRepoCreatedAt` GSI: reverse-chronological across any PR numbers, date bounds in the key condition (no pre-filter `Limit` loss), `limit` bounds the merged result with lossless v2 resume cursors; sticky legacy fallback when the GSI is absent (#335) | 3m | 60s | #335 | `rollup`, `storage` |
+| [E2E-86](#e2e-86-336--p95-duration-nearest-rank--minimum-sample) | Analytics p95 duration uses nearest-rank (`⌈n × 0.95⌉`, clamped) instead of returning the maximum for n ≤ 20; below 20 completed reviews the UI shows "—" with an explanatory tooltip and no P95 bar (#336) | 2m | 30s | #336 | `rollup`, `ttm` |
+| [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup` |
+| [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
+| [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` |
+| [E2E-96](#e2e-96-416--deterministic-grading-of-a-suite-run) | `grade-run.mjs` asserts a run against `expect.json` with no model, exits 1 on regression; UNGRADED is never PASS; `--compare` reports dev/prod divergence (#416) | 3m | n/a | fixtures#706 | `tooling` |
+| [E2E-94](#e2e-94-416--dev-and-prod-review-the-same-pr-without-colliding) | With both Apps installed on one repo, a single PR gets two independent reviews — separate comment markers, separate check runs, each stage updating only its own and re-running only from its own button; prod's identity is byte-identical to pre-#416 (#416) | 5m | 2m | #416 | — |
+| [E2E-93](#e2e-93-409--oss-operator-lifecycle-org-grants-pre-approval-inspect) | `grant-oss.ts --org` writes an org-scoped grant, `--preapprove` parks one for an uninstalled org (and refuses if they already installed), `--list-preapprovals` / `--inspect` render both, and the dashboard shows org-wide coverage rather than an empty repo list (#409) | 10m | n/a | #412 | — |
+| [E2E-92](#e2e-92-409--oss-pre-approval-claimed-automatically-on-install) | An org pre-approved before installing gets an org-scoped grant written automatically on `installation.created`; a webhook redelivery never resets an existing grant, a claimed row never re-fires on reinstall, and an expired pre-approval is ignored (#409) | 8m | n/a | #411 | — |
+| [E2E-91](#e2e-91-409--oss-org-scoped-grant-covers-every-public-repo) | An `ossGrantScope: 'org'` grant sponsors every PUBLIC repo in the installation including newly-created ones, while private repos, expiry, and the monthly cap still gate it; pre-#409 grants with no scope field still match only their named repo ids (#409) | 5m | n/a | #410 | — |
+| [E2E-90](#e2e-90-390--structured-outputs-zero-parse-failures) | On a provider with structured-output support, a full-suite run produces ZERO "Could not parse agent JSON response" log lines and no "Unparsed agent output" disclosures; the text parser is exercised only on fallback paths (#390) | 2m | 60s | #390 | — |
+| [E2E-89](#e2e-89-372--intent-claims-never-suppress-findings) | In-code comments claiming a defect is intentional ("test-only", "simulates", "regression guard") never suppress a finding — agents still report, and an intent-shaped verifier dismissal is refused (kept as advisory `unverified`); the same intent declared in the conventions doc suppresses as before (#372) | 3m | 60s | #372 | — |
 
 ---
 
@@ -3251,7 +3264,7 @@ Then install the App on a test org that has **never** installed it before (an ex
 
 ### E2E-94: #416 — dev and prod review the same PR without colliding
 
-**Status:** 🚧 In review (#416, stage 1).
+**Status:** ✅ SHIPPED (#417).
 
 **Behavior:** with both GitHub Apps installed on `mergewatch/fixtures`, one PR is reviewed twice — once per stage — on a byte-identical diff. Each stage writes its own comment marker (`<!-- mergewatch-review -->` for prod, `<!-- mergewatch-review:dev -->` for dev) and its own check-run name (`MergeWatch Review` / `MergeWatch Review (dev)`), so neither finds or edits the other's artifacts. This is the A/B substrate: same PR, same commit SHA, same diff, two independent reviews side by side.
 
@@ -3283,6 +3296,61 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - ❌ Either stage's formal review shows `DISMISSED` — `dismissStaleReviews` is dismissing across Apps again (#418). This also degrades prod on any repo the dev App shares with it
 - ❌ A third-party bot's review is dismissed — the #418 guard regressed, and MergeWatch is interfering with a vendor it has no business touching
 - ❌ Both stages reviewing `kitchensink` or any repo outside the A/B — the dev installation wasn't scoped down
+
+---
+
+### E2E-95: #416 — selective suite runs by tag, mode, or changed paths
+
+**Status:** ✅ SHIPPED (fixtures#705).
+
+**Behavior:** every fixture's `meta.env` carries `TAGS=` (what it covers) and `MODE=` (how it is verified: `pr` 66, `dynamo` 14, `dashboard` 13, `mcp` 4, `checks-api` 1). `scripts/select-fixtures.sh` and `run-suite.sh --tag / --mode / --changed-files` resolve a subset, so a prompt change runs ~30 fixtures instead of 98.
+
+`--changed-files` maps paths to tags via `e2e/impact-map.yml`. Two behaviors are deliberately pessimistic: a path matching **no** rule runs the whole suite (`--explain` names it), and an unknown `--tag` exits 2 rather than matching nothing — an empty result would be indistinguishable from "nothing was impacted".
+
+**Setup.** In the fixtures repo. Costs nothing — these are selection queries, not runs.
+
+**Expected outcomes.**
+- [ ] `scripts/select-fixtures.sh --tag agents` → 31 fixtures; `--tag billing` → 4; `--tag oss` → 2
+- [ ] `--mode dynamo` → 14
+- [ ] A docs-only change (`README.md`, `docs/**`) resolves to **0** fixtures — the suite does not run
+- [ ] `packages/llm-*/**` resolves to **all 98** — a model swap is never a subset run
+- [ ] An unmapped path resolves to all 98, and `--explain` prints which path forced it
+- [ ] `--tag nope` exits 2 with `unknown tag: nope`
+- [ ] Mixing selection flags with positional fixture names exits 2
+- [ ] `run-suite.sh --tag X --dry-run` prints the selection and opens no PRs
+
+**Failure modes.**
+- ❌ An unmapped path silently resolves to a small subset — a missed regression, and the reason the fallback is the full suite
+- ❌ A docs-only change runs all 98 (the `**/*.md` vs top-level `*.md` glob gap — shell `case` patterns require the slash)
+- ❌ `--tag` on a typo'd tag runs nothing and reports success
+
+---
+
+### E2E-96: #416 — deterministic grading of a suite run
+
+**Status:** ✅ SHIPPED (fixtures#706).
+
+**Behavior:** `scripts/grade-run.mjs` reads `.e2e/last-run.json`, fetches each PR, and evaluates that fixture's `expect.json` — check conclusion and title, merge score, per-severity finding counts, review state and body, comment content, inline count, reactions — with **no model in the loop**. Exits 1 on a regression, so it can gate a deploy. `/verify-suite` runs it first and confines its LLM judgement to what assertions cannot express.
+
+A fixture with no `expect.json` reports **UNGRADED**, never PASS. 10 of 98 fixtures currently carry one.
+
+`--compare` grades both stages off the same PR and reports score divergence.
+
+**Setup.** Run any suite selection, then grade it.
+
+**Expected outcomes.**
+- [ ] A PR matching its `expect.json` reports PASS
+- [ ] A PR violating it reports FAIL, listing each failed assertion in plain text
+- [ ] A fixture with no `expect.json` reports UNGRADED — **never** PASS
+- [ ] A fixture with `pr: null` (manual/reuse) reports SKIP; `applied: skipped-missing-prereq` also SKIPs
+- [ ] Exit codes: 1 on any FAIL or ERROR, 0 when only PASS/UNGRADED/SKIP, 2 with no manifest
+- [ ] Reviews are matched by **App login**, not a bot heuristic — `gh` returns `author.is_bot: null` and a bare `mergewatch`, so heuristics silently match nothing
+- [ ] `--compare` reports both stages' scores and flags divergence
+
+**Failure modes.**
+- ❌ An UNGRADED fixture counted as PASS — makes the whole layer worthless
+- ❌ A fetch error reported as PASS: unverified is not the same as fine, so ERROR fails the gate
+- ❌ The grader agrees with itself on a deterministic field the LLM pass disagrees with — one of them has a bug worth reporting rather than papering over
 
 ---
 

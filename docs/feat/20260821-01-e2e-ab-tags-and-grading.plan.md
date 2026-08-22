@@ -1,8 +1,10 @@
 # E2E infrastructure — dev/prod A/B, tagged selection, deterministic grading
 
-**Status:** In progress
+**Status:** Shipped
 
-**Tracking issue:** #416
+**Tracking issue:** #416 · Shipped as #417 (stage 1) → fixtures#705 (stage 2) → fixtures#706 (stage 3), capstone in this PR.
+
+Runtime behavior is documented in `docs/e2e-ab-testing.md`; scenarios are E2E-94/95/96. The A/B was verified live on `fixtures#707` and immediately surfaced #418 (`dismissStaleReviews` dismissing any bot's review), fixed in #419.
 
 ## Summary
 
@@ -135,17 +137,23 @@ E2E-54d  fixtures#712
 
 ### Phase 2 — tags + impacted selection (`mergewatch/fixtures`)
 
-- [ ] **Goal:** `run-suite.sh --tag agents` and `--impacted-by <ref>` run a subset.
+- [x] **Goal:** `run-suite.sh --tag agents` and `--changed-files` run a subset. **Shipped in fixtures#705.**
 - **Files:** `TAGS=` added to all 93 `fixtures/*/meta.env`; new `e2e/impact-map.yml`; `scripts/run-suite.sh`; `.claude/commands/runbook-sync.md` (mirror tags into the RUNBOOK table); RUNBOOK regression table gains a Tags column.
 - **Tests:** tag filter selects the expected set; unknown tag errors rather than silently running nothing; an unmapped changed path widens to `ALL` and says so.
 - **RUNBOOK:** E2E-95 — tagged and impacted selection pick the right subset.
 
 ### Phase 3 — deterministic grading + nightly CI (`mergewatch/fixtures`)
 
-- [ ] **Goal:** a subset run hard-fails without a model; nightly full run.
+- [x] **Goal:** a subset run hard-fails without a model; nightly full run. **Shipped in fixtures#706.**
 - **Files:** `expect.json` for the deterministic fixtures (start with the ~20 highest-value; the rest stay `UNGRADED`); `scripts/grade-run.sh`; `.claude/commands/verify-suite.md`; a nightly GitHub Action.
 - **Tests:** each assertion type passes and fails correctly; a missing `expect.json` reports `UNGRADED`, never `PASS`; `--compare` detects a seeded dev/prod divergence.
 - **RUNBOOK:** E2E-96 — grading catches a deliberately broken fixture.
+
+## Deviations from the plan as written
+
+- **`MODE=` added in stage 2, not stage 3.** The plan scoped stage 2 to tags only. But the 36 `MANUAL_ONLY` fixtures split across five verification modes (14 dynamo, 13 dashboard, 4 mcp, 1 checks-api, 4 already plain `pr`), and a grader has to dispatch on that. Setting it while already rewriting all 98 `meta.env` files avoids a second full sweep in stage 3.
+- **`--changed-files` instead of `--impacted-by <ref>`.** `run-suite.sh` runs in the fixtures repo, but the diff that determines impact lives in `mergewatch.ai`. Taking a path list (or stdin) is honest about where the diff comes from and composes with `git diff --name-only`; a `--impacted-by <ref>` flag would have had to guess at a sibling checkout.
+- **RUNBOOK Tags column deferred to stage 3.** It lives in `mergewatch.ai`, and splitting stage 2 across two repos for one table column wasn't worth it.
 
 ## Out of scope / deferred
 
