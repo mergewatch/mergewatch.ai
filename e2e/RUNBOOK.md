@@ -3270,6 +3270,8 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - [ ] Push a second commit → each stage **updates its own** comment in place; neither posts a duplicate and neither 403s trying to edit the other's
 - [ ] Click "Re-run" on the **dev** check → only dev re-reviews; prod's comment and check are untouched
 - [ ] Click "Re-run" on the **prod** check → only prod re-reviews
+- [ ] **Each stage keeps its own formal review** — prod shows `APPROVED` and dev shows `APPROVED`, neither `DISMISSED` (#418). Before that fix whichever stage reviewed second dismissed the other's review ~3s later
+- [ ] A third-party reviewer bot on the same PR (CopilotAI, dependabot, CodeQL) still has its review intact after a MergeWatch re-review (#418)
 - [ ] Inline findings carry the stage-scoped inline marker, and a 👍 on a dev inline comment is recorded against dev's stores only
 - [ ] On a repo with **only** the prod App, behavior is identical to before #416 — one comment, one check named `MergeWatch Review`
 
@@ -3278,6 +3280,8 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - ❌ A 403 in either stage's logs when updating a comment — it matched the other App's comment and tried to edit what it doesn't own
 - ❌ **Prod posts a duplicate comment on an existing PR** — the prod marker changed. This is the severe one: it orphans every bot comment in the wild, not just fixtures
 - ❌ Dev's "Re-run" button does nothing — `isMergeWatchCheckRun` still matches only the prod name, so dev ignores its own re-request
+- ❌ Either stage's formal review shows `DISMISSED` — `dismissStaleReviews` is dismissing across Apps again (#418). This also degrades prod on any repo the dev App shares with it
+- ❌ A third-party bot's review is dismissed — the #418 guard regressed, and MergeWatch is interfering with a vendor it has no business touching
 - ❌ Both stages reviewing `kitchensink` or any repo outside the A/B — the dev installation wasn't scoped down
 
 ---

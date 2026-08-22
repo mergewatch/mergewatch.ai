@@ -597,24 +597,102 @@ export async function dismissStaleReviews(
   owner: string,
   repo: string,
   prNumber: number,
+  selfLogin?: string | null,
 ): Promise<void> {
+  // #418 — dismiss ONLY our own App's reviews.
+  //
+  // This used to dismiss any review authored by a Bot, which is two bugs. It
+  // dismissed other vendors' bots (CopilotAI, dependabot, CodeQL, a customer's
+  // own reviewer) on every re-review — the exact interference the inline-reply
+  // path guards against. And with dev and prod both installed on one repo it
+  // made the two stages dismiss each other, which is how it was found.
+  //
+  // Without a known identity we dismiss NOTHING. Leaving our own stale review
+  // up is cosmetic; dismissing a stranger's is a correctness and trust problem,
+  // so the ambiguous case fails toward doing nothing.
+  if (!selfLogin) {
+    console.warn(
+      `[review] skipping stale-review dismissal on ${owner}/${repo}#${prNumber} — `
+      + 'own App login unknown, and dismissing another author\'s review is worse '
+      + 'than leaving ours stale (#418)',
+    );
+    return;
+  }
+
   const reviews = await octokit.pulls.listReviews({
     owner,
     repo,
     pull_number: prNumber,
   });
 
+  const want = normalizeLogin(selfLogin);
   for (const review of reviews.data) {
-    if (review.user?.type === 'Bot' && review.state !== 'DISMISSED') {
-      await octokit.pulls.dismissReview({
-        owner,
-        repo,
-        pull_number: prNumber,
-        review_id: review.id,
-        message: 'Superseded by new review on latest commit.',
-      }).catch(() => {});
-    }
+    if (review.state === 'DISMISSED') continue;
+    if (normalizeLogin(review.user?.login) !== want) continue;
+    await octokit.pulls.dismissReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      review_id: review.id,
+      message: 'Superseded by new review on latest commit.',
+    }).catch(() => {});
   }
+}
+
+/**
+ * Compare GitHub App logins.
+ *
+ * The `[bot]` suffix is reported inconsistently — REST and GraphQL disagree,
+ * and `gh pr view --json reviews` returns a bare `mergewatch` with
+ * `author.is_bot: null`. Matching raw strings therefore silently fails to
+ * recognise our own review, which is the failure mode that makes the caller
+ * dismiss nothing (or, before #418, dismiss everything).
+ */
+function normalizeLogin(login: string | null | undefined): string {
+  return (login ?? '').replace(/\[bot\]$/i, '').trim().toLowerCase();
+}
+
+/**
+ * Resolve the GitHub App login behind this installation client, from a comment
+ * the App itself authored (#418).
+ *
+ * Derived rather than configured: the review path already posts its summary
+ * comment before dismissing reviews, so the author of that comment IS us, in
+ * every stage and in self-hosted, with no env var to set and nothing to drift
+ * when an App is renamed. Costs one API call per process — the login is stable
+ * for the life of the App, so it is cached.
+ *
+ * Returns null when the comment can't be read; the caller treats that as
+ * "identity unknown" and declines to dismiss anything.
+ */
+const APP_LOGIN_CACHE = new Map<string, string>();
+
+export async function resolveAppLogin(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  commentId: number,
+  cacheKey = 'default',
+): Promise<string | null> {
+  const cached = APP_LOGIN_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const { data } = await octokit.issues.getComment({ owner, repo, comment_id: commentId });
+    const login = data.user?.login;
+    if (!login) return null;
+    APP_LOGIN_CACHE.set(cacheKey, login);
+    return login;
+  } catch {
+    // Best-effort: a failed lookup must not break the review, it just means we
+    // skip dismissal this time.
+    return null;
+  }
+}
+
+/** Test seam — the cache is process-wide and would otherwise leak between cases. */
+export function __resetAppLoginCache(): void {
+  APP_LOGIN_CACHE.clear();
 }
 
 // ---------------------------------------------------------------------------

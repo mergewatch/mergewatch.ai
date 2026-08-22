@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   mergeScoreToReviewEvent,
   buildInlineComments,
@@ -10,6 +10,9 @@ import {
   removePRReaction,
   submitPRReview,
   findExistingBotComment,
+  dismissStaleReviews,
+  resolveAppLogin,
+  __resetAppLoginCache,
 } from './client.js';
 import type { Octokit } from '@octokit/rest';
 
@@ -786,5 +789,152 @@ describe('findExistingBotComment — stage scoping (#416)', () => {
     // Back-compat: every comment written before #416 carries the bare marker.
     const octokit = octokitWith(['<!-- mergewatch-review -->\nold review']);
     expect(await findExistingBotComment(octokit, 'o', 'r', 1)).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #418 — dismissStaleReviews must only ever dismiss OUR OWN App's reviews
+// ---------------------------------------------------------------------------
+
+describe('dismissStaleReviews — only our own reviews (#418)', () => {
+  function octokitWith(reviews: Array<{ id: number; login: string; state?: string }>) {
+    const dismissed: number[] = [];
+    const octokit = {
+      pulls: {
+        listReviews: async () => ({
+          data: reviews.map((r) => ({
+            id: r.id,
+            state: r.state ?? 'APPROVED',
+            user: { login: r.login, type: 'Bot' },
+          })),
+        }),
+        dismissReview: async ({ review_id }: { review_id: number }) => {
+          dismissed.push(review_id);
+          return {};
+        },
+      },
+    } as any;
+    return { octokit, dismissed };
+  }
+
+  it('dismisses our own stale review', async () => {
+    const { octokit, dismissed } = octokitWith([{ id: 1, login: 'mergewatch' }]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([1]);
+  });
+
+  it('leaves the OTHER stage\'s review alone', async () => {
+    // The collision that surfaced this: dev and prod both installed on one
+    // repo, whichever ran second dismissed the other's review.
+    const { octokit, dismissed } = octokitWith([
+      { id: 1, login: 'mergewatch-ai-dev' },
+      { id: 2, login: 'mergewatch' },
+    ]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([2]);
+  });
+
+  it('leaves another vendor\'s bot alone', async () => {
+    // The pre-existing, customer-facing half: MergeWatch was dismissing
+    // CopilotAI / dependabot / CodeQL reviews on every re-review.
+    const { octokit, dismissed } = octokitWith([
+      { id: 1, login: 'copilot-pull-request-reviewer' },
+      { id: 2, login: 'dependabot' },
+      { id: 3, login: 'github-advanced-security' },
+      { id: 4, login: 'mergewatch' },
+    ]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([4]);
+  });
+
+  it('leaves a human review alone', async () => {
+    const { octokit, dismissed } = octokitWith([{ id: 1, login: 'santthosh' }]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([]);
+  });
+
+  it('skips reviews already dismissed', async () => {
+    const { octokit, dismissed } = octokitWith([
+      { id: 1, login: 'mergewatch', state: 'DISMISSED' },
+      { id: 2, login: 'mergewatch', state: 'CHANGES_REQUESTED' },
+    ]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([2]);
+  });
+
+  it('normalizes the [bot] suffix in either direction', async () => {
+    // REST and GraphQL disagree about the suffix; matching raw strings would
+    // silently fail to recognise our own review.
+    const { octokit, dismissed } = octokitWith([{ id: 1, login: 'mergewatch[bot]' }]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([1]);
+
+    const b = octokitWith([{ id: 2, login: 'mergewatch' }]);
+    await dismissStaleReviews(b.octokit, 'o', 'r', 1, 'MergeWatch[bot]');
+    expect(b.dismissed).toEqual([2]);
+  });
+
+  it('dismisses NOTHING when our identity is unknown', async () => {
+    // Fail-safe direction: leaving our own review stale is cosmetic, dismissing
+    // a stranger's is not. Also asserts we do not even list reviews.
+    for (const login of [undefined, null, '']) {
+      const { octokit, dismissed } = octokitWith([
+        { id: 1, login: 'mergewatch' },
+        { id: 2, login: 'dependabot' },
+      ]);
+      await dismissStaleReviews(octokit, 'o', 'r', 1, login as any);
+      expect(dismissed).toEqual([]);
+    }
+  });
+
+  it('survives a dismissReview failure without throwing', async () => {
+    const octokit = {
+      pulls: {
+        listReviews: async () => ({ data: [{ id: 1, state: 'APPROVED', user: { login: 'mergewatch' } }] }),
+        dismissReview: async () => { throw new Error('403'); },
+      },
+    } as any;
+    await expect(dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch')).resolves.toBeUndefined();
+  });
+});
+
+describe('resolveAppLogin (#418)', () => {
+  beforeEach(() => __resetAppLoginCache());
+
+  it('reads our login from a comment we authored', async () => {
+    const octokit = {
+      issues: { getComment: async () => ({ data: { user: { login: 'mergewatch' } } }) },
+    } as any;
+    expect(await resolveAppLogin(octokit, 'o', 'r', 42)).toBe('mergewatch');
+  });
+
+  it('caches per key so the lookup costs one call per process', async () => {
+    let calls = 0;
+    const octokit = {
+      issues: {
+        getComment: async () => { calls++; return { data: { user: { login: 'mergewatch' } } }; },
+      },
+    } as any;
+    await resolveAppLogin(octokit, 'o', 'r', 1, 'k');
+    await resolveAppLogin(octokit, 'o', 'r', 2, 'k');
+    expect(calls).toBe(1);
+  });
+
+  it('keeps stages separate under different cache keys', async () => {
+    const make = (login: string) => ({
+      issues: { getComment: async () => ({ data: { user: { login } } }) },
+    }) as any;
+    expect(await resolveAppLogin(make('mergewatch'), 'o', 'r', 1, 'prod')).toBe('mergewatch');
+    expect(await resolveAppLogin(make('mergewatch-ai-dev'), 'o', 'r', 1, 'dev')).toBe('mergewatch-ai-dev');
+  });
+
+  it('returns null when the comment cannot be read', async () => {
+    const octokit = { issues: { getComment: async () => { throw new Error('404'); } } } as any;
+    expect(await resolveAppLogin(octokit, 'o', 'r', 1)).toBeNull();
+  });
+
+  it('returns null when the comment has no author', async () => {
+    const octokit = { issues: { getComment: async () => ({ data: {} }) } } as any;
+    expect(await resolveAppLogin(octokit, 'o', 'r', 1)).toBeNull();
   });
 });
