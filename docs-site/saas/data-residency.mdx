@@ -11,7 +11,7 @@ When a pull request triggers a review, the PR diff is fetched by the **ReviewAge
 
 ## Bedrock model calls
 
-All LLM inference runs on Amazon Bedrock within MergeWatch's AWS account. The primary model is `us.anthropic.claude-sonnet-4-5-20250929-v1:0` for review agents. Lighter tasks such as summary generation and diagram creation use `us.anthropic.claude-haiku-4-5-20251001-v1:0` for cost efficiency. Model inputs (diff content, agent prompts) and outputs (review findings) exist only for the duration of the API call and are not logged or stored by MergeWatch beyond the review lifecycle.
+All LLM inference runs on Amazon Bedrock within MergeWatch's AWS account. The primary model is `us.anthropic.claude-sonnet-4-6` for review agents. Lighter tasks such as summary generation and diagram creation use `us.anthropic.claude-haiku-4-5-20251001-v1:0` for cost efficiency. Model inputs (diff content, agent prompts) and outputs (review findings) exist only for the duration of the API call and are not logged or stored by MergeWatch beyond the review lifecycle.
 
 ## What is stored
 

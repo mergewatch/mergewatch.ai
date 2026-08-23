@@ -52,7 +52,7 @@ Parameters:
   # via the modelId field in the mergewatch-installations table.
   DefaultBedrockModelId:
     Type: String
-    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    Default: us.anthropic.claude-sonnet-4-6
     # WARNING (#264): this Default binds only when the stack is FIRST created.
     # On an update, CloudFormation retains the stack's existing value for any
     # parameter the deploy does not pass — editing this line does nothing to a

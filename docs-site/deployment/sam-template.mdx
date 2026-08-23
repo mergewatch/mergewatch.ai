@@ -24,7 +24,7 @@ The template accepts four parameters that control the deployment:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `Stage` | String | `prod` | Deployment stage (`dev`, `staging`, `prod`). Scopes all resource names so multiple environments can coexist in the same AWS account. |
-| `DefaultBedrockModelId` | String | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Default Bedrock model used by all agents. Can be overridden per-repo via `.mergewatch.yml`. |
+| `DefaultBedrockModelId` | String | `us.anthropic.claude-sonnet-4-6` | Default Bedrock model used by all agents. Can be overridden per-repo via `.mergewatch.yml`. |
 | `DeploymentMode` | String | `self-hosted` | Deployment mode. Set to `saas` to enable Stripe billing enforcement in the ReviewAgent and deploy the BillingHandler Lambda. `self-hosted` skips all billing checks. |
 | `DashboardBaseUrl` | String | `https://mergewatch.ai` | Base URL used in PR comment links that point back to the MergeWatch dashboard. |
 
@@ -122,7 +122,7 @@ resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
 parameter_overrides = [
   "Stage=prod",
-  "DefaultBedrockModelId=us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "DefaultBedrockModelId=us.anthropic.claude-sonnet-4-6",
   "DeploymentMode=saas",
   "DashboardBaseUrl=https://mergewatch.example.com"
 ]
@@ -133,7 +133,7 @@ sam deploy \
   --stack-name mergewatch-staging \
   --parameter-overrides \
     Stage=staging \
-    DefaultBedrockModelId=us.anthropic.claude-sonnet-4-5-20250929-v1:0 \
+    DefaultBedrockModelId=us.anthropic.claude-sonnet-4-6 \
     DeploymentMode=self-hosted \
     DashboardBaseUrl=https://staging.mergewatch.example.com
 ```
