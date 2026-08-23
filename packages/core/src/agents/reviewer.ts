@@ -1730,7 +1730,17 @@ export function groundFinding(
   // Out-of-range anchor — definitely wrong. Drop critical, downgrade
   // warning to info, drop info outright.
   if (zeroBased < 0 || zeroBased >= lines.length) {
-    if (f.severity === 'critical') return null;
+    // #459 — a critical is DEMOTED, never deleted. #385 already settled this
+    // for the verifier ("a refuted CRITICAL demotes to advisory, never
+    // deletes") because a silently-vanished critical is the failure that let
+    // an unauthenticated admin endpoint through at 5/5. Grounding was still
+    // deleting them, and unlike every sibling filter it logged nothing, so the
+    // loss left no trace anywhere. Route into the same `unverified` lane the
+    // verifier uses: FP-L renders it under "Unverified concerns" and W7 clamps
+    // the score, so it is visible and advisory rather than absent.
+    if (f.severity === 'critical') {
+      return { ...f, verification: 'unverified' as const };
+    }
     if (f.severity === 'warning') return { ...f, severity: 'info' };
     return null;
   }
@@ -1755,8 +1765,15 @@ export function groundFinding(
 
   // Identifier nowhere in file. The orchestrator likely hallucinated the
   // finding (e.g. described `createChatSession()` on a file that doesn't
-  // call it). Drop critical, downgrade warning, drop info.
-  if (f.severity === 'critical') return null;
+  // call it) — but "likely" is doing real work here, and it is wrong for a
+  // whole class of true finding: when the defect is the ABSENCE of something,
+  // its identifiers are absent from the file by definition. "No auth check",
+  // "missing await", "no null guard" all name code that is not there.
+  //
+  // #459 — demote criticals instead of deleting them, same lane as above.
+  if (f.severity === 'critical') {
+    return { ...f, verification: 'unverified' as const };
+  }
   if (f.severity === 'warning') return { ...f, severity: 'info' };
   return null;
 }
@@ -2884,9 +2901,37 @@ export async function runReviewPipeline(
     orchestratorResult.findings,
     groundingContext,
   );
-  const structurallyGrounded = orchestratorResult.findings
-    .map((f) => groundFinding(f, groundingFileContents[f.file]))
+  // Keep each grounded result paired with the finding it came from. Counting
+  // from the FILTERED array against the original by index is wrong the moment
+  // anything is dropped — the indices shift — and it is wrong precisely in the
+  // case this logging exists to explain.
+  const groundedPairs = orchestratorResult.findings.map((original) => ({
+    original,
+    grounded: groundFinding(original, groundingFileContents[original.file]),
+  }));
+  const structurallyGrounded = groundedPairs
+    .map((p) => p.grounded)
     .filter((f): f is OrchestratedFinding => f !== null);
+  // #459 — grounding was the ONLY deleting filter that logged nothing.
+  // confidence-floor, min-severity, fp-c, clustering and finding-verify all
+  // announce their drops; a finding that vanished here left no trace in
+  // CloudWatch, which is why diagnosing one cost a three-hypothesis dig
+  // through the source. Announce drops and demotions the same way.
+  {
+    const dropped = groundedPairs.filter((p) => p.grounded === null).length;
+    const demoted = groundedPairs.filter((p) => p.grounded !== null
+      && p.grounded.severity === 'critical'
+      && p.grounded.verification === 'unverified'
+      && p.original.verification !== 'unverified').length;
+    if (dropped > 0) {
+      console.warn('[grounding] dropped %d finding%s whose anchor did not survive',
+        dropped, dropped === 1 ? '' : 's');
+    }
+    if (demoted > 0) {
+      console.warn('[grounding] demoted %d critical%s to unverified (anchor unconfirmed, not deleted)',
+        demoted, demoted === 1 ? '' : 's');
+    }
+  }
   const groundedFindings = await verifyFindings(
     structurallyGrounded,
     groundingFileContents,

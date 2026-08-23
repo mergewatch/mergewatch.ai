@@ -2096,12 +2096,22 @@ describe('groundFinding', () => {
     expect(result!.line).toBe(11);
   });
 
-  it('drops a critical finding when the identifier nowhere appears in the file', () => {
-    // Reproduces the prod hallucination: line 89-91 are comments, file
-    // never even calls createChatSession() — drop the critical.
+  // #459 — INVERTED, not relaxed. This asserted `toBeNull()`: an unanchorable
+  // critical was deleted outright. It is now demoted to `unverified`, the same
+  // lane #385 chose for a refuted critical ("demotes to advisory, never
+  // deletes"). The finding still does not block — FP-L keeps it out of the
+  // action-items table and W7 clamps the score — but it renders under
+  // "Unverified concerns" instead of disappearing.
+  //
+  // The deletion was wrong for a whole class of TRUE finding: when the defect
+  // is the ABSENCE of code, its identifiers are absent from the file by
+  // definition. "No auth check", "missing await", "no null guard".
+  it('demotes rather than deletes a critical whose identifier is absent (#459)', () => {
     const file = ['// only comments here', 'const x = 1;', 'export default x;'].join('\n');
     const result = groundFinding(baseFinding, file);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.severity).toBe('critical');
+    expect(result!.verification).toBe('unverified');
   });
 
   it('downgrades a warning to info when the identifier is missing (less destructive than dropping)', () => {
@@ -2117,11 +2127,25 @@ describe('groundFinding', () => {
     expect(groundFinding(info, file)).toBeNull();
   });
 
-  it('drops a critical when the anchor is past EOF', () => {
+  // #459 — INVERTED for the same reason as above.
+  it('demotes rather than deletes a critical anchored past EOF (#459)', () => {
     const file = 'one\ntwo\nthree';
-    expect(groundFinding({ ...baseFinding, line: 999 }, file)).toBeNull();
+    const result = groundFinding({ ...baseFinding, line: 999 }, file);
+    expect(result).not.toBeNull();
+    expect(result!.verification).toBe('unverified');
   });
 
+  it('leaves warning and info handling unchanged (#459)', () => {
+    const file = ['// only comments here', 'const x = 1;'].join('\n');
+    const warn = groundFinding({ ...baseFinding, severity: 'warning' }, file);
+    expect(warn?.severity).toBe('info');
+    expect(groundFinding({ ...baseFinding, severity: 'info' }, file)).toBeNull();
+  });
+
+  // #459 scope note: the no-op guard is deliberately UNCHANGED and still
+  // deletes. Demotion is for "could not confirm the anchor", not for
+  // "demonstrably not a problem" — here the suggested fix is already in the
+  // file, so there is no defect to be advisory about.
   it('drops a finding whose suggested code already exists (no-op guard, W1)', () => {
     // The PR #31 false positive: "missing await" flagged on a line that
     // already reads `const run = await migrationRunner({`, with a suggestion
