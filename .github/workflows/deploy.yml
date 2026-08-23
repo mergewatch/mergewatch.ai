@@ -354,6 +354,16 @@ jobs:
         with:
           node-version: 20
 
+      - name: Configure git identity for the fixture commits
+        working-directory: fixtures-repo
+        run: |
+          # run-suite.sh commits each fixture overlay. A fresh runner has no
+          # git identity, and `bootstrap.sh` does not set one — it assumes a
+          # developer's local config. Without this the very first fixture dies
+          # with "empty ident name" (exit 128) before opening any PR.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Resolve the selection
         id: select
         working-directory: fixtures-repo
