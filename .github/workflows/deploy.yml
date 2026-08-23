@@ -420,13 +420,37 @@ jobs:
         run: |
           xargs scripts/run-suite.sh < /tmp/sel.txt
 
-      - name: Let the last reviews settle
+      - name: Return the checkout to main
         if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
         run: |
-          # run-suite only sleeps BETWEEN fixtures, so the final PR has had no
-          # time at all when it returns. Grading early reads a missing review as
-          # a failure.
-          sleep 120
+          # run-suite leaves the repo on the LAST fixture branch, which is cut
+          # from the e2e-baseline tag — and that tag predates the tooling. It
+          # has no grade-run.mjs, no select-fixtures.sh, and none of the 17
+          # expect.json files.
+          #
+          # The visible symptom was `grade-run.mjs: No such file or directory`
+          # (exit 127). The dangerous one was invisible: had the script been
+          # found, every fixture would have been UNGRADED for want of an
+          # expect.json, and grade-run exits 0 on UNGRADED — a green gate that
+          # verified nothing.
+          #
+          # .e2e/ is gitignored, so the run manifest survives the switch.
+          git checkout -f main
+          git log -1 --oneline
+
+      - name: Wait for every review to complete
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        run: |
+          # Was `sleep 120`. A timer cannot tell "the review is still working"
+          # from "the review never started", and grading either one early
+          # reports a missing comment as a product failure — so a dead-lettered
+          # queue looked identical to a broken product in a gate that blocks
+          # prod. This polls each PR's stage check run until it is completed,
+          # and on timeout reports whether each PR is absent (webhook never
+          # handled) or queued (accepted but stalled).
+          scripts/await-reviews.mjs --stage "$MW_STAGE" --timeout 900
 
       - name: Grade
         id: grade
