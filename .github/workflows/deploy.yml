@@ -34,6 +34,15 @@
 #   DEPLOYMENT_MODE        — 'saas' to enable billing, 'self-hosted' (default) to disable
 #   DASHBOARD_BASE_URL     — Override dashboard URL (default: https://mergewatch.ai)
 #
+# Optional, for the E2E gate (#445) — DISABLED unless both are present:
+#   vars.E2E_GATE_ENABLED  — set to 'true' to turn the gate on
+#   secrets.FIXTURES_TOKEN — token with write access to mergewatch/fixtures.
+#                            GITHUB_TOKEN does not reach another repository.
+#
+#   The gate BLOCKS prod on failure, so enable it only once the token exists
+#   and the suite has a green baseline (#442, #443, #447). Emergency bypass:
+#   workflow_dispatch with skip_e2e_gate=true.
+#
 # Required GitHub Environments:
 #   development            — no protection rules needed
 #   production             — "Wait timer" of 30 minutes, NO required reviewers.
@@ -53,6 +62,11 @@ on:
     inputs:
       deploy_prod:
         description: 'Deploy to production after dev?'
+        required: false
+        type: boolean
+        default: false
+      skip_e2e_gate:
+        description: 'Skip the E2E gate (emergency prod deploy)?'
         required: false
         type: boolean
         default: false
@@ -257,18 +271,186 @@ jobs:
           fi
 
   # =========================================================================
-  # Stage 3: Deploy to Production (requires manual approval)
+  # Stage 3: E2E gate against dev (#445)
+  # =========================================================================
+  # Runs the fixture suite against the just-deployed DEV app and blocks prod on
+  # the result. Before this, nothing verified dev before prod — the 30-minute
+  # timer was a window for a human to notice and cancel, not a gate.
+  #
+  # Selection is impact-scoped (`--changed-files`), automated-only, and
+  # graded-only:
+  #   * --automated  — a MANUAL_ONLY fixture prints instructions instead of
+  #                    failing, so a run nobody followed would read as a pass.
+  #   * --graded     — grade-run.mjs exits non-zero only on FAIL/ERROR. A
+  #                    fixture with no expect.json is UNGRADED and can never
+  #                    fail, so running one costs a real PR and a real LLM
+  #                    review to assert nothing (#447).
+  #
+  # DISABLED BY DEFAULT. Needs vars.E2E_GATE_ENABLED == 'true' plus a
+  # FIXTURES_TOKEN secret with write access to mergewatch/fixtures — the
+  # built-in GITHUB_TOKEN does not reach another repository. Because the gate
+  # BLOCKS prod, enabling it before that secret exists would block every deploy.
+  e2e-gate:
+    name: E2E gate (dev)
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    if: vars.E2E_GATE_ENABLED == 'true' && github.event.inputs.skip_e2e_gate != 'true'
+    # Globally serialized, and not per-environment like the deploy jobs. The
+    # suite opens real PRs in a SHARED repo and reset-env.sh closes every open
+    # PR there — two concurrent gates would tear down each other's run.
+    concurrency:
+      group: e2e-fixtures
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.FIXTURES_TOKEN }}
+      MW_STAGE: dev
+
+    steps:
+      - name: Checkout mergewatch.ai
+        uses: actions/checkout@v6
+        with:
+          # Two commits so the merge diff is computable on workflow_dispatch,
+          # where github.event.before is not set.
+          fetch-depth: 2
+
+      - name: Compute changed paths
+        id: changed
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE" "${{ github.sha }}" > /tmp/changed.txt
+          else
+            git diff --name-only HEAD~1 HEAD > /tmp/changed.txt
+          fi
+          echo "changed paths:"; cat /tmp/changed.txt
+
+      - name: Checkout fixtures
+        uses: actions/checkout@v6
+        with:
+          repository: mergewatch/fixtures
+          token: ${{ secrets.FIXTURES_TOKEN }}
+          path: fixtures-repo
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Resolve the selection
+        id: select
+        working-directory: fixtures-repo
+        run: |
+          set -uo pipefail
+          EXPLAIN=1 scripts/select-fixtures.sh \
+            --changed-files /tmp/changed.txt --automated --graded \
+            > /tmp/sel.txt 2>/tmp/explain.txt
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Fixture selection failed (rc=$rc)."; cat /tmp/explain.txt; exit 1
+          fi
+
+          # An unmapped path resolves to the whole suite by design (#416's
+          # pessimistic default). Cap it at the correctness set so worst-case
+          # cost is one known number rather than the entire repo.
+          CAPPED=no
+          if grep -q 'unmapped path forces full suite' /tmp/explain.txt; then
+            CAPPED=yes
+            scripts/select-fixtures.sh --tag correctness --automated --graded > /tmp/sel.txt
+            echo "Selection degraded to the full suite; capped to correctness+automated+graded."
+            sed -n 's/^unmapped path forces full suite: /  unmapped: /p' /tmp/explain.txt
+          fi
+
+          COUNT=$(grep -c . /tmp/sel.txt || true)
+          echo "capped=$CAPPED" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"   >> "$GITHUB_OUTPUT"
+          echo "Selected $COUNT fixture(s)."; cat /tmp/sel.txt
+
+      - name: Reset the fixtures environment
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        run: |
+          # A dirty fixtures repo produces failures that are not regressions,
+          # which is the fastest way to make a blocking gate get ignored.
+          scripts/reset-env.sh
+
+      - name: Run the suite against dev
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        env:
+          # Reviews take 30-60s; without pacing every PR lands at once and the
+          # review queue, not the product, decides the result.
+          SLEEP: 45
+        run: |
+          xargs scripts/run-suite.sh < /tmp/sel.txt
+
+      - name: Let the last reviews settle
+        if: steps.select.outputs.count != '0'
+        run: |
+          # run-suite only sleeps BETWEEN fixtures, so the final PR has had no
+          # time at all when it returns. Grading early reads a missing review as
+          # a failure.
+          sleep 120
+
+      - name: Grade
+        id: grade
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        run: |
+          set -o pipefail
+          scripts/grade-run.mjs --stage dev | tee /tmp/grade.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## E2E gate (dev)"
+            echo ""
+            echo "- Selected: **${{ steps.select.outputs.count }}** fixture(s)"
+            echo "- Capped to correctness set: **${{ steps.select.outputs.capped }}**"
+            if [ "${{ steps.select.outputs.count }}" = "0" ]; then
+              echo ""
+              echo "No fixture can observe these paths, so nothing ran. This is a pass, not a skip."
+            fi
+            if [ -f /tmp/grade.txt ]; then
+              echo ""; echo '```'; tail -40 /tmp/grade.txt; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down
+        if: always()
+        working-directory: fixtures-repo
+        run: |
+          # Always, including on failure: leaving ~10 open PRs behind would make
+          # the next run's reset the thing that closes them, and a human opening
+          # the repo would see a wall of red.
+          scripts/reset-env.sh || echo "::warning::Teardown failed; fixtures repo may need a manual reset."
+
+  # =========================================================================
+  # Stage 4: Deploy to Production
   # =========================================================================
   # Runs after a successful dev deploy on every push to main, AND on a manual
-  # workflow_dispatch with deploy_prod=true. Either way it pauses at the
-  # "production" GitHub environment, which has "Required reviewers" enabled
-  # (Settings > Environments > production) — nothing reaches prod until an
-  # authorized reviewer approves.
+  # workflow_dispatch with deploy_prod=true. It then waits out the "production"
+  # environment's 30-minute timer (#428 replaced required reviewers with a
+  # timer; see the header for why).
+  #
+  # It is additionally gated on the E2E suite passing against dev. A skipped
+  # gate — disabled, or bypassed via skip_e2e_gate — still allows prod; a
+  # FAILED gate does not.
   deploy-prod:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: deploy-dev
-    if: github.event_name == 'push' || github.event.inputs.deploy_prod == 'true'
+    needs: [deploy-dev, e2e-gate]
+    # always() is required because e2e-gate is SKIPPED when disabled or
+    # bypassed, and a skipped dependency would otherwise skip this job too.
+    # Spelling out deploy-dev's result is the cost of that: `needs:` no longer
+    # implies success once always() is in play.
+    if: >-
+      always()
+      && needs.deploy-dev.result == 'success'
+      && (needs.e2e-gate.result == 'success' || needs.e2e-gate.result == 'skipped')
+      && (github.event_name == 'push' || github.event.inputs.deploy_prod == 'true')
     environment: production
     # Serialized against other PROD deploys only. A job waiting out the
     # environment's 30-minute timer holds this group, so back-to-back merges
