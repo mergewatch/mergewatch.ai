@@ -139,10 +139,16 @@ A **`—`** in the Tags column means the scenario has **no fixture directory** a
 **`correctness`** (#424) is orthogonal to the area tags: it marks a **deterministic contract**, where a failure means the system is broken rather than that a model phrased something differently. It is the per-phase regression gate:
 
 ```bash
-scripts/run-suite.sh --tag correctness        # 78 fixtures — 55 automated, 23 manual
+scripts/run-suite.sh --tag correctness --automated   # 55 — the runnable gate
+scripts/run-suite.sh --tag correctness --manual      # 23 — prints instructions
+scripts/run-suite.sh --tag correctness               # all 78
 ```
 
+`--automated` / `--manual` are derived from `MANUAL_ONLY` rather than being tags of their own, and they **AND** with the other filters instead of OR-ing the way tags do — the question is "correctness *and* runnable". Keeping automatability in one place (`meta.env`) means it cannot drift from a duplicate in `TAGS`.
+
 The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54) or presentation-only (E2E-42–47, -57, -60, -62–65). They are excluded because they would make the gate flaky, not because they matter less — a gate that goes yellow for non-regressions stops being read.
+
+> **Why 23 are manual (#443):** almost none of them are manual by nature. `grade-run.mjs` asserts GitHub PR state and nothing else, so any fixture whose assertion lives in DynamoDB, an MCP endpoint, or a rendered page has nowhere to put its expectation. That is why every non-`pr` fixture in the repo is manual, without exception. A DynamoDB assertion backend alone moves 16 of the 23.
 
 > **Gap:** E2E-95 through E2E-99 are tagged `correctness` here but have **no fixture directory**, so they do not participate in the gate. E2E-98 (#423, oversized diffs skip rather than hard-fail) and E2E-99 (#401, malformed agent output disclosed) are the two that would most directly catch a #424 regression. Authoring those two is a prerequisite for trusting the gate on the context-architecture work.
 

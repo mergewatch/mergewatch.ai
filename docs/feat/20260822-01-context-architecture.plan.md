@@ -230,9 +230,13 @@ Two things are on the critical path and easy to under-schedule: **1.2** (nothing
 Every phase below ends with the **`correctness`** E2E tag green. Not the full suite: `correctness` (#424, fixtures#709) marks fixtures whose assertion is a **deterministic contract**, so a failure means the system is broken rather than that a model phrased something differently.
 
 ```bash
-scripts/run-suite.sh --tag correctness --dry-run   # what would run
-scripts/run-suite.sh --tag correctness             # 78 fixtures — 55 automated, 23 manual
+scripts/run-suite.sh --tag correctness --automated --dry-run   # what would run
+scripts/run-suite.sh --tag correctness --automated             # 55 — the gate
 ```
+
+**Gate on `--automated`.** A `MANUAL_ONLY` fixture does not fail — it prints instructions, so a run nobody followed looks identical to a run where everything passed. The 23 manual ones are run at phase boundaries that touch their area, not on every phase.
+
+They are manual because `grade-run.mjs` asserts GitHub PR state and nothing else, so anything asserting on DynamoDB, MCP, or a rendered page has nowhere to put its expectation (#443). A DynamoDB backend alone would take the gate from 55 to 71 — worth doing, but it does not block any phase here.
 
 The 20 excluded fixtures are model-judgment (E2E-20, -36, -48, -54) or presentation-only (E2E-42–47, -57, -60, -62–65). They are left out because they would make the gate flaky, not because they matter less. A gate that goes yellow for non-regressions stops being read, and then it is not a gate.
 
