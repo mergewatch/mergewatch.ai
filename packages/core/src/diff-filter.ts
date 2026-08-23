@@ -43,35 +43,60 @@ function splitDiffByFile(diff: string): Array<{ file: string; section: string }>
 
 /**
  * Filter a unified diff string, removing sections for files matching any of
- * the given glob patterns.
+ * the given glob patterns, and (#423) any single file whose section is larger
+ * than `maxFileDiffKB`.
  *
- * Returns the filtered diff and the list of files that were excluded.
+ * The size rule exists because a pattern list only catches artifacts we have
+ * already been bitten by. A source file with a 128KB+ diff essentially does not
+ * exist, so a section that large is generated, vendored, or minified — and one
+ * of them (a `tsconfig.tsbuildinfo`) was 80% of a diff that then blew past the
+ * model's context window.
+ *
+ * `oversizedFiles` is reported separately from `excludedFiles` so the reason a
+ * file vanished is legible: a pattern match is the operator's intent, a size
+ * drop is ours.
  */
 export function filterDiff(
   diff: string,
   excludePatterns: string[],
-): { filteredDiff: string; excludedFiles: string[] } {
-  if (!excludePatterns.length || !diff) {
-    return { filteredDiff: diff, excludedFiles: [] };
+  maxFileDiffKB?: number,
+): { filteredDiff: string; excludedFiles: string[]; oversizedFiles: OversizedFile[] } {
+  const sizeCapBytes = maxFileDiffKB != null && maxFileDiffKB > 0
+    ? maxFileDiffKB * 1024
+    : Number.POSITIVE_INFINITY;
+
+  if ((!excludePatterns.length && sizeCapBytes === Number.POSITIVE_INFINITY) || !diff) {
+    return { filteredDiff: diff, excludedFiles: [], oversizedFiles: [] };
   }
 
   const sections = splitDiffByFile(diff);
   const excludedFiles: string[] = [];
+  const oversizedFiles: OversizedFile[] = [];
   const kept: string[] = [];
 
   for (const { file, section } of sections) {
-    const excluded = excludePatterns.some((pattern) => minimatch(file, pattern));
-    if (excluded) {
+    if (excludePatterns.some((pattern) => minimatch(file, pattern))) {
       excludedFiles.push(file);
-    } else {
-      kept.push(section);
+      continue;
     }
+    if (section.length > sizeCapBytes) {
+      oversizedFiles.push({ file, bytes: section.length });
+      continue;
+    }
+    kept.push(section);
   }
 
   return {
     filteredDiff: kept.join(''),
     excludedFiles,
+    oversizedFiles,
   };
+}
+
+/** A file dropped for its size rather than by an operator's pattern (#423). */
+export interface OversizedFile {
+  file: string;
+  bytes: number;
 }
 
 // ─── Changed-line extraction ───────────────────────────────────────────────

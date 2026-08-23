@@ -73,7 +73,10 @@ import type {
   FileFetchOptions,
   ReviewDelta,
 } from '@mergewatch/core';
-import { buildWorkDoneSection, computeReviewDelta, resolveAppLogin } from '@mergewatch/core';
+import {
+  buildWorkDoneSection, computeReviewDelta, resolveAppLogin,
+  checkInputBudget, describeOverBudget,
+} from '@mergewatch/core';
 import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
 import {
 
@@ -621,9 +624,20 @@ export async function handler(
     // ── Filter excluded files from the diff ────
     // mergeConfig has already folded any deprecated rules.ignorePatterns
     // entries into excludePatterns, so this single list is authoritative.
-    const { filteredDiff, excludedFiles } = filterDiff(diff, runtimeConfig.excludePatterns);
+    const { filteredDiff, excludedFiles, oversizedFiles } = filterDiff(
+      diff, runtimeConfig.excludePatterns, runtimeConfig.maxFileDiffKB,
+    );
     if (excludedFiles.length > 0) {
       console.log(`Excluded ${excludedFiles.length} file(s) from diff: ${excludedFiles.join(', ')}`);
+    }
+    if (oversizedFiles.length > 0) {
+      // #423 — reported separately from pattern exclusions: a size drop is our
+      // decision, not the operator's, so it must be visible as ours.
+      console.log(
+        `[input-budget] dropped ${oversizedFiles.length} oversized file(s) over `
+        + `${runtimeConfig.maxFileDiffKB}KB: `
+        + oversizedFiles.map((f) => `${f.file} (${Math.round(f.bytes / 1024)}KB)`).join(', '),
+      );
     }
 
     // Model resolution (#264). Precedence, highest first:
@@ -648,6 +662,42 @@ export async function handler(
     });
     const modelId = resolvedModel.modelId;
     console.log(`[model] ${repoFullName}#${prNumber} using ${modelId} (source=${resolvedModel.source})`);
+
+    // ── #423 — input budget ────────────────────────────────────────────────
+    // Checked here because it needs the resolved model: the budget is a
+    // property of that model's context window, not a constant. Before this,
+    // an oversized diff reached Bedrock and came back as
+    // `ValidationException: Input is too long for requested model` after every
+    // fallback collapsed — no findings, no partial result, no guidance.
+    //
+    // A skip is strictly better than that: it names the cause, the size, and
+    // what to do. It is still a bound rather than a fix — the durable answer
+    // is retrieval over a checkout (#424).
+    const budget = checkInputBudget(filteredDiff, modelId, runtimeConfig.maxTokensPerAgent);
+    if (!budget.fits) {
+      const reason = describeOverBudget(budget, modelId);
+      console.warn(`[input-budget] skipping ${repoFullName}#${prNumber}: ${reason}`);
+
+      await createCheckRun(octokit, owner, repo, headSha, {
+        status: 'completed',
+        conclusion: 'neutral',
+        title: 'Review skipped — diff too large',
+        summary: reason,
+      }, STAGE);
+
+      await reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', {
+        completedAt: new Date().toISOString(),
+        skipReason: reason,
+      });
+      await prLifecycleStore.markSkipped(
+        String(installationId), repoFullName, prNumber, new Date().toISOString(),
+      );
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ message: 'Skipped', reason, kind: 'diffTooLarge' }),
+      };
+    }
     const lightModelId = runtimeConfig.lightModel;
 
     const modelName = Object.entries(SUPPORTED_MODELS)

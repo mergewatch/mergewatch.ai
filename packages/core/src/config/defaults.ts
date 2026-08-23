@@ -177,6 +177,16 @@ export interface MergeWatchConfig {
   maxFileRequestRounds: number;
   /** Maximum total size of related file context in KB */
   maxContextKB: number;
+  /**
+   * #423 — drop any single file whose diff section exceeds this, regardless of
+   * `excludePatterns`.
+   *
+   * A pattern list only catches artifacts we have already met. This catches the
+   * next one: a source file with a 128KB+ diff essentially does not exist, so a
+   * section this large is generated, vendored, or minified. Dropping it is
+   * reported like any other exclusion, never silently.
+   */
+  maxFileDiffKB: number;
   /** User-defined custom review agents */
   customAgents: CustomAgentDef[];
   /** UX configuration for reviewer experience */
@@ -213,6 +223,23 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
     '**/dist/**',
     '**/build/**',
     '**/node_modules/**',
+    // #423 — build artifacts and generated output. Nobody reviews these, and
+    // they are disproportionately large: one `tsconfig.tsbuildinfo` was 80% of
+    // a 711KB diff and pushed the whole review past the model's context window.
+    // A list always misses the next artifact, which is what `maxFileDiffKB`
+    // below is for — this covers the ones we have actually been bitten by.
+    '**/*.tsbuildinfo',
+    '**/*.map',
+    '**/*.snap',
+    '**/__generated__/**',
+    '**/__snapshots__/**',
+    '**/generated/**',
+    '**/*.gen.*',
+    '**/*.pb.go',
+    '**/vendor/**',
+    '**/coverage/**',
+    '**/.next/**',
+    '**/*.wasm',
   ],
   includePatterns: [],
   minSeverity: 'info',
@@ -222,6 +249,7 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
   codebaseAwareness: true,
   maxFileRequestRounds: 1,
   maxContextKB: 256,
+  maxFileDiffKB: 128,
   customAgents: [],
   ux: { ...DEFAULT_UX_CONFIG },
   rules: { ...DEFAULT_RULES_CONFIG },

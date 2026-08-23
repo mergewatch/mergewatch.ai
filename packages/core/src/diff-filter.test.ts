@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { filterDiff, extractChangedLines, isLineNearChange, computeDiffStats } from './diff-filter.js';
+import { DEFAULT_CONFIG } from './config/defaults.js';
 
 const makeDiff = (...files: string[]) =>
   files
@@ -288,5 +289,93 @@ describe('computeDiffStats (#358)', () => {
     expect(computeDiffStats('')).toEqual({ files: [], additions: 0, deletions: 0 });
     const binary = 'diff --git a/logo.png b/logo.png\nindex 111..222 100644\nBinary files a/logo.png and b/logo.png differ\n';
     expect(computeDiffStats(binary)).toEqual({ files: ['logo.png'], additions: 0, deletions: 0 });
+  });
+});
+
+describe('filterDiff — oversized file drop (#423)', () => {
+  const big = (file: string, bytes: number) =>
+    `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n+${'x'.repeat(bytes)}\n`;
+  const small = (file: string) =>
+    `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n+ok\n`;
+
+  it('drops a single file whose section exceeds the cap', () => {
+    // The orca#117 shape: one artifact dwarfing 30 real files.
+    const diff = big('packages/web/tsconfig.tsbuildinfo', 200_000) + small('src/app.ts');
+    const r = filterDiff(diff, [], 128);
+
+    expect(r.oversizedFiles.map((f) => f.file)).toEqual(['packages/web/tsconfig.tsbuildinfo']);
+    expect(r.filteredDiff).toContain('src/app.ts');
+    expect(r.filteredDiff).not.toContain('tsbuildinfo');
+  });
+
+  it('reports size drops separately from pattern exclusions', () => {
+    // A pattern match is the operator's intent; a size drop is ours. Merging
+    // them would make it impossible to tell which happened.
+    const diff = big('huge.generated.ts', 200_000) + small('yarn.lock') + small('src/app.ts');
+    const r = filterDiff(diff, ['**/yarn.lock'], 128);
+
+    expect(r.excludedFiles).toEqual(['yarn.lock']);
+    expect(r.oversizedFiles.map((f) => f.file)).toEqual(['huge.generated.ts']);
+  });
+
+  it('records the size so the log can be specific', () => {
+    const r = filterDiff(big('big.json', 200_000), [], 128);
+    expect(r.oversizedFiles[0].bytes).toBeGreaterThan(200_000);
+  });
+
+  it('prefers a pattern match over a size drop for the same file', () => {
+    const r = filterDiff(big('vendor/lib.js', 200_000), ['**/vendor/**'], 128);
+    expect(r.excludedFiles).toEqual(['vendor/lib.js']);
+    expect(r.oversizedFiles).toEqual([]);
+  });
+
+  it('keeps everything when no cap is given — back-compat', () => {
+    const diff = big('huge.json', 200_000) + small('src/app.ts');
+    const r = filterDiff(diff, []);
+    expect(r.oversizedFiles).toEqual([]);
+    expect(r.filteredDiff).toContain('huge.json');
+  });
+
+  it('treats a zero or negative cap as no cap, not as drop-everything', () => {
+    // A misconfigured 0 must not silently discard the entire diff.
+    for (const cap of [0, -1]) {
+      const r = filterDiff(big('huge.json', 200_000), [], cap);
+      expect(r.oversizedFiles).toEqual([]);
+      expect(r.filteredDiff).toContain('huge.json');
+    }
+  });
+
+  it('keeps a file exactly at the cap', () => {
+    const r = filterDiff(small('src/app.ts'), [], 128);
+    expect(r.oversizedFiles).toEqual([]);
+    expect(r.filteredDiff).toContain('src/app.ts');
+  });
+});
+
+describe('default excludePatterns cover known artifacts (#423)', () => {
+  it('excludes a tsbuildinfo — the file that caused #423', () => {
+    const diff = `diff --git a/packages/web/tsconfig.tsbuildinfo b/packages/web/tsconfig.tsbuildinfo\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+junk\n`
+      + `diff --git a/src/app.ts b/src/app.ts\n--- a/y\n+++ b/y\n@@ -1 +1 @@\n+ok\n`;
+    const r = filterDiff(diff, DEFAULT_CONFIG.excludePatterns);
+
+    expect(r.excludedFiles).toContain('packages/web/tsconfig.tsbuildinfo');
+    expect(r.filteredDiff).toContain('src/app.ts');
+  });
+
+  for (const f of [
+    'a/b.map', 'x/__generated__/api.ts', 'src/__snapshots__/a.snap',
+    'pkg/vendor/lib.go', 'coverage/lcov.info', '.next/build.js', 'q/schema.pb.go',
+  ]) {
+    it(`excludes ${f}`, () => {
+      const diff = `diff --git a/${f} b/${f}\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+junk\n`;
+      expect(filterDiff(diff, DEFAULT_CONFIG.excludePatterns).excludedFiles).toContain(f);
+    });
+  }
+
+  it('does NOT exclude ordinary source files', () => {
+    for (const f of ['src/app.ts', 'packages/core/src/agents/reviewer.ts', 'lib/generate.ts']) {
+      const diff = `diff --git a/${f} b/${f}\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+ok\n`;
+      expect(filterDiff(diff, DEFAULT_CONFIG.excludePatterns).excludedFiles).toEqual([]);
+    }
   });
 });

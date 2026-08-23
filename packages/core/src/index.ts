@@ -245,7 +245,20 @@ export { isBotActor } from './bot-actor.js';
 
 // ─── Diff filtering ─────────────────────────────────────────────────────────
 export { filterDiff, extractChangedLines, isLineNearChange, computeDiffStats } from './diff-filter.js';
-export type { DiffStats } from './diff-filter.js';
+export type { DiffStats, OversizedFile } from './diff-filter.js';
+
+// ─── Input budget (#423) ────────────────────────────────────────────────────
+export {
+  CONTEXT_WINDOWS,
+  UNKNOWN_MODEL_CONTEXT_WINDOW,
+  contextWindowFor,
+  isKnownModel,
+  estimateTokens,
+  checkInputBudget,
+  describeOverBudget,
+  INPUT_OVERHEAD_FRACTION,
+} from './llm/context-windows.js';
+export type { InputBudget } from './llm/context-windows.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type {
