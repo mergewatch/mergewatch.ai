@@ -647,3 +647,36 @@ describe('buildCheckTitle', () => {
       .toBe('1 critical issue found');
   });
 });
+
+describe('malformed agent output disclosure (#401)', () => {
+  const base = {
+    findings: [], mergeScore: 5 as const, mergeScoreReason: 'ok',
+    filesScanned: 1, linesReviewed: 4,
+  };
+
+  it('discloses a degenerate response so a malfunction is visible', () => {
+    const out = formatReviewComment({ ...base, degenerateResponseCount: 1 } as any);
+    expect(out).toContain('Malformed agent output');
+    expect(out).toContain('findings may be missing');
+  });
+
+  it('pluralizes correctly', () => {
+    const out = formatReviewComment({ ...base, degenerateResponseCount: 2 } as any);
+    expect(out).toContain('2 agent responses returned unusable findings');
+  });
+
+  it('says nothing when no response was degenerate', () => {
+    const out = formatReviewComment({ ...base, degenerateResponseCount: 0 } as any);
+    expect(out).not.toContain('Malformed agent output');
+  });
+
+  it('keeps the unparsed-output warning distinct from this one', () => {
+    // #382's parse failure and #401's malformed shape have different causes
+    // and different remedies — they must not collapse into one message.
+    const out = formatReviewComment({
+      ...base, parseFailureCount: 1, degenerateResponseCount: 1,
+    } as any);
+    expect(out).toContain('Unparsed agent output');
+    expect(out).toContain('Malformed agent output');
+  });
+});

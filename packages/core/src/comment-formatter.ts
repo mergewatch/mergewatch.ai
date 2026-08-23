@@ -164,6 +164,13 @@ interface FormatOptions {
    * a non-zero value means findings may be missing from this review.
    */
   parseFailureCount?: number;
+  /**
+   * #401 — agents whose response parsed but was not a usable findings array
+   * (a non-array, or mostly-empty entries). Rendered as a reliability warning
+   * alongside unparsed output: findings may be missing, and the cause is an
+   * agent malfunction rather than a parse error.
+   */
+  degenerateResponseCount?: number;
   /** Number of enabled agents that ran */
   enabledAgentCount?: number;
   /** Total input tokens used */
@@ -324,6 +331,7 @@ export function formatReviewComment(options: FormatOptions): string {
     deltaCaption,
     suppressedCount,
     parseFailureCount,
+    degenerateResponseCount,
     inputTokens,
     outputTokens,
     estimatedCostUsd,
@@ -575,7 +583,8 @@ export function formatReviewComment(options: FormatOptions): string {
   const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
   const hasSuppressed = (suppressedCount ?? 0) > 0 && (ux?.showSuppressedCount !== false);
   const hasParseFailures = (parseFailureCount ?? 0) > 0;
-  const hasDetails = totalTokens > 0 || durationMs != null || model || hasSuppressed || hasParseFailures || !!conventionsSource;
+  const hasDegenerate = (degenerateResponseCount ?? 0) > 0;
+  const hasDetails = totalTokens > 0 || durationMs != null || model || hasSuppressed || hasParseFailures || hasDegenerate || !!conventionsSource;
   if (hasDetails) {
     const detailParts: string[] = [];
     if (totalTokens > 0) {
@@ -614,6 +623,11 @@ export function formatReviewComment(options: FormatOptions): string {
     }
     if (hasParseFailures) {
       lines.push(`| **\u26A0\uFE0F Unparsed agent output** | ${parseFailureCount} agent response${parseFailureCount !== 1 ? 's' : ''} could not be parsed \u2014 findings may be missing from this review |`);
+    }
+    if (hasDegenerate) {
+      // #401 — distinct from an unparsed response: this one parsed cleanly and
+      // would otherwise have been reported as ordinary suppression.
+      lines.push(`| **\u26A0\uFE0F Malformed agent output** | ${degenerateResponseCount} agent response${degenerateResponseCount !== 1 ? 's' : ''} returned unusable findings \u2014 findings may be missing from this review |`);
     }
     if (conventionsSource) {
       const suffix = conventionsTruncated ? ' (truncated)' : '';

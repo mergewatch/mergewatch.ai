@@ -793,6 +793,7 @@ export async function processReviewJob(
       suppressedCount: result.suppressedCount,
       // #382 — disclose unparsed agent responses (findings may be missing).
       parseFailureCount: result.parseFailureCount,
+      degenerateResponseCount: result.degenerateResponseCount,
       enabledAgentCount: result.enabledAgentCount,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,

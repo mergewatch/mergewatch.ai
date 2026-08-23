@@ -227,6 +227,7 @@ A **`—`** in the Tags column means the scenario has **no fixture directory** a
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` |
+| [E2E-99](#e2e-99-401--malformed-agent-output-is-disclosed-not-counted-as-suppression) | Agent responses that parse but return unusable findings no longer inflate the suppressed counter; they surface as a distinct "Malformed agent output" warning (#401) | 2m | 60s | #429 | `agents`, `output` |
 | [E2E-98](#e2e-98-423--oversized-diffs-skip-with-a-reason-never-hard-fail) | Build artifacts excluded by default and oversized files dropped by size; a diff still over the model's context budget yields a neutral "diff too large" skip naming sizes and remedy, never a raw ValidationException (#423) | 4m | 60s | #426 | `tooling`, `skip` |
 | [E2E-97](#e2e-97-421--marketplace-purchase-recorded-and-attached) | A Marketplace `purchased` is recorded under `#MARKETPLACE` and attached to the installation on `installation.created`; redelivery does not double-record or move `purchasedAt`; `cancelled` revokes nothing (#421) | 5m | 60s | #422 | `marketplace` |
 | [E2E-96](#e2e-96-416--deterministic-grading-of-a-suite-run) | `grade-run.mjs` asserts a run against `expect.json` with no model, exits 1 on regression; UNGRADED is never PASS; `--compare` reports dev/prod divergence (#416) | 3m | n/a | fixtures#706 | `tooling` |
@@ -3422,6 +3423,31 @@ Before this the diff went to the model unbounded: every fallback collapsed and t
 - ❌ A size drop is reported as a pattern exclusion, or not reported at all — the operator can't tell why a file vanished from review
 - ❌ The skip is silent (no check run) — worse than the hard failure, because nothing signals that the PR went unreviewed
 - ❌ An unknown model is assumed generous and overflows — the fallback must be the *smaller* window
+
+---
+
+### E2E-99: #401 — malformed agent output is disclosed, not counted as suppression
+
+**Status:** 🚧 In review (#401).
+
+**Behavior:** an agent response that parses as JSON but whose `findings` is not a usable array no longer contributes to `suppressedCount`. Only entries with a non-empty `title` count as findings; a response that is majority-junk (below 50% usable) is discarded entirely and reported as a **malformed agent output** warning, distinct from #382's **unparsed agent output**.
+
+Two production reviews reported `1430` and `3869 findings removed by dedup & quality filters` on 4-line diffs (fixtures#625, #628). Output tokens were normal — 3,794 and 3,233 — so nothing expensive happened: an agent emitted ~1,430 near-empty objects until `max_tokens` cut it off. The array parsed fine, every entry was correctly discarded downstream, and `suppressedCount` (raw − final) faithfully reported the junk as productive filtering. The counter was not lying; it was counting the wrong things.
+
+**Setup.** Hard to force deterministically — degenerate generation is a model behavior. Verify opportunistically on any suite run, and treat the unit tests in `packages/core/src/agents/parse-findings.test.ts` as the primary gate.
+
+**Expected outcomes.**
+- [ ] Across a full suite run, **no** review reports a suppressed count larger than plausible for its diff (single digits to low tens)
+- [ ] Where an agent does malfunction, the details drawer shows **⚠️ Malformed agent output — N agent response(s) returned unusable findings**, not an inflated Suppressed line
+- [ ] `[findings] DEGENERATE agent response: N of M entries unusable` appears in the logs when it happens
+- [ ] A normal review is unchanged — no new warning, suppressed counts still reflect real dedup work
+- [ ] `⚠️ Unparsed agent output` (#382) still appears independently for genuinely unparseable responses
+
+**Failure modes.**
+- ❌ An implausible Suppressed count reappears — something is still counting unvalidated entries toward `totalRawFindings`
+- ❌ A malfunctioning agent shows only an odd number and no warning — the disclosure regressed, and the symptom is again invisible
+- ❌ Real findings are dropped as "malformed" — the usability test is too strict; it requires only a non-empty `title`
+- ❌ The two warnings collapse into one message — a parse failure and a malformed shape have different causes and different remedies
 
 ---
 

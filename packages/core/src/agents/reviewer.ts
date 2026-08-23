@@ -369,17 +369,94 @@ function safeParseJson<T>(raw: string, fallback: T, requiredKey?: string): T {
  */
 export interface AgentDiagnostics {
   parseFailures: number;
+  /**
+   * #401 — agent responses that parsed as JSON but whose `findings` was not a
+   * usable array of findings: a non-array value, or an array whose entries are
+   * mostly empty/malformed.
+   *
+   * Distinct from `parseFailures` on purpose. A parse failure is visibly
+   * broken; this one parses cleanly and looks like work got done, which is
+   * exactly why it went unnoticed — see the counter below.
+   */
+  degenerateResponses: number;
 }
 
-/** Shared findings-parse tail for every findings-bearing agent. */
-function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentFinding[] {
+/**
+ * #401 — is this a usable finding, as opposed to a shape that merely occupies
+ * an array slot?
+ *
+ * A finding with no title carries nothing a reviewer could act on, and nothing
+ * downstream can render. Requiring one is the cheapest way to tell a real
+ * finding from `{}`.
+ */
+export function isUsableFinding(f: unknown): f is AgentFinding {
+  return !!f && typeof f === 'object' && typeof (f as AgentFinding).title === 'string'
+    && (f as AgentFinding).title.trim().length > 0;
+}
+
+/**
+ * Fraction of entries that must be usable before we trust the array at all.
+ *
+ * Below this the response is treated as degenerate rather than partially
+ * filtered: an agent that emitted 1,430 empty objects and two real findings has
+ * malfunctioned, and reporting "1,428 suppressed" describes that as routine
+ * dedup work.
+ */
+const DEGENERATE_USABLE_RATIO = 0.5;
+
+/**
+ * Shared findings-parse tail for every findings-bearing agent.
+ *
+ * #401 — validates the SHAPE, not just the JSON. Two production reviews
+ * reported "1430" and "3869 findings removed by dedup & quality filters" on
+ * 4-line diffs. Output-token counts were normal (3,794 and 3,233), so nothing
+ * expensive happened: an agent had emitted ~1,430 near-empty objects until
+ * `max_tokens` cut it off. The array parsed fine, every entry was correctly
+ * discarded downstream, and `suppressedCount` (raw − final) faithfully reported
+ * the junk as suppressed findings.
+ *
+ * The counter was not wrong so much as counting the wrong things. Validating
+ * here means only real findings ever reach the raw count, and a malfunctioning
+ * agent is reported as a malfunction instead of as productive filtering.
+ */
+export function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentFinding[] {
   const parsed = tryParseJson<{ findings: AgentFinding[] }>(raw, 'findings');
   if (parsed === null) {
     console.warn('Could not parse agent JSON response, using fallback:', raw.trim().slice(0, 200));
     if (diag) diag.parseFailures++;
     return [];
   }
-  return parsed.findings ?? [];
+
+  const value = parsed.findings;
+  if (value == null) return [];
+
+  // `.length` exists on strings too, so an unchecked non-array silently
+  // contributes its character count to the raw total.
+  if (!Array.isArray(value)) {
+    console.warn(
+      '[findings] agent returned a non-array `findings` (%s) — discarding (#401)',
+      typeof value,
+    );
+    if (diag) diag.degenerateResponses++;
+    return [];
+  }
+
+  const usable = value.filter(isUsableFinding);
+  if (usable.length === value.length) return usable;
+
+  const dropped = value.length - usable.length;
+  if (usable.length < value.length * DEGENERATE_USABLE_RATIO) {
+    // Mostly junk — the agent malfunctioned rather than produced weak findings.
+    console.warn(
+      '[findings] DEGENERATE agent response: %d of %d entries unusable — discarding all (#401)',
+      dropped, value.length,
+    );
+    if (diag) diag.degenerateResponses++;
+    return [];
+  }
+
+  console.warn('[findings] dropped %d malformed finding(s) of %d (#401)', dropped, value.length);
+  return usable;
 }
 
 // ─── Agent invocation helper ────────────────────────────────────────────────
@@ -1453,6 +1530,12 @@ export interface ReviewPipelineResult {
    * `suppressedCount`; a non-zero value means findings may be missing.
    */
   parseFailureCount: number;
+  /**
+   * #401 — agents whose response parsed but was not a usable findings array.
+   * Surfaced like `parseFailureCount`: findings may be missing, and the cause
+   * is an agent malfunction rather than a parse error.
+   */
+  degenerateResponseCount: number;
   /** Number of enabled agents that ran */
   enabledAgentCount: number;
   /** Total input tokens used across all LLM invocations */
@@ -2568,7 +2651,7 @@ export async function runReviewPipeline(
   const changedFiles = Array.from(changedLines.keys());
 
   // #382 — collects agent-response parse failures for comment disclosure.
-  const diag: AgentDiagnostics = { parseFailures: 0 };
+  const diag: AgentDiagnostics = { parseFailures: 0, degenerateResponses: 0 };
 
   // Launch all enabled agents with bounded concurrency (see AGENT_CONCURRENCY).
   // Note: summary and diagram agents don't get file fetching (they benefit less from deep context)
@@ -2644,7 +2727,13 @@ export async function runReviewPipeline(
   // (totalRawFindings − filteredFindings.length) accurately reflects the
   // dedup work, alongside W10's same-region clustering + W11's coverage
   // suppression.
-  const totalRawFindings = taggedFindings.reduce((sum, t) => sum + (t.findings?.length ?? 0), 0);
+  // #401 — count only well-formed entries. parseAgentFindings already filters
+  // the built-in agents, but custom/org-agent results arrive by another path,
+  // and `.length` on any non-array would otherwise contribute silently.
+  const totalRawFindings = taggedFindings.reduce(
+    (sum, t) => sum + (Array.isArray(t.findings) ? t.findings.filter(isUsableFinding).length : 0),
+    0,
+  );
 
   // #385 — custom/org-agent findings are user-legislated policy, so they are
   // routed AROUND every model-taste layer: the orchestrator (whose
@@ -2929,6 +3018,7 @@ export async function runReviewPipeline(
     ...(disputeDisclosure ? { disputeDisclosure } : {}),
     suppressedCount: Math.max(0, totalRawFindings - filteredFindings.length),
     parseFailureCount: diag.parseFailures,
+    degenerateResponseCount: diag.degenerateResponses,
     enabledAgentCount,
     inputTokens: accumulator.totalInputTokens,
     outputTokens: accumulator.totalOutputTokens,
