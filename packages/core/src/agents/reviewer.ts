@@ -1715,6 +1715,43 @@ export function suggestionAlreadyApplied(
  * at the first occurrence. This salvages findings the orchestrator got
  * mostly right but anchored to a comment line near the actual code.
  */
+/**
+ * #459 — does this finding describe something that is MISSING?
+ *
+ * The identifier check below concludes "identifier nowhere in the file →
+ * probably hallucinated". That is sound for a finding asserting something is
+ * present and wrong ("you call `createChatSession()` without awaiting") and
+ * exactly backwards for one asserting something is absent ("there is no auth
+ * check"). In the second case the identifier's absence IS the finding: a
+ * missing `requireAdmin` call cannot be found in a file precisely because it
+ * is missing.
+ *
+ * That blind spot hits the highest-value findings there are — missing auth,
+ * missing await, missing null guard, missing validation — and it deleted a
+ * live authorization bypass on fixtures#730 (mergewatch.ai#459).
+ *
+ * Deliberately matched on phrasing rather than semantics. A hallucinated
+ * "missing X" still slips through here, and that is acceptable: W2's
+ * verification pass reads the actual file and judges the claim, which is the
+ * layer equipped to make that call. This function only decides whether
+ * *string absence* counts as evidence — and for an absence claim it does not.
+ */
+export function describesAbsence(text: string): boolean {
+  return ABSENCE_PATTERNS.some((re) => re.test(text));
+}
+
+const ABSENCE_PATTERNS: RegExp[] = [
+  /\bmissing\b/i,
+  /\blacks?\b|\blacking\b/i,
+  /\bwithout\s+(any\s+)?\w+/i,
+  /\bno\s+\w+\s*(check|guard|validation|validating|handling|handler|verification|auth\w*|sanitiz\w*|escap\w*|limit|timeout|retry|fallback)\b/i,
+  /\bnot\s+(validated|checked|verified|sanitized|escaped|authenticated|authorized|awaited|handled|closed|released)\b/i,
+  /\bun(authenticated|authorized|validated|checked|handled|sanitized|escaped)\b/i,
+  /\bfails?\s+to\s+\w+/i,
+  /\bnever\s+(checks?|validates?|verifies|awaits?|closes?|releases?)\b/i,
+  /\bomits?\b|\bomitted\b/i,
+];
+
 export function groundFinding(
   f: OrchestratedFinding,
   fileContent: string | undefined,
@@ -1765,12 +1802,15 @@ export function groundFinding(
 
   // Identifier nowhere in file. The orchestrator likely hallucinated the
   // finding (e.g. described `createChatSession()` on a file that doesn't
-  // call it) — but "likely" is doing real work here, and it is wrong for a
-  // whole class of true finding: when the defect is the ABSENCE of something,
-  // its identifiers are absent from the file by definition. "No auth check",
-  // "missing await", "no null guard" all name code that is not there.
+  // call it) — but "likely" is doing real work here.
   //
-  // #459 — demote criticals instead of deleting them, same lane as above.
+  // #459 — when the finding describes an ABSENCE, the identifier being absent
+  // is not evidence against it; it is the finding. Pass those through intact
+  // so a real "no auth check" reaches the verifier and can still block, rather
+  // than being demoted to advisory for a structural reason.
+  if (describesAbsence(`${f.title} ${f.description}`)) return f;
+
+  // Otherwise demote criticals rather than deleting them, same lane as above.
   if (f.severity === 'critical') {
     return { ...f, verification: 'unverified' as const };
   }
