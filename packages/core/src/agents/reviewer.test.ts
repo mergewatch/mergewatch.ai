@@ -20,6 +20,7 @@ import {
   runReviewPipeline,
   extractFindingIdentifiers,
   groundFinding,
+  describesAbsence,
   suggestionAlreadyApplied,
   suggestionMatchesExistingCode,
   verifyFindings,
@@ -2096,6 +2097,59 @@ describe('groundFinding', () => {
     expect(result!.line).toBe(11);
   });
 
+  // #459 — an absence-of-code finding survives grounding intact. The identifier
+  // check cannot see these: a missing `requireAdmin` call is absent from the
+  // file precisely because it is missing, so "identifier not found" is the
+  // finding restating itself, not evidence against it. This is the shape that
+  // deleted a live authorization bypass on fixtures#730.
+  it('keeps an absence-of-code critical intact, not demoted (#459)', () => {
+    const file = [
+      "import type { NextRequest } from 'next/server';",
+      'export async function GET(_req: NextRequest): Promise<Response> {',
+      '  const allUsers = await fetchAllUsers();',
+      '  return Response.json({ users: allUsers });',
+      '}',
+    ].join('\n');
+    const f = {
+      ...baseFinding,
+      line: 2,
+      title: 'Missing authorization guard',
+      description: 'No requireAdmin check protects this admin route.',
+    };
+    const r = groundFinding(f, file);
+    expect(r).not.toBeNull();
+    expect(r!.severity).toBe('critical');
+    // Intact — NOT demoted. It can still block on its own merits.
+    expect(r!.verification).toBeUndefined();
+  });
+
+  it('recognises the absence phrasings that matter (#459)', () => {
+    const yes = [
+      'Missing await on async call',
+      'Handler lacks input validation',
+      'Endpoint without any authentication',
+      'No null check before dereference',
+      'User input is not sanitized before the query',
+      'Unauthenticated admin endpoint',
+      'Fails to close the file handle',
+      'Never validates the signature',
+      'Omits the CSRF token',
+    ];
+    for (const t of yes) expect(describesAbsence(t)).toBe(true);
+  });
+
+  it('does not treat ordinary present-code findings as absences (#459)', () => {
+    // These assert something IS there and wrong — identifier absence really is
+    // evidence of hallucination for them, so they must still demote.
+    const no = [
+      'SQL injection in the user query',
+      'createChatSession() is called with an unbounded loop',
+      'Race condition between the two writers',
+      'Hardcoded credential in the config object',
+    ];
+    for (const t of no) expect(describesAbsence(t)).toBe(false);
+  });
+
   // #459 — INVERTED, not relaxed. This asserted `toBeNull()`: an unanchorable
   // critical was deleted outright. It is now demoted to `unverified`, the same
   // lane #385 chose for a refuted critical ("demotes to advisory, never
@@ -2114,16 +2168,27 @@ describe('groundFinding', () => {
     expect(result!.verification).toBe('unverified');
   });
 
+  // #459 — these two use `presentCodeFinding`, not `baseFinding`. baseFinding
+  // describes an ABSENCE ("is not awaited"), and absence findings now survive
+  // grounding intact by design. The hallucination path they exercise needs a
+  // finding that asserts something IS present and wrong.
+  const presentCodeFinding = {
+    ...baseFinding,
+    title: 'SQL injection in the user query',
+    description: 'The `createChatSession()` call interpolates user input directly into SQL.',
+    suggestion: 'Use a parameterised query.',
+  };
+
   it('downgrades a warning to info when the identifier is missing (less destructive than dropping)', () => {
     const file = 'const a = 1;\nconst b = 2;';
-    const warning = { ...baseFinding, severity: 'warning' as const, line: 1 };
+    const warning = { ...presentCodeFinding, severity: 'warning' as const, line: 1 };
     const result = groundFinding(warning, file);
     expect(result?.severity).toBe('info');
   });
 
   it('drops an info finding when the identifier is missing', () => {
     const file = 'const a = 1;';
-    const info = { ...baseFinding, severity: 'info' as const, line: 1 };
+    const info = { ...presentCodeFinding, severity: 'info' as const, line: 1 };
     expect(groundFinding(info, file)).toBeNull();
   });
 
@@ -2137,9 +2202,9 @@ describe('groundFinding', () => {
 
   it('leaves warning and info handling unchanged (#459)', () => {
     const file = ['// only comments here', 'const x = 1;'].join('\n');
-    const warn = groundFinding({ ...baseFinding, severity: 'warning' }, file);
+    const warn = groundFinding({ ...presentCodeFinding, severity: 'warning' }, file);
     expect(warn?.severity).toBe('info');
-    expect(groundFinding({ ...baseFinding, severity: 'info' }, file)).toBeNull();
+    expect(groundFinding({ ...presentCodeFinding, severity: 'info' }, file)).toBeNull();
   });
 
   // #459 scope note: the no-op guard is deliberately UNCHANGED and still
