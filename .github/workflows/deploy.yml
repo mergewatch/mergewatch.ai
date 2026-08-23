@@ -342,13 +342,22 @@ jobs:
         id: select
         working-directory: fixtures-repo
         run: |
+          # `rc=$?` after a bare command is dead code here: the step shell is
+          # `bash -e`, so a non-zero exit aborts before that line runs and the
+          # diagnostic below never prints. The first real failure surfaced as a
+          # naked "exit code 2" with the cause (`unknown argument: --graded`)
+          # sitting unread in a file. Capture with `|| rc=$?` instead.
           set -uo pipefail
+          rc=0
           EXPLAIN=1 scripts/select-fixtures.sh \
             --changed-files /tmp/changed.txt --automated --graded \
-            > /tmp/sel.txt 2>/tmp/explain.txt
-          rc=$?
+            > /tmp/sel.txt 2>/tmp/explain.txt || rc=$?
           if [ "$rc" -ne 0 ]; then
-            echo "::error::Fixture selection failed (rc=$rc)."; cat /tmp/explain.txt; exit 1
+            echo "::error::Fixture selection failed (rc=$rc). Selector output:"
+            cat /tmp/explain.txt
+            echo "::error::Exit 2 means an unknown tag, mode, or argument — usually the"
+            echo "::error::fixtures repo lacking a filter this workflow expects."
+            exit 1
           fi
 
           # An unmapped path resolves to the whole suite by design (#416's
