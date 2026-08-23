@@ -95,6 +95,7 @@ provenance   record what was actually in context, per review
 | **Determinism is a requirement** | Retrieval must be a pure function of `(commit, diff, config)`. A gate that is not reproducible is not a gate. |
 | **Honest coverage + score clamping** | Whatever is dropped must be stated, and the score must not overclaim. A 5/5 on a partially-reviewed diff is worse than today's hard failure, because a hard failure at least signals something went wrong. Precedent: #385 all-clear contradiction, W7 clamping on unverified criticals. |
 | **Batching / chunked multi-pass: rejected** | Budgeting, not retrieval. See above. |
+| **Agents call tools; they are not handed a payload** | Cramming context does not scale at any window size. Settled 2026-08-22. The tool set itself is still open — see "Still open" §3. |
 
 ### Two things that must be designed in, not retrofitted
 
@@ -133,9 +134,26 @@ review-agent-prod:  1024 MB · 300s timeout · 512 MB /tmp · PackageType: Zip
 
 Clone-per-review vs a persistent bare mirror (EFS in SaaS, volume in self-hosted). Blobless clone may be fast enough that a mirror is not needed initially — worth measuring before building.
 
-### 3. What the agents are actually given ← **the interesting question now**
+### 3. Tool set and loop mechanics ← **where the conversation stopped**
 
-No longer "what fits" but "which tools do agents get against the checkout, and how are results fed back". This is where the real design work moved and where the conversation stopped.
+**Settled (2026-08-22): agents make tool calls against the checkout rather than receiving a pre-assembled payload.** Cramming everything into context does not scale and never will; the agent asks for what it needs.
+
+This is the same conclusion the architecture forces from the other direction — if the corpus is a checkout, the natural interface to it is tools, not serialization.
+
+**What exists already:** `packages/core/src/context/agentic-fetcher.ts` implements a bespoke fetch loop — the agent returns a `requestFiles` field in its structured output (#390) and the caller fetches and re-invokes, bounded by `maxFetchRounds` and `maxContextKB`. That is a hand-rolled precursor to tool use with the right *shape* but the wrong *mechanism*.
+
+**Still open:**
+
+- **Native tool use vs the existing `requestFiles` protocol.** Native tool calling is the standard mechanism and composes better; but note #390 already uses forced tool use to constrain the *output* schema, so a retrieval-tools + forced-output-tool conversation needs a deliberate design rather than an incremental patch.
+- **The tool set.** Candidates, roughly in value order for a validation gate:
+  - `search(pattern, glob?)` — ripgrep. Probably the highest-value single tool.
+  - `read_file(path, range?)` — ranged, so a huge file costs only the part that matters.
+  - `blame(path, lines)` and `log(path | -L range)` — the structured history queries that are high-signal here and cost nothing.
+  - `list_files(glob)` — orientation.
+  - `find_callers(symbol)` — could be search-backed initially; tree-sitter later if exactness matters.
+- **Budget shape.** Per-agent call ceiling, wall-clock ceiling, or token ceiling — and what happens on exhaustion (degrade honestly vs fail).
+- **Sharing across the 8 agents.** They will fetch overlapping files. A per-review cache is obvious; whether agents should *see each other's* retrievals is not.
+- **Determinism.** Tool results are deterministic given a fixed checkout, but the *sequence* of calls is model-driven. Whether that satisfies the reproducibility requirement for a gate needs an explicit answer — possibly "record the transcript" rather than "guarantee identical paths".
 
 ### 4. Monorepo worst case
 
