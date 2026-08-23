@@ -70,6 +70,11 @@ on:
         required: false
         type: boolean
         default: false
+      changed_paths:
+        description: 'E2E gate self-test: space-separated paths to use instead of the commit diff'
+        required: false
+        type: string
+        default: ''
 
 env:
   # aws-actions/setup-sam@v2 still runs on Node.js 20; opt into Node.js 24
@@ -315,11 +320,22 @@ jobs:
 
       - name: Compute changed paths
         id: changed
+        env:
+          # Passed through the environment rather than interpolated into the
+          # script: `${{ }}` of a user-supplied dispatch input lands inside the
+          # shell as text, which is a command-injection hole.
+          PATHS_OVERRIDE: ${{ github.event.inputs.changed_paths }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
-          BEFORE="${{ github.event.before }}"
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+          if [ -n "${PATHS_OVERRIDE:-}" ]; then
+            # The gate is otherwise only exercisable by pushing to main, which
+            # means it cannot be tested without polluting the branch it guards.
+            printf '%s\n' $PATHS_OVERRIDE | grep -v '^$' > /tmp/changed.txt
+            echo "::warning::Using changed_paths override — this run is a gate self-test, not the real commit diff."
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            git diff --name-only "$BEFORE" "${{ github.sha }}" > /tmp/changed.txt
+            git diff --name-only "$BEFORE" "$SHA" > /tmp/changed.txt
           else
             git diff --name-only HEAD~1 HEAD > /tmp/changed.txt
           fi
