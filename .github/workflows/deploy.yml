@@ -420,6 +420,25 @@ jobs:
         run: |
           xargs scripts/run-suite.sh < /tmp/sel.txt
 
+      - name: Return the checkout to main
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        run: |
+          # run-suite leaves the repo on the LAST fixture branch, which is cut
+          # from the e2e-baseline tag — and that tag predates the tooling. It
+          # has no grade-run.mjs, no select-fixtures.sh, and none of the 17
+          # expect.json files.
+          #
+          # The visible symptom was `grade-run.mjs: No such file or directory`
+          # (exit 127). The dangerous one was invisible: had the script been
+          # found, every fixture would have been UNGRADED for want of an
+          # expect.json, and grade-run exits 0 on UNGRADED — a green gate that
+          # verified nothing.
+          #
+          # .e2e/ is gitignored, so the run manifest survives the switch.
+          git checkout -f main
+          git log -1 --oneline
+
       - name: Wait for every review to complete
         if: steps.select.outputs.count != '0'
         working-directory: fixtures-repo
