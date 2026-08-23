@@ -28,6 +28,9 @@ If `$ARGUMENTS` is empty, ask what to ship and stop.
 - [ ] A **PR is opened** for every unit of work (never commit to `main`; branch first and dogfood the product).
 - [ ] **Every MergeWatch automated-review concern is addressed** — fix and push until the review returns clean (5/5) or each finding is explicitly resolved/justified.
 - [ ] CI checks (**Build & Test**, **MergeWatch Review**) are green on each PR.
+- [ ] **Merged** — auto-merge enabled once checks are green (see *Through to production*).
+- [ ] **Dev deploy succeeded** for the merge commit.
+- [ ] **The E2E gate's verdict is reported** — pass, fail, skipped, or "nothing impacted" — never left implicit.
 - [ ] When all work is merged, the issue's tracking checklist is fully ticked and the issue is closed (or `Closes #N` lands it).
 
 ## Workflow
@@ -51,9 +54,51 @@ If `$ARGUMENTS` is empty, ask what to ship and stop.
 
 7. **Address review.** Wait for the **MergeWatch Review** check to complete, read its findings, and resolve each — fix + push, or justify why it's a non-issue. Re-poll until the review is clean and CI is green. Make a fair call on each finding; don't blindly apply low-value suggestions, but don't ignore real ones.
 
-8. **Advance the stack.** When a PR is open/merged, update both the local task list and the issue tracking comment, then start the next phase. Repeat 3–7 until the stack is complete.
+8. **Merge.** Once **Build & Test** and **MergeWatch Review** are green and the review is clean, enable auto-merge rather than waiting to be told:
+   ```bash
+   gh pr merge <n> --squash --auto
+   ```
+   Auto-merge lands it the moment checks pass, so the PR never sits waiting on a human round-trip. If the repo has auto-merge disabled, merge directly once green. Never merge with a check red or a review finding unaddressed.
 
-9. **Report.** Finish with every PR link and final check status, and confirm the issue tracking checklist is fully ticked. Flag anything intentionally deferred or left as a follow-up, with a one-line reason.
+9. **Follow it to production.** See *Through to production* below. Do not declare the goal met at merge — merging is the middle of this pipeline, not the end.
+
+10. **Advance the stack.** When a PR is open/merged, update both the local task list and the issue tracking comment, then start the next phase. Repeat 3–9 until the stack is complete.
+
+11. **Report.** Finish with every PR link and final check status, and confirm the issue tracking checklist is fully ticked. Flag anything intentionally deferred or left as a follow-up, with a one-line reason.
+
+## Through to production
+
+Merging is not the end of the pipeline. `main` deploys on its own:
+
+```
+push to main -> build & test -> deploy-dev -> [E2E gate] -> [30 min timer] -> deploy-prod
+```
+
+Nobody clicks approve (#428 replaced required reviewers with a wait timer), so a merged change reaches production whether or not anyone is watching. That is exactly why the tail has to be followed rather than assumed.
+
+**Watch the run, do not poll it.** Long waits belong in a background task so the harness re-invokes you when it finishes; a foreground polling loop burns the turn and tells you nothing extra.
+
+```bash
+gh run list --workflow=deploy.yml --branch=main --limit 1 --json databaseId,status,conclusion
+gh run view <id> --json jobs -q '.jobs[] | "\(.name): \(.status)/\(.conclusion // "")"'
+```
+
+**Report the gate's verdict precisely.** It has four outcomes and they are not interchangeable:
+
+| Outcome | What it means | How to report it |
+|---|---|---|
+| success | Selected fixtures ran and graded clean | Verified, with the count |
+| failure | A graded fixture failed — **prod is blocked** | Stop and surface it; do not retry hoping |
+| skipped | Gate disabled, or bypassed via `skip_e2e_gate` | **Not verified.** Say so plainly |
+| 0 selected | No fixture can observe these paths | A pass, and say why it was empty |
+
+A skipped gate and a degraded selection must never be reported as a pass. The whole point of the gate is that "nobody checked" and "checked and clean" stop looking identical — writing them up the same way rebuilds the exact hole it closed.
+
+Also worth stating when it applies: the gate's real coverage is the *graded* fixtures, so "3 fixtures passed" is the honest number, not "the suite passed".
+
+**Do not run the fixture suite locally to speed this up.** Every fixture opens a real PR in `mergewatch/fixtures` and pays for a real LLM review, and `reset-env.sh` closes every open PR in that shared repo — a local run collides with anyone else's, including the gate's.
+
+**When prod finishes**, report the run URL and the deployed stack. Then the goal is met.
 
 ## Issue checklist mechanics (keep ONE living tracking comment)
 
