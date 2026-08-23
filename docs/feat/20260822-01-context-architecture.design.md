@@ -92,15 +92,22 @@ provenance   record what was actually in context, per review
 | **Async indexing/clone, queued not blocking** | On a miss: blocking adds unbounded latency; proceeding degraded is silent quality variance. Queue until ready — the SQS path from #355 already parks and retries reviews. |
 | **Self-hosted parity is required** | Air-gapped is explicitly supported (why the Ollama provider exists). This rules out hosted embedding APIs, managed vector stores, and S3-only artifacts. It is what made the checkout approach obviously right rather than merely elegant. |
 | **Self-hosted needs a disk volume, not blob storage** | A bare mirror per repo + `git worktree` per review, updated with `git fetch`. Docker Compose already has volumes. Smaller ask than S3-compatible storage. |
-| **Determinism is a requirement** | Retrieval must be a pure function of `(commit, diff, config)`. A gate that is not reproducible is not a gate. |
+| **Determinism is a requirement — of results, not of the path** | Retrieval must be a pure function of `(commit, diff, config)`: the same `read_file` or `search` against the same SHA always returns the same bytes. The model-driven *sequence* of calls is not deterministic and cannot be made so; refined 2026-08-23 to auditability for that half — see §3 "Reproducibility". A gate that cannot explain what it looked at is not a gate. |
 | **Honest coverage + score clamping** | Whatever is dropped must be stated, and the score must not overclaim. A 5/5 on a partially-reviewed diff is worse than today's hard failure, because a hard failure at least signals something went wrong. Precedent: #385 all-clear contradiction, W7 clamping on unverified criticals. |
 | **Batching / chunked multi-pass: rejected** | Budgeting, not retrieval. See above. |
-| **Agents call tools; they are not handed a payload** | Cramming context does not scale at any window size. Settled 2026-08-22. The tool set itself is still open — see "Still open" §3. |
+| **Agents call tools; they are not handed a payload** | Cramming context does not scale at any window size. Settled 2026-08-22; mechanics settled 2026-08-23 — see §3. |
 | **First two tools: `search` and `read_file`** | Settled 2026-08-23. `search` (ripgrep) answers the question that catches real bugs — "who calls this changed function". Ranged `read_file` makes a huge file cost only the part that matters. |
 | **One bare mirror per repo, one DETACHED worktree per review** | How concurrent PRs on one repo share a corpus. Verified: three worktrees at three different commits from one mirror, simultaneously. |
 | **Always `--detach` at a SHA, never a branch name** | `git worktree add` **refuses** a branch already checked out elsewhere (`fatal: 'main' is already used by worktree at …`). Two PRs from one branch, or a re-review racing the original, would collide. |
 | **`search` and `read_file` read the WORKTREE, not git objects** | `git grep <sha>` works without a checkout, but on a blobless clone it must fetch every blob to search them — defeating the partial clone entirely. Materialise the tree once, then search it for free. |
 | **Clone per review; no mirror, no EFS** | Settled 2026-08-23 by measurement — see below. EFS deferred to future work. |
+| **Reuse the loop runtime (Vercel AI SDK), behind `ILLMProvider`** | The bespoke `for` loop in `agentic-fetcher.ts` has no reason to exist. Adopted as a new `invokeWithTools` method so the provider seam survives instead of being replaced. Verified 2026-08-23 to cover Bedrock, Anthropic and OpenAI-compatible. |
+| **Tool definitions live in `packages/mcp`** | `@modelcontextprotocol/sdk` is already a dependency. One definition, two consumers: the review pipeline internally, Claude Code / Cursor externally. |
+| **Ollama keeps its direct path and degrades to `requestFiles`** | No official AI SDK provider; the two community ones have documented tool-call reliability problems. `llm-ollama` already uses Ollama-native `format: schema`. Trading that for a flaky third party is a regression on the air-gapped path. |
+| **Schema-carried request stays as the fallback rung** | Not legacy. It is what keeps Ollama — and any weak upstream behind LiteLLM — working at all. |
+| **Symlink containment gates everything** | A PR can add `docs/notes -> /etc`; `read_file("docs/notes/passwd")` has no `..`, is not absolute, and escapes the worktree. `sanitizeFilePath` is sufficient against the GitHub API and insufficient against a checkout. |
+| **Truncation is always reported, never silent** | A capped `search` that looks complete makes the model read absent matches as evidence. Same failure class as #401. |
+| **Auditability, not determinism, for the call sequence** | Tool results are deterministic given a fixed checkout; the model-driven *sequence* is not. Record the transcript per agent so a disputed verdict is diagnosable. |
 
 ### Two things that must be designed in, not retrofitted
 
@@ -159,26 +166,105 @@ Revisit only if a real monorepo makes clone time hurt. `facebook/react` did not.
 
 *Caveat: measured from a developer machine. Lambda's egress to GitHub should be comparable, but the numbers are indicative rather than a Lambda benchmark.*
 
-### 3. Tool set and loop mechanics ← **where the conversation stopped**
+### 3. ~~Tool set and loop mechanics~~ — settled 2026-08-23
 
 **Settled (2026-08-22): agents make tool calls against the checkout rather than receiving a pre-assembled payload.** Cramming everything into context does not scale and never will; the agent asks for what it needs.
 
 This is the same conclusion the architecture forces from the other direction — if the corpus is a checkout, the natural interface to it is tools, not serialization.
 
-**What exists already:** `packages/core/src/context/agentic-fetcher.ts` implements a bespoke fetch loop — the agent returns a `requestFiles` field in its structured output (#390) and the caller fetches and re-invokes, bounded by `maxFetchRounds` and `maxContextKB`. That is a hand-rolled precursor to tool use with the right *shape* but the wrong *mechanism*.
+#### Correction to the 2026-08-22 framing
 
-**Still open:**
+The open question was recorded as *"native tool use vs the existing `requestFiles` protocol, complicated by #390 already using forced tool use for the output schema."* **That conflict does not exist.** #390 put `requestFiles` *inside* the single forced `emit_result` tool's schema (`packages/core/src/agents/schemas.ts:40`), so there is exactly one tool, always forced, and the retrieval request rides in its output. Nothing to reconcile — it is the extension point.
 
-- **Native tool use vs the existing `requestFiles` protocol.** Native tool calling is the standard mechanism and composes better; but note #390 already uses forced tool use to constrain the *output* schema, so a retrieval-tools + forced-output-tool conversation needs a deliberate design rather than an incremental patch.
-- **The tool set.** Candidates, roughly in value order for a validation gate:
-  - **`search(pattern, glob?)`** — ripgrep. **Settled as one of the first two.**
-  - **`read_file(path, range?)`** — ranged. **Settled as one of the first two.**
-  - `blame(path, lines)` and `log(path | -L range)` — the structured history queries that are high-signal here and cost nothing.
-  - `list_files(glob)` — orientation.
-  - `find_callers(symbol)` — could be search-backed initially; tree-sitter later if exactness matters.
-- **Budget shape.** Per-agent call ceiling, wall-clock ceiling, or token ceiling — and what happens on exhaustion (degrade honestly vs fail).
-- **Sharing across the 8 agents.** They will fetch overlapping files. A per-review cache is obvious; whether agents should *see each other's* retrievals is not.
-- **Determinism.** Tool results are deterministic given a fixed checkout, but the *sequence* of calls is model-driven. Whether that satisfies the reproducibility requirement for a gate needs an explicit answer — possibly "record the transcript" rather than "guarantee identical paths".
+A second conflation was in the same framing: portability was used to argue against native tool use *and* against reusing a loop runtime. It only supports the first. Those are separate layers and they get separate answers.
+
+#### Three layers, three answers
+
+| Layer | Decision | Why |
+|---|---|---|
+| **Loop driver** | Reuse — Vercel AI SDK, adopted *behind* `ILLMProvider` as a new `invokeWithTools` | The `for` loop in `agentic-fetcher.ts` has no defensible reason to be bespoke. AI SDK is the only runtime spanning all four providers. |
+| **Tool definitions** | Reuse our own MCP server (`packages/mcp`) | `@modelcontextprotocol/sdk` is already a dependency. One definition, two consumers: the review pipeline internally, and Claude Code / Cursor externally. |
+| **Wire format** | Keep schema-carried `requestFiles`, as the fallback rung | Not legacy. It is what keeps Ollama working — see the carve-out below. |
+
+Adopting the AI SDK *behind* `ILLMProvider` is the load-bearing detail. `ILLMProvider` and the four `llm-*` packages **are** the seam the SDK would otherwise replace; adding one method preserves the seam instead of re-plumbing the monorepo to obtain a loop.
+
+Runtimes considered and rejected:
+
+- **Claude Agent SDK** — closest fit on paper: ships Grep/Read/Glob over a working directory, which is literally the tool set spec'd below, plus loop and compaction. Anthropic/Bedrock/Vertex only, so self-hosted-on-Ollama and LiteLLM-to-GPT stop working. Constraint, not preference.
+- **Anthropic Tool Runner** (`client.beta.messages.tool_runner`) — same portability break, smaller payoff.
+
+#### Verification of the AI SDK assumption (2026-08-23)
+
+The recommendation rests entirely on AI SDK provider coverage, so it was checked before being recorded rather than after.
+
+| Provider | Tool calling | Verdict |
+|---|---|---|
+| `@ai-sdk/amazon-bedrock` (official) | ✓ tool usage + object generation for Claude | SaaS path fine. Docs table lists only Claude 3.x — stale, and the Bedrock Converse tool-use mechanism is model-agnostic for Claude, but **smoke-test Sonnet 4.5/4.6 rather than assume**. |
+| `@ai-sdk/anthropic` (official) | ✓ | Self-hosted default fine. |
+| `@ai-sdk/openai-compatible` (official) | ✓ tool calling; structured output when `supportsStructuredOutputs` is set | LiteLLM path fine. Capability is explicitly "provider-dependent" — the SDK re-presents the upstream unevenness `litellm-provider.ts:59` already documents (`strict: false`), it does not fix it. Parity, not regression. |
+| **Ollama** | **No official provider** | **The finding that changes the plan.** |
+
+**Structured output and tool calling do compose** in one `generateText` call via `Output.object()` — the docs call it a key advantage. One gotcha, and it maps directly onto our round budget: *generating the structured output counts as a step*, so `stopWhen` must budget tool steps **plus** the final output step. `stopWhen` / `isStepCount` / `hasToolCall` / `prepareStep` and the default 20-step limit are the same dial as `maxFileRequestRounds`.
+
+#### The Ollama carve-out
+
+Ollama has **no official AI SDK provider** — two competing community ones, and the AI SDK's own docs recommend `ai-sdk-ollama` over `ollama-ai-provider-v2` specifically *"when you need reliable tool calling with guaranteed complete responses,"* which concedes the alternative has empty-response problems during tool use.
+
+Meanwhile `packages/llm-ollama` talks to Ollama's **native** `/api/chat` with `format: schema` — Ollama's own structured-output mechanism, direct, no third party. Adopting the AI SDK there would trade a working direct integration for a community dependency with documented tool-call flakiness.
+
+**Decision:** Ollama keeps its existing direct path and degrades to the schema-carried `requestFiles` rung. Ollama is already marked experimental in `CLAUDE.md`; the air-gapped path gets working-but-simpler retrieval rather than a flaky loop. This is the concrete reason the wire format stays — not a hand-wave about portability.
+
+#### Loop mechanics
+
+**Batched per round, not one call per turn.** The model asks for several searches and reads in one round; they execute in parallel and re-invoke once. The round trip is the expensive unit — each one re-invokes a growing prompt — so fewer, fatter rounds beat many thin ones. Cost: the model cannot condition search #2 on search #1 *within* a round. That is what rounds are for, and search→read is naturally two.
+
+**Round budget.** `maxFileRequestRounds` is **1** today (`defaults.ts:250`) — enough to fetch files the diff names, not enough for search→read→finalize. Default to **3** when a worktree is present; keep 1 for the API-fetch path.
+
+**Exhaustion — keep the existing behavior, it is already right.** On rounds or budget running out, re-invoke with *"budget exhausted, finalize with what you have."* The agent always produces findings; it never fails. The message must be **explicit in the prompt**: a model that believes another round is coming will hedge instead of concluding.
+
+**Truncation must be loud.** `search("function")` on a large repo has thousands of hits. Cap results, but always report the cap — *"47 of 3,214 matches shown, refine your pattern."* Silent truncation is worse than no search: the model reads absent matches as evidence and concludes wrongly. Same failure class as #401, where degenerate output passed as real findings.
+
+**Appends stay append-only.** Each round appends to the end; the prefix — system prompt, conventions, PR metadata, diff — stays byte-stable. That is what keeps prefix caching alive across rounds, and it is why the stable/volatile prompt restructure in *Immediate work* is a prerequisite rather than a nice-to-have.
+
+#### Must land first — the symlink escape
+
+`sanitizeFilePath` (`agentic-fetcher.ts:58`) rejects `..`, absolute paths, and null bytes. That is sufficient against the GitHub API, which resolves paths against a repo tree. **Against a real checkout it is not.** A PR can add:
+
+```
+docs/notes -> /etc
+```
+
+and `read_file("docs/notes/passwd")` contains no `..`, is not absolute, and escapes the worktree. We would be checking out attacker-controlled content and reading paths through it.
+
+Required before any tool touches a worktree:
+
+- join → `realpath` → verify the result is still under the worktree root
+- skip symlinks during `search`
+- clone hardening: `--no-recurse-submodules`, hooks disabled, `protocol.ext.allow=never`
+
+The corpus is untrusted content by definition. This is the one item that gates the rest.
+
+#### Tool set
+
+- **`search(pattern, glob?)`** — ripgrep. **First two.**
+- **`read_file(path, range?)`** — ranged. **First two.**
+- `blame(path, lines)` and `log(path | -L range)` — structured history queries, high-signal here and cost nothing.
+- `list_files(glob)` — orientation.
+- `find_callers(symbol)` — search-backed initially; tree-sitter later if exactness matters.
+
+#### Deferred on purpose — cross-agent sharing
+
+8 agents × 3 rounds = 24 invocations of a growing prompt. The **filesystem** layer shares trivially: same container, same worktree, one read cache. The **token** layer does not — each agent pays for its own copy of what it read.
+
+The fix would be a *scout pass*: one cheap call picks a context bundle, appended identically to all 8 prompts, turning N×M retrieval into 1×M and making the block a shared cacheable prefix. It costs per-agent specificity — security wants auth middleware, style wants lint config.
+
+**Not decided now.** Ship per-agent rounds with the transcript recorded, then measure actual overlap. Same stance as the corpus decision: start narrow, let data pick the next move.
+
+#### Reproducibility — record the transcript
+
+The call sequence is model-driven and therefore not deterministic. Neither was the verdict. What a gate owes is **auditability, not determinism**.
+
+Record per agent, into the review record's diagnostics: searches issued, files and ranges read, bytes consumed, rounds used, and why it stopped (finalized / rounds / budget). A disputed 2/5 then becomes diagnosable — *"the security agent never read the auth middleware"* is an answer; *"the model decided"* is not.
 
 ### 4. ~~Monorepo worst case~~ — partially answered 2026-08-23
 
@@ -238,4 +324,6 @@ Measured during the discussion; recorded so a fresh session need not re-derive.
 
 ## Next step
 
-Turn this into a phased plan (`docs/feat/…plan.md`) once open questions 1 and 3 are decided. Phase 1 is the "immediate work" table, which is safe to start before the architecture is settled.
+Turn this into a phased plan (`docs/feat/…plan.md`). Only open question 1 (runtime shape) remains, and it does not block phase 1.
+
+Ordering is forced by the security item: **symlink containment lands before any tool reads a worktree.** After that, `invokeWithTools` behind `ILLMProvider`, then `search` + `read_file` as MCP tool definitions, then raise the round default to 3. The "immediate work" table is safe to start now.
