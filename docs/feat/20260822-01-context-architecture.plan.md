@@ -225,6 +225,36 @@ First phase that creates a worktree. **#432 must be merged** — it is, so this 
 
 Two things are on the critical path and easy to under-schedule: **1.2** (nothing after phase 4 is affordable without it) and **2.1** (nothing in phase 3 can run without a git binary).
 
+## Regression gate — run after every phase
+
+Every phase below ends with the **`correctness`** E2E tag green. Not the full suite: `correctness` (#424, fixtures#709) marks fixtures whose assertion is a **deterministic contract**, so a failure means the system is broken rather than that a model phrased something differently.
+
+```bash
+scripts/run-suite.sh --tag correctness --dry-run   # what would run
+scripts/run-suite.sh --tag correctness             # 78 fixtures — 55 automated, 23 manual
+```
+
+The 20 excluded fixtures are model-judgment (E2E-20, -36, -48, -54) or presentation-only (E2E-42–47, -57, -60, -62–65). They are left out because they would make the gate flaky, not because they matter less. A gate that goes yellow for non-regressions stops being read, and then it is not a gate.
+
+### Two phases need more than the tag
+
+| Phase | Additional run | Why |
+|---|---|---|
+| **1.2** prompt restructure | `--tag prompts` and `--tag agents`, graded | Changing prompt *order* can change model behaviour without breaking any deterministic contract. E2E-36a/36b (linter-invariance) are model-graded and therefore outside the gate, but #387 is the precedent for exactly this: a prompt edit inverted the model's behaviour. |
+| **5** the agent loop | E2E-81 (`file-request-budget`) specifically | It is the only fixture exercising the existing agentic fetch loop, so it is the closest thing to a pre-existing test of what phase 5 replaces. |
+
+### Gap to close before the gate can be trusted here
+
+**E2E-98 (#423 — oversized diffs skip with a reason, never hard-fail)** and **E2E-99 (#401 — malformed agent output disclosed, not counted as suppression)** are documented in the runbook and tagged `correctness`, but **neither has a fixture directory**, so neither runs.
+
+Those two are the closest existing checks to what #424 changes — #423 *is* the bug that started this work. Authoring them is a prerequisite for the gate meaning anything on these phases, and belongs before Phase 1.
+
+### When a phase legitimately changes expected behaviour
+
+Phase 1.1 changes review output by design: dropped files become visible and the score clamps on partial coverage. Fixtures asserting the old output will fail, and that is correct. **Update the fixture and say so in the PR** — never widen an assertion to make a red gate green, which converts a regression detector into a rubber stamp.
+
+---
+
 ## Staging
 
 Each phase is its own PR in dependency order, matching the convention used for MCP (4a/4b/4c) and time-to-merge (#194). Phase 2 ships alone with no behaviour change riding along, because it is the only one that can break deploys.
