@@ -20,6 +20,12 @@
 #
 # With a timer the lock is held 30 minutes at most, and every merge reaches prod.
 #
+# Concurrency is per-environment (`deploy-dev` / `deploy-prod`) rather than one
+# group for the whole workflow, so a prod job waiting out its timer no longer
+# blocks a later run's dev deploy. Neither group cancels in-flight runs: these
+# are `sam deploy` calls, and killing one mid-flight can strand the stack in
+# UPDATE_IN_PROGRESS.
+#
 # Required GitHub Secrets:
 #   AWS_ROLE_ARN           — IAM role ARN for OIDC (e.g. arn:aws:iam::123456789012:role/mergewatch-github-deploy)
 #   AWS_REGION             — Target region (e.g. us-west-2)
@@ -55,9 +61,6 @@ env:
   # aws-actions/setup-sam@v2 still runs on Node.js 20; opt into Node.js 24
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-concurrency:
-  group: deploy-pipeline
-  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -116,6 +119,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment: development
+    # Serialized against other DEV deploys only. Previously dev and prod shared
+    # one workflow-level group, so a prod job sitting in its gate blocked every
+    # later run's dev deploy too — dev fell ~9.5 hours behind main for a reason
+    # that had nothing to do with dev.
+    #
+    # cancel-in-progress stays false: these run `sam deploy`, and cancelling one
+    # mid-flight can leave the CloudFormation stack in UPDATE_IN_PROGRESS, which
+    # is worse than waiting.
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
 
     steps:
       - name: Checkout code
@@ -257,6 +271,13 @@ jobs:
     needs: deploy-dev
     if: github.event_name == 'push' || github.event.inputs.deploy_prod == 'true'
     environment: production
+    # Serialized against other PROD deploys only. A job waiting out the
+    # environment's 30-minute timer holds this group, so back-to-back merges
+    # still reach prod in order — but they no longer hold up anyone's dev
+    # deploy. Same reason as above for not cancelling in-flight deploys.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
 
     steps:
       - name: Checkout code
