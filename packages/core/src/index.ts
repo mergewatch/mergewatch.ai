@@ -229,6 +229,13 @@ export type { ConventionsLoadResult } from './config/conventions.js';
 
 // ─── Context (agentic file fetching) ─────────────────────────────────────────
 export { fetchFileContents } from './context/file-fetcher.js';
+export {
+  sanitizeRelativePath,
+  isWithinRoot,
+  resolveWithinRoot,
+  GIT_HARDENING_ARGS,
+  GIT_CLONE_SAFETY_ARGS,
+} from './context/safe-path.js';
 export { invokeWithFileFetching, FILE_REQUEST_INSTRUCTION } from './context/agentic-fetcher.js';
 export type { FileFetchOptions, AgenticInvokeResult } from './context/agentic-fetcher.js';
 

@@ -12,6 +12,7 @@ import type { Octokit } from '@octokit/rest';
 import type { ILLMProvider } from '../llm/types.js';
 import { normalizeLLMResult } from '../llm/types.js';
 import { fetchFileContents } from './file-fetcher.js';
+import { sanitizeRelativePath } from './safe-path.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -51,25 +52,13 @@ Rules:
 
 // ─── Core logic ─────────────────────────────────────────────────────────────
 
-/**
- * Sanitize a file path from LLM output.
- * Rejects paths with directory traversal or absolute paths.
+/*
+ * Path validation lives in `safe-path.ts` (#424). This module's paths are
+ * resolved by the GitHub API against a repo tree, so lexical checks are
+ * sufficient here — but the same strings will be joined onto a real worktree
+ * once retrieval lands, and one validator with one set of tests is how the
+ * two paths stay in step.
  */
-function sanitizeFilePath(filePath: string): string | null {
-  // Reject empty paths
-  if (!filePath || filePath.trim().length === 0) return null;
-
-  // Reject absolute paths
-  if (filePath.startsWith('/') || filePath.startsWith('\\')) return null;
-
-  // Reject directory traversal
-  if (filePath.includes('..')) return null;
-
-  // Reject paths with null bytes
-  if (filePath.includes('\0')) return null;
-
-  return filePath.trim();
-}
 
 /**
  * Parse a model response to check if it's a file request.
@@ -97,7 +86,7 @@ function parseFileRequest(response: string): string[] | null {
     ) {
       // Sanitize and filter paths, cap at 10 files
       const sanitized = parsed.requestFiles
-        .map((p: string) => sanitizeFilePath(p))
+        .map((p: string) => sanitizeRelativePath(p))
         .filter((p: string | null): p is string => p !== null)
         .slice(0, 10);
 
