@@ -2901,8 +2901,16 @@ export async function runReviewPipeline(
     orchestratorResult.findings,
     groundingContext,
   );
-  const structurallyGrounded = orchestratorResult.findings
-    .map((f) => groundFinding(f, groundingFileContents[f.file]))
+  // Keep each grounded result paired with the finding it came from. Counting
+  // from the FILTERED array against the original by index is wrong the moment
+  // anything is dropped — the indices shift — and it is wrong precisely in the
+  // case this logging exists to explain.
+  const groundedPairs = orchestratorResult.findings.map((original) => ({
+    original,
+    grounded: groundFinding(original, groundingFileContents[original.file]),
+  }));
+  const structurallyGrounded = groundedPairs
+    .map((p) => p.grounded)
     .filter((f): f is OrchestratedFinding => f !== null);
   // #459 — grounding was the ONLY deleting filter that logged nothing.
   // confidence-floor, min-severity, fp-c, clustering and finding-verify all
@@ -2910,12 +2918,11 @@ export async function runReviewPipeline(
   // CloudWatch, which is why diagnosing one cost a three-hypothesis dig
   // through the source. Announce drops and demotions the same way.
   {
-    const dropped = orchestratorResult.findings.length - structurallyGrounded.length;
-    const demoted = structurallyGrounded.filter(
-      (f, i) => f.severity === 'critical'
-        && f.verification === 'unverified'
-        && orchestratorResult.findings[i]?.verification !== 'unverified',
-    ).length;
+    const dropped = groundedPairs.filter((p) => p.grounded === null).length;
+    const demoted = groundedPairs.filter((p) => p.grounded !== null
+      && p.grounded.severity === 'critical'
+      && p.grounded.verification === 'unverified'
+      && p.original.verification !== 'unverified').length;
     if (dropped > 0) {
       console.warn('[grounding] dropped %d finding%s whose anchor did not survive',
         dropped, dropped === 1 ? '' : 's');
