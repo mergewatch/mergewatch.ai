@@ -495,7 +495,18 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Tear down
-        if: always()
+        # always() so a FAILED run still cleans up — but only when the suite
+        # actually set something up. Without the count gate this ran on every
+        # gate invocation, including ones that selected zero fixtures and
+        # touched nothing, and reset-env.sh then closed every open PR in the
+        # shared fixtures repo. That is how a docs-only merge closed
+        # fixtures#763, a human's fixture-authoring PR, four seconds into a
+        # gate run that did no work at all (#442).
+        #
+        # The blast radius is fixed at source in fixtures#765 (reset-env now
+        # only touches `fixture/*`). This is the other half: do not tear down
+        # what you did not set up.
+        if: always() && steps.select.outputs.count != '0'
         working-directory: fixtures-repo
         run: |
           # Always, including on failure: leaving ~10 open PRs behind would make
