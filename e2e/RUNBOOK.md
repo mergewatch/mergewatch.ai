@@ -3390,7 +3390,11 @@ Trigger by installing the App from the Marketplace listing (which processes the 
 
 ### E2E-98: #423 — oversized diffs skip with a reason, never hard-fail
 
-**Status:** 🚧 In review (#423).
+**Status:** ✅ SHIPPED (#426) — verified in production 2026-08-23 on `mergewatch/fixtures#708`.
+
+> **Verified run.** A 353KB machine-generated `tsconfig.tsbuildinfo` alongside a real source file carrying an off-by-one and a SQL injection. Logs: `Excluded 1 file(s) from diff: verify/tsconfig.tsbuildinfo` → `Review complete: 2 findings`. Both defects caught, verdict 1/5, no `ValidationException`.
+>
+> That run used **Sonnet 4.5** (`source=repo-config` — the fixtures repo pins it), the same 200K model that hard-failed `santthosh/orca#117`. So the fix is the artifact exclusion, not the larger context window — #425's Sonnet 4.6 is headroom, as claimed.
 
 **Behavior:** the review path now bounds its own input. Three layers, in order:
 
