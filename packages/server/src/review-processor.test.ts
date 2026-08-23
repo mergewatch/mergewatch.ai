@@ -18,7 +18,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     shouldSkipPR: vi.fn().mockReturnValue(null),
     shouldSkipByRules: vi.fn().mockReturnValue(null),
     fetchRepoConfig: vi.fn().mockResolvedValue(null),
-    filterDiff: vi.fn().mockReturnValue({ filteredDiff: 'diff', excludedFiles: [] }),
+    filterDiff: vi.fn().mockReturnValue({ filteredDiff: 'diff', excludedFiles: [], oversizedFiles: [] }),
     runReviewPipeline: vi.fn(),
     formatReviewComment: vi.fn().mockReturnValue('formatted comment'),
     buildWorkDoneSection: vi.fn().mockReturnValue(undefined),
@@ -1331,7 +1331,7 @@ describe('processReviewJob — work-done stats from filtered diff (#358)', () =>
       '-const c = 3;',
     ].join('\n');
     const { filterDiff, buildWorkDoneSection } = await import('@mergewatch/core');
-    (filterDiff as any).mockReturnValue({ filteredDiff, excludedFiles: ['src/api.generated.ts'] });
+    (filterDiff as any).mockReturnValue({ filteredDiff, excludedFiles: ['src/api.generated.ts'], oversizedFiles: [] });
 
     await processReviewJob(makeJob(), makeDeps());
 

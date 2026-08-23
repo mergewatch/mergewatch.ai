@@ -453,3 +453,17 @@ MergeWatch reads the file from the default branch, not from the PR's head branch
 <Warning>
 If you rename your default branch, MergeWatch automatically detects the new default on the next webhook. No action is required.
 </Warning>
+
+## `maxFileDiffKB`
+
+Maximum size, in KB, of a single file's diff section. Default `128`. A file whose diff exceeds this is dropped from review even if no `excludePatterns` entry matches it.
+
+`excludePatterns` only catches artifacts you have already met. This catches the next one: a hand-written source file with a 128KB+ diff essentially does not exist, so a section that large is generated, vendored, or minified.
+
+Dropped files are always reported in the logs, distinctly from pattern exclusions — a pattern match is your intent, a size drop is MergeWatch's.
+
+```yaml
+maxFileDiffKB: 128   # set 0 to disable the size rule entirely
+```
+
+Related: MergeWatch also refuses to review a diff that would exceed the configured model's context window, posting a neutral **"Review skipped — diff too large"** check that names the estimated size, the budget, and the model. Previously such a PR failed with a raw provider error.

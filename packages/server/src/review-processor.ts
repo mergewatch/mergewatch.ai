@@ -7,6 +7,7 @@ import {
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
   BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, resolveAppLogin, mergeScoreToReviewEvent,
+  checkInputBudget, describeOverBudget,
   buildInlineComments, extractInlineCommentTitle,
   fetchRepoConfig, fetchConventions,
   buildWorkDoneSection, computeReviewDelta,
@@ -486,9 +487,42 @@ export async function processReviewJob(
   // ── Filter excluded files from the diff ────
   // mergeConfig folds the deprecated rules.ignorePatterns into excludePatterns
   // at parse time — this is the authoritative single list.
-  const { filteredDiff, excludedFiles } = filterDiff(diff, config.excludePatterns);
+  const { filteredDiff, excludedFiles, oversizedFiles } = filterDiff(
+    diff, config.excludePatterns, config.maxFileDiffKB,
+  );
   if (excludedFiles.length > 0) {
     console.log(`Excluded ${excludedFiles.length} file(s) from diff: ${excludedFiles.join(', ')}`);
+  }
+  if (oversizedFiles.length > 0) {
+    // #423 — reported separately from pattern exclusions: a size drop is our
+    // decision, not the operator's, so it must be visible as ours.
+    console.log(
+      '[input-budget] dropped %d oversized file(s) over %dKB: %s',
+      oversizedFiles.length, config.maxFileDiffKB,
+      oversizedFiles.map((f) => `${f.file} (${Math.round(f.bytes / 1024)}KB)`).join(', '),
+    );
+  }
+
+  // ── #423 — input budget ──────────────────────────────────────────────────
+  // Self-hosted runs whatever LLM_MODEL names, which may be a model we have no
+  // window for; contextWindowFor falls back to the smaller tier deliberately,
+  // so an unknown model produces a visible skip rather than the opaque
+  // provider error this guard exists to replace.
+  const inputBudget = checkInputBudget(filteredDiff, config.model, config.maxTokensPerAgent);
+  if (!inputBudget.fits) {
+    const reason = describeOverBudget(inputBudget, config.model);
+    console.warn(`[input-budget] skipping ${repoFullName}#${prNumber}: ${reason}`);
+    await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', {
+      completedAt: new Date().toISOString(), skipReason: reason,
+    });
+    await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, new Date().toISOString());
+    await createCheckRun(octokit, owner, repo, headSha, {
+      status: 'completed',
+      conclusion: 'neutral',
+      title: 'Review skipped — diff too large',
+      summary: reason,
+    }, STAGE).catch((err) => console.warn('Failed to create skip check run:', err));
+    return;
   }
 
   const startTime = Date.now();

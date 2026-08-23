@@ -227,6 +227,7 @@ A **`—`** in the Tags column means the scenario has **no fixture directory** a
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` |
+| [E2E-98](#e2e-98-423--oversized-diffs-skip-with-a-reason-never-hard-fail) | Build artifacts excluded by default and oversized files dropped by size; a diff still over the model's context budget yields a neutral "diff too large" skip naming sizes and remedy, never a raw ValidationException (#423) | 4m | 60s | #426 | `tooling`, `skip` |
 | [E2E-97](#e2e-97-421--marketplace-purchase-recorded-and-attached) | A Marketplace `purchased` is recorded under `#MARKETPLACE` and attached to the installation on `installation.created`; redelivery does not double-record or move `purchasedAt`; `cancelled` revokes nothing (#421) | 5m | 60s | #422 | `marketplace` |
 | [E2E-96](#e2e-96-416--deterministic-grading-of-a-suite-run) | `grade-run.mjs` asserts a run against `expect.json` with no model, exits 1 on regression; UNGRADED is never PASS; `--compare` reports dev/prod divergence (#416) | 3m | n/a | fixtures#706 | `tooling` |
 | [E2E-94](#e2e-94-416--dev-and-prod-review-the-same-pr-without-colliding) | With both Apps installed on one repo, a single PR gets two independent reviews — separate comment markers, separate check runs, each stage updating only its own and re-running only from its own button; prod's identity is byte-identical to pre-#416 (#416) | 5m | 2m | #416 | — |
@@ -3384,6 +3385,39 @@ Trigger by installing the App from the Marketplace listing (which processes the 
 - ❌ A redelivery creates a second row or moves `purchasedAt` — attribution timestamps become meaningless
 - ❌ A `changed` / `pending_change` arrives without the `UNDER-SCOPED` warning — paid plans were added to the listing and nothing said so
 - ❌ A recording failure returns non-200 — GitHub retries, and a retry storm over an attribution record is self-inflicted
+
+---
+
+### E2E-98: #423 — oversized diffs skip with a reason, never hard-fail
+
+**Status:** 🚧 In review (#423).
+
+**Behavior:** the review path now bounds its own input. Three layers, in order:
+
+1. **Default `excludePatterns`** gained build artifacts — `*.tsbuildinfo`, `*.map`, `*.snap`, `__generated__/**`, `__snapshots__/**`, `generated/**`, `*.gen.*`, `*.pb.go`, `vendor/**`, `coverage/**`, `.next/**`, `*.wasm`.
+2. **`maxFileDiffKB`** (default 128) drops any single file whose diff section exceeds it, regardless of pattern — catching the *next* artifact, not just the ones we've met. Reported separately from pattern exclusions, because a pattern match is the operator's intent and a size drop is ours.
+3. **A pre-flight input budget** derived from the resolved model's context window. Over budget → a neutral "Review skipped — diff too large" check naming the sizes and what to do.
+
+Before this the diff went to the model unbounded: every fallback collapsed and the user got `ValidationException: Input is too long for requested model` — no findings, no partial result, no guidance.
+
+**Setup.** A PR containing a large generated file (a `tsconfig.tsbuildinfo` is the natural one — `santthosh/orca#117` had a 558KB one that was 80% of a 711KB diff).
+
+**Expected outcomes.**
+- [ ] The artifact is excluded and named in the logs: `Excluded N file(s) from diff: …`
+- [ ] The review **completes normally** on the remaining files — with the artifact gone, `orca#117`'s diff is ~35K tokens and fits even a 200K model
+- [ ] A file over `maxFileDiffKB` that matches no pattern is dropped and logged as `[input-budget] dropped N oversized file(s) over 128KB: name (NNNkB)` — distinct from the exclusion line
+- [ ] With a diff genuinely too large after both, the check run is **neutral**, titled `Review skipped — diff too large`, and the summary names the estimated tokens, the budget, the model, and suggests splitting the PR or using `excludePatterns`
+- [ ] That skip is recorded as `status: skipped` with the reason, and the PR is marked skipped in the lifecycle store
+- [ ] **No `ValidationException` reaches the user** on any path
+- [ ] An unknown/custom `LLM_MODEL` on self-hosted assumes the smaller 200K window and says `assumed` in the message, rather than optimistically overflowing
+- [ ] A normal PR is unaffected — no extra check runs, no behavior change
+
+**Failure modes.**
+- ❌ `Input is too long for requested model` still surfaces — the guard is not covering a path (agentic fetch, structured, or text)
+- ❌ An ordinary source file is dropped by `maxFileDiffKB` — the cap is too tight; 128KB should never match hand-written code
+- ❌ A size drop is reported as a pattern exclusion, or not reported at all — the operator can't tell why a file vanished from review
+- ❌ The skip is silent (no check run) — worse than the hard failure, because nothing signals that the PR went unreviewed
+- ❌ An unknown model is assumed generous and overflows — the fallback must be the *smaller* window
 
 ---
 
