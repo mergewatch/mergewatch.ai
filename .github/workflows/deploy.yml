@@ -76,10 +76,6 @@ on:
         type: string
         default: ''
 
-env:
-  # aws-actions/setup-sam@v2 still runs on Node.js 20; opt into Node.js 24
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 permissions:
   contents: read
   id-token: write # Required for OIDC authentication
@@ -119,7 +115,7 @@ jobs:
         run: pnpm run migrations:check
 
       - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
         with:
           use-installer: true
 
@@ -169,7 +165,7 @@ jobs:
         run: pnpm run build
 
       - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
         with:
           use-installer: true
 
@@ -552,7 +548,7 @@ jobs:
         run: pnpm run build
 
       - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
         with:
           use-installer: true
 
