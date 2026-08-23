@@ -3,10 +3,10 @@
 # =============================================================================
 #
 # Pipeline:
-#   push to main → build & test → deploy to dev → [30 min] → deploy to prod
+#   push to main → build & test → deploy to dev → [E2E gate] → [10 min] → deploy to prod
 #   (prod also deployable on-demand via workflow_dispatch with deploy_prod=true)
 #
-# The production gate is a 30-minute WAIT TIMER, not an approval requirement.
+# The production gate is a 10-minute WAIT TIMER, not an approval requirement.
 # Prod deploys on its own once the timer elapses; the window exists so a bad
 # merge can be stopped by cancelling the run, not so someone has to click
 # approve on every deploy.
@@ -18,7 +18,15 @@
 # pending per group). That very nearly shipped a merged-but-never-deployed
 # change: nothing anywhere reports "this landed on main but not in prod".
 #
-# With a timer the lock is held 30 minutes at most, and every merge reaches prod.
+# With a timer the lock is held 10 minutes at most, and every merge reaches prod.
+#
+# It was 30 until the E2E gate landed (#445). The window exists to catch what
+# nothing else does — and the gate now verifies dev before prod, so most of
+# that job is done before the timer starts. Shortened, not removed: the gate
+# selects fixtures by impact, so a docs-or-CI-only merge selects ZERO and
+# passes without checking anything. For those the timer is still the only
+# safety net. Revisit removing it when #447 makes a green gate reliably mean
+# something was verified.
 #
 # Concurrency is per-environment (`deploy-dev` / `deploy-prod`) rather than one
 # group for the whole workflow, so a prod job waiting out its timer no longer
@@ -45,7 +53,7 @@
 #
 # Required GitHub Environments:
 #   development            — no protection rules needed
-#   production             — "Wait timer" of 30 minutes, NO required reviewers.
+#   production             — "Wait timer" of 10 minutes, NO required reviewers.
 #                            Adding required reviewers back reintroduces the
 #                            parked-gate problem described above.
 #
@@ -275,7 +283,7 @@ jobs:
   # Stage 3: E2E gate against dev (#445)
   # =========================================================================
   # Runs the fixture suite against the just-deployed DEV app and blocks prod on
-  # the result. Before this, nothing verified dev before prod — the 30-minute
+  # the result. Before this, nothing verified dev before prod — the
   # timer was a window for a human to notice and cancel, not a gate.
   #
   # Selection is impact-scoped (`--changed-files`), automated-only, and
@@ -500,7 +508,7 @@ jobs:
   # =========================================================================
   # Runs after a successful dev deploy on every push to main, AND on a manual
   # workflow_dispatch with deploy_prod=true. It then waits out the "production"
-  # environment's 30-minute timer (#428 replaced required reviewers with a
+  # environment's 10-minute timer (#428 replaced required reviewers with a
   # timer; see the header for why).
   #
   # It is additionally gated on the E2E suite passing against dev. A skipped
@@ -521,7 +529,7 @@ jobs:
       && (github.event_name == 'push' || github.event.inputs.deploy_prod == 'true')
     environment: production
     # Serialized against other PROD deploys only. A job waiting out the
-    # environment's 30-minute timer holds this group, so back-to-back merges
+    # environment's 10-minute timer holds this group, so back-to-back merges
     # still reach prod in order — but they no longer hold up anyone's dev
     # deploy. Same reason as above for not cancelling in-flight deploys.
     concurrency:

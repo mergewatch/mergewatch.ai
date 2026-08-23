@@ -71,7 +71,7 @@ If `$ARGUMENTS` is empty, ask what to ship and stop.
 Merging is not the end of the pipeline. `main` deploys on its own:
 
 ```
-push to main -> build & test -> deploy-dev -> [E2E gate] -> [30 min timer] -> deploy-prod
+push to main -> build & test -> deploy-dev -> [E2E gate] -> [10 min timer] -> deploy-prod
 ```
 
 Nobody clicks approve (#428 replaced required reviewers with a wait timer), so a merged change reaches production whether or not anyone is watching. That is exactly why the tail has to be followed rather than assumed.
