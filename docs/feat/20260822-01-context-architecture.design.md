@@ -128,7 +128,7 @@ There is **no prompt caching anywhere** in the codebase (`grep cache_control|cac
 
 ## Still open
 
-### 1. Runtime shape — the one real cost of the checkout approach
+### 1. ~~Runtime shape~~ — settled 2026-08-23: container-image Lambda
 
 ```
 review-agent-prod:  1024 MB · 300s timeout · 512 MB /tmp · PackageType: Zip
@@ -141,6 +141,10 @@ review-agent-prod:  1024 MB · 300s timeout · 512 MB /tmp · PackageType: Zip
 | **Container-image Lambda** *(leaning)* | Keeps all SQS/event wiring; git in the image; `/tmp` to 10 GB; timeout to 900s. Smallest disruption — a `PackageType` change plus `EphemeralStorage`/`Timeout` bumps. |
 | Fargate/ECS | No 15-minute ceiling, persistent local cache, real disk. Bigger change; re-plumb the queue consumer. Graceful next step if reviews outgrow 15 min. |
 | isomorphic-git (pure JS) | No packaging change, but you lose `rg`/`blame` as subprocesses — which is most of the point. |
+
+**Decided 2026-08-23: container-image Lambda.** What removed the remaining doubt was checking the layer route: the `lambda-git` community layer is built against `amazonlinux:2` for nodejs10/12, so it does not cover nodejs20 on AL2023 — that route means building and maintaining our own git for AL2023, and it still leaves `ripgrep` unsolved. The image solves both at once and leaves every SQS/event wiring untouched.
+
+Sequenced in `20260822-01-context-architecture.plan.md` phase 2.
 
 ### 2. ~~Cache strategy~~ — settled 2026-08-23: clone per review
 
@@ -324,6 +328,6 @@ Measured during the discussion; recorded so a fresh session need not re-derive.
 
 ## Next step
 
-Turn this into a phased plan (`docs/feat/…plan.md`). Only open question 1 (runtime shape) remains, and it does not block phase 1.
+Phased plan: **`20260822-01-context-architecture.plan.md`**.
 
-Ordering is forced by the security item: **symlink containment lands before any tool reads a worktree.** After that, `invokeWithTools` behind `ILLMProvider`, then `search` + `read_file` as MCP tool definitions, then raise the round default to 3. The "immediate work" table is safe to start now.
+All four design questions are now settled. The plan's ordering is forced by two things: nothing in phase 3 can run without a git binary (phase 2), and nothing after phase 4 is affordable without prompt caching (phase 1.2).
