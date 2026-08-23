@@ -25,6 +25,27 @@ The `lambda-git` community layer is built against `amazonlinux:2` for nodejs10/1
 
 ---
 
+## Phase −1 — Make the gate real before relying on it
+
+**Decided 2026-08-23: #442 and #443 both complete before Phase 0 starts.**
+
+Every phase below is gated on `--tag correctness --automated`. That gate is currently missing the two checks closest to this work, and 23 of its fixtures cannot fail. Building on it first and widening it later would mean the early phases were never actually gated — and those are the phases that change prompt structure and runtime packaging, where a silent regression is hardest to attribute after the fact.
+
+| | What | Why it blocks |
+|---|---|---|
+| **#442** | Author the five documented-but-missing fixtures | E2E-98 (#423, oversized diffs skip rather than hard-fail) and E2E-99 (#401, malformed agent output disclosed) are the two checks most likely to catch a regression from this work. Neither currently runs. |
+| **#443** | DynamoDB + MCP assertion backends for `grade-run.mjs`; convert the manual fixtures | A `MANUAL_ONLY` fixture prints instructions rather than failing, so a run nobody followed is indistinguishable from a clean one. Takes the automated gate from 55 → 71 of 78. |
+
+**Acceptance:** `scripts/run-suite.sh --tag correctness --automated` resolves ≥ 71 fixtures, includes E2E-98 and E2E-99, and passes green against current `main`.
+
+That last clause matters on its own: a green baseline **before** any phase changes anything is what makes a later red result attributable. Without it the first failure is ambiguous between "this phase broke it" and "it was already broken".
+
+### If the critical path needs shortening
+
+The parts of #443 with least bearing on #424 are the two dashboard pricing conversions (E2E-66/67) and the marketplace fixture (E2E-97 in #442) — none touch the review pipeline. The DynamoDB backend is the item to keep, since it alone moves 16 of the 23.
+
+---
+
 ## Phase 0 — Verify the two assumptions the economics rest on
 
 Independent of everything else and of each other. Both are live-invoke checks in dev, the way #414 was done. **Neither blocks phase 1.**
@@ -209,6 +230,9 @@ First phase that creates a worktree. **#432 must be merged** — it is, so this 
 ## Dependency graph
 
 ```
+#442 ─┬─► (gate is real) ──► everything below
+#443 ─┘
+
 0.1 ─┐
 0.2 ─┼─(inform)─┐
 0.3 ─┘          │
@@ -236,7 +260,9 @@ scripts/run-suite.sh --tag correctness --automated             # 55 — the gate
 
 **Gate on `--automated`.** A `MANUAL_ONLY` fixture does not fail — it prints instructions, so a run nobody followed looks identical to a run where everything passed. The 23 manual ones are run at phase boundaries that touch their area, not on every phase.
 
-They are manual because `grade-run.mjs` asserts GitHub PR state and nothing else, so anything asserting on DynamoDB, MCP, or a rendered page has nowhere to put its expectation (#443). A DynamoDB backend alone would take the gate from 55 to 71 — worth doing, but it does not block any phase here.
+They are manual because `grade-run.mjs` asserts GitHub PR state and nothing else, so anything asserting on DynamoDB, MCP, or a rendered page has nowhere to put its expectation (#443). A DynamoDB backend alone takes the gate from 55 to 71.
+
+**#443 is a prerequisite, not a parallel improvement** — decided 2026-08-23. See Phase −1.
 
 The 20 excluded fixtures are model-judgment (E2E-20, -36, -48, -54) or presentation-only (E2E-42–47, -57, -60, -62–65). They are left out because they would make the gate flaky, not because they matter less. A gate that goes yellow for non-regressions stops being read, and then it is not a gate.
 
@@ -251,7 +277,7 @@ The 20 excluded fixtures are model-judgment (E2E-20, -36, -48, -54) or presentat
 
 **E2E-98 (#423 — oversized diffs skip with a reason, never hard-fail)** and **E2E-99 (#401 — malformed agent output disclosed, not counted as suppression)** are documented in the runbook and tagged `correctness`, but **neither has a fixture directory**, so neither runs.
 
-Those two are the closest existing checks to what #424 changes — #423 *is* the bug that started this work. Authoring them is a prerequisite for the gate meaning anything on these phases, and belongs before Phase 1.
+Those two are the closest existing checks to what #424 changes — #423 *is* the bug that started this work. Authoring them is a prerequisite for the gate meaning anything on these phases. See Phase −1.
 
 ### When a phase legitimately changes expected behaviour
 
