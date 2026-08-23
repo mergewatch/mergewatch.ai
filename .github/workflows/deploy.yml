@@ -420,24 +420,37 @@ jobs:
         run: |
           xargs scripts/run-suite.sh < /tmp/sel.txt
 
-      - name: Return the checkout to main
+      - name: Restore the tooling checkout
         if: steps.select.outputs.count != '0'
         working-directory: fixtures-repo
         run: |
-          # run-suite leaves the repo on the LAST fixture branch, which is cut
-          # from the e2e-baseline tag — and that tag predates the tooling. It
-          # has no grade-run.mjs, no select-fixtures.sh, and none of the 17
-          # expect.json files.
+          # Two things move the working tree away from the tooling:
           #
-          # The visible symptom was `grade-run.mjs: No such file or directory`
-          # (exit 127). The dangerous one was invisible: had the script been
-          # found, every fixture would have been UNGRADED for want of an
-          # expect.json, and grade-run exits 0 on UNGRADED — a green gate that
-          # verified nothing.
+          #  1. run-suite leaves the repo on the LAST fixture branch, and
+          #     fixture branches are cut from the e2e-baseline tag.
+          #  2. reset-env.sh runs `git reset --hard e2e-baseline` ON MAIN, so
+          #     the local main BRANCH POINTER is the baseline commit too.
           #
-          # .e2e/ is gitignored, so the run manifest survives the switch.
-          git checkout -f main
-          git log -1 --oneline
+          # e2e-baseline predates the tooling: no grade-run.mjs, no
+          # await-reviews.mjs, no select-fixtures.sh, and none of the 17
+          # expect.json files. So `git checkout main` restores nothing — that
+          # was the previous attempt at this step, and it failed identically.
+          #
+          # origin/main is the one ref reset-env does not touch.
+          #
+          # The invisible risk is worse than the 127: with the scripts present
+          # but expect.json missing, every fixture grades UNGRADED, and
+          # grade-run exits 0 on UNGRADED — a green gate that verified nothing.
+          #
+          # .e2e/ is gitignored, so the run manifest survives.
+          git fetch --quiet origin main
+          git checkout -f --detach origin/main
+          echo "tooling at: $(git log -1 --oneline)"
+          test -f scripts/grade-run.mjs    || { echo "::error::grade-run.mjs missing after restore"; exit 1; }
+          test -f scripts/await-reviews.mjs || { echo "::error::await-reviews.mjs missing after restore"; exit 1; }
+          n=$(ls fixtures/*/expect.json 2>/dev/null | wc -l)
+          [ "$n" -gt 0 ] || { echo "::error::no expect.json files — every fixture would grade UNGRADED and pass"; exit 1; }
+          echo "restored $n expect.json file(s)"
 
       - name: Wait for every review to complete
         if: steps.select.outputs.count != '0'
