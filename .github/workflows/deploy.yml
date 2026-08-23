@@ -3,8 +3,22 @@
 # =============================================================================
 #
 # Pipeline:
-#   push to main → build & test → deploy to dev → deploy to prod (manual approval gate)
+#   push to main → build & test → deploy to dev → [30 min] → deploy to prod
 #   (prod also deployable on-demand via workflow_dispatch with deploy_prod=true)
+#
+# The production gate is a 30-minute WAIT TIMER, not an approval requirement.
+# Prod deploys on its own once the timer elapses; the window exists so a bad
+# merge can be stopped by cancelling the run, not so someone has to click
+# approve on every deploy.
+#
+# It used to be `required_reviewers`, and that failed in a specific way: a run
+# parked at the gate holds the `deploy-pipeline` concurrency lock, so every
+# later run queues behind it — including their DEV deploys. One run sat unapproved
+# for ~9.5 hours and GitHub cancelled the next run outright (only one run may be
+# pending per group). That very nearly shipped a merged-but-never-deployed
+# change: nothing anywhere reports "this landed on main but not in prod".
+#
+# With a timer the lock is held 30 minutes at most, and every merge reaches prod.
 #
 # Required GitHub Secrets:
 #   AWS_ROLE_ARN           — IAM role ARN for OIDC (e.g. arn:aws:iam::123456789012:role/mergewatch-github-deploy)
@@ -16,7 +30,9 @@
 #
 # Required GitHub Environments:
 #   development            — no protection rules needed
-#   production             — add "Required reviewers" for manual approval gate
+#   production             — "Wait timer" of 30 minutes, NO required reviewers.
+#                            Adding required reviewers back reintroduces the
+#                            parked-gate problem described above.
 #
 # Note: The Amplify web dashboard is managed via the AWS Console, not this pipeline.
 # =============================================================================
