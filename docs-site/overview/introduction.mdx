@@ -97,7 +97,7 @@ The managed SaaS runs on a serverless stack in MergeWatch's AWS account:
 - **AWS Lambda** — WebhookHandler (512 MB / 30 s) and ReviewAgent (1024 MB / 300 s)
 - **Amazon DynamoDB** — review state, repo config, user data
 - **API Gateway** — GitHub webhook receiver
-- **Amazon Bedrock** — Claude Sonnet (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`)
+- **Amazon Bedrock** — Claude Sonnet (`us.anthropic.claude-sonnet-4-6`)
 
 Configuration lives in a `.mergewatch.yml` file at the root of each repository. The [dashboard](/dashboard/overview) provides a UI for monitoring reviews, managing repos, and adjusting settings.
 

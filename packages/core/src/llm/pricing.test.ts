@@ -41,12 +41,12 @@ describe('estimateCost', () => {
       expect(estimateCost('claude-opus-4-6', M, M)).toBeCloseTo(30, 6);
     });
 
-    it('Sonnet 4.5 — the deployment default — bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
+    it('Sonnet 4.5 bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
       expect(estimateCost('us.anthropic.claude-sonnet-4-5-20250929-v1:0', M, M)).toBeCloseTo(19.8, 6);
       expect(estimateCost('claude-sonnet-4-5-20250929', M, M)).toBeCloseTo(18, 6);
     });
 
-    it('Sonnet 4.6 bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
+    it('Sonnet 4.6 — the deployment default — bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
       expect(estimateCost('us.anthropic.claude-sonnet-4-6', M, M)).toBeCloseTo(19.8, 6);
       expect(estimateCost('claude-sonnet-4-6', M, M)).toBeCloseTo(18, 6);
     });

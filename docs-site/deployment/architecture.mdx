@@ -14,7 +14,7 @@ graph TD
     A[GitHub] -->|pull_request webhook| B[API Gateway]
     B --> C[WebhookHandler Lambda<br/>512 MB · 30s timeout]
     C -->|InvocationType.Event<br/>async invoke| D[ReviewAgent Lambda<br/>1024 MB · 300s timeout]
-    D -->|Promise.all — 8 agents| E[Amazon Bedrock<br/>us.anthropic.claude-sonnet-4-5-20250929-v1:0]
+    D -->|Promise.all — 8 agents| E[Amazon Bedrock<br/>us.anthropic.claude-sonnet-4-6]
     D -->|Write review record| F[DynamoDB<br/>90-day TTL]
     D -->|Post comments + check run| A
 ```
@@ -28,7 +28,7 @@ graph TD
 | ReviewAgent | Lambda (Node 20, ARM64) | 1024 MB, 300s timeout | Fetch diff, fan out to 8 agents, post results |
 | DynamoDB | On-demand tables | 90-day TTL on reviews | Installation config, review history |
 | SSM Parameter Store | SecureString | KMS-encrypted | GitHub App credentials |
-| Bedrock | Model inference | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Powers all 8 review agents |
+| Bedrock | Model inference | `us.anthropic.claude-sonnet-4-6` | Powers all 8 review agents |
 
 ### SaaS latency breakdown
 

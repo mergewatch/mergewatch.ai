@@ -27,7 +27,7 @@ If MergeWatch runs on EC2, ECS, or Fargate, you can use an **IAM instance profil
 
 ## Default model
 
-MergeWatch uses **`us.anthropic.claude-sonnet-4-5-20250929-v1:0`** for review agents by default, and **`us.anthropic.claude-haiku-4-5-20251001-v1:0`** as the `lightModel` for low-complexity tasks such as summary generation. Both are **cross-region inference profiles** that route requests to the nearest available region.
+MergeWatch uses **`us.anthropic.claude-sonnet-4-6`** for review agents by default, and **`us.anthropic.claude-haiku-4-5-20251001-v1:0`** as the `lightModel` for low-complexity tasks such as summary generation. Both are **cross-region inference profiles** that route requests to the nearest available region.
 
 Override either with `model:` / `lightModel:` in `.mergewatch.yml` — see the [configuration reference](/configuration/mergewatch-yml).
 
@@ -65,7 +65,7 @@ Bedrock supports **cross-region inference profiles** that automatically route re
 | `eu.` | European regions (eu-west-1) |
 | `ap.` | Asia Pacific regions (ap-northeast-1, ap-southeast-1, ap-southeast-2) |
 
-The default model `us.anthropic.claude-sonnet-4-5-20250929-v1:0` uses the `us.` prefix, routing across US regions. If your deployment is in Europe or Asia Pacific, swap the prefix for the matching geography.
+The default model `us.anthropic.claude-sonnet-4-6` uses the `us.` prefix, routing across US regions. If your deployment is in Europe or Asia Pacific, swap the prefix for the matching geography.
 
 <Warning>
 Not every model is available as an inference profile in every geography, and the availability list changes over time. Before setting a prefixed ID, confirm the exact profile exists in your account — the [Bedrock Model Access console](https://console.aws.amazon.com/bedrock/home#/modelaccess) lists the inference profile IDs you can actually call. An ID that is valid in `us.` may not exist under `eu.` or `ap.`.
@@ -75,7 +75,7 @@ Not every model is available as an inference profile in every geography, and the
 
 ```bash
 # US cross-region (default)
-LLM_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+LLM_MODEL=us.anthropic.claude-sonnet-4-6
 
 # Europe cross-region — substitute a profile ID your account lists
 LLM_MODEL=eu.anthropic.<model-id>

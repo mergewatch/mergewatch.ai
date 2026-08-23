@@ -190,7 +190,7 @@ export interface MergeWatchConfig {
 }
 
 export const DEFAULT_CONFIG: MergeWatchConfig = {
-  model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  model: 'us.anthropic.claude-sonnet-4-6',
   lightModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   maxTokensPerAgent: 4096,
   agents: {
