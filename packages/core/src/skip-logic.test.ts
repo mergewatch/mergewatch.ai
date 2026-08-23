@@ -23,11 +23,30 @@ describe('shouldSkipPR', () => {
     expect(result).toContain('lock files');
   });
 
-  it('skips a single CI config file (.github/workflows/ci.yml)', () => {
-    const result = shouldSkipPR(['.github/workflows/ci.yml']);
-    expect(result).not.toBeNull();
-    // .github/** is matched by SKIP_PATTERNS; categorization may vary
-    expect(result).toMatch(/config|generated\/trivial/);
+  // #455 — this test previously asserted the OPPOSITE, that a workflow-only PR
+  // is skipped. It was inverted deliberately, not relaxed: a GitHub Actions
+  // workflow is executable configuration running with repository credentials,
+  // and treating it as a "CI tweak" meant the file that deploys to production
+  // was the one file never reviewed.
+  it('REVIEWS a workflow-only PR — executable config is not trivial (#455)', () => {
+    expect(shouldSkipPR(['.github/workflows/ci.yml'])).toBeNull();
+    expect(shouldSkipPR(['.github/workflows/deploy.yml'])).toBeNull();
+    expect(shouldSkipPR(['.github/actions/setup/action.yml'])).toBeNull();
+  });
+
+  it('REVIEWS other automation config that decides what runs or merges (#455)', () => {
+    // dependabot can enable automerge; CODEOWNERS decides who must approve;
+    // renovate.json can turn on automerge for dependency PRs.
+    expect(shouldSkipPR(['.github/dependabot.yml'])).toBeNull();
+    expect(shouldSkipPR(['.github/CODEOWNERS'])).toBeNull();
+    expect(shouldSkipPR(['renovate.json'])).toBeNull();
+    expect(shouldSkipPR(['.renovaterc.json'])).toBeNull();
+  });
+
+  it('still skips inert GitHub metadata — prose and forms (#455)', () => {
+    expect(shouldSkipPR(['.github/ISSUE_TEMPLATE/bug.md'])).not.toBeNull();
+    expect(shouldSkipPR(['.github/PULL_REQUEST_TEMPLATE.md'])).not.toBeNull();
+    expect(shouldSkipPR(['.github/FUNDING.yml'])).not.toBeNull();
   });
 
   // ─── Non-trivial files ───────────────────────────────────────────────────
@@ -60,10 +79,20 @@ describe('shouldSkipPR', () => {
     expect(result).not.toBeNull();
   });
 
-  it('skips config files (tsconfig.json)', () => {
-    const result = shouldSkipPR(['tsconfig.json']);
-    expect(result).not.toBeNull();
-    expect(result).toContain('config');
+  // #455 — also inverted. tsconfig.json changes compilation semantics: turning
+  // off `strict`, or repointing `paths`, weakens type safety across every file
+  // in the repo while showing up as a one-line diff in none of them.
+  it('REVIEWS tsconfig.json — it changes what the compiler enforces (#455)', () => {
+    expect(shouldSkipPR(['tsconfig.json'])).toBeNull();
+    expect(shouldSkipPR(['packages/core/tsconfig.json'])).toBeNull();
+  });
+
+  it('still skips editor and formatter preferences (#455)', () => {
+    // The surviving test for "trivial": changing one cannot change what
+    // executes, what CI enforces, or what merges without review.
+    expect(shouldSkipPR(['.editorconfig'])).not.toBeNull();
+    expect(shouldSkipPR(['.vscode/settings.json'])).not.toBeNull();
+    expect(shouldSkipPR(['.prettierrc'])).not.toBeNull();
   });
 
   it('skips prettierrc config files', () => {

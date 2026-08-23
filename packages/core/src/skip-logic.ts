@@ -45,8 +45,11 @@ export const SKIP_PATTERNS = [
   '**/node_modules/**',
   '**/.gitignore',
   '**/.gitattributes',
-  // Config-only files (version bumps, CI tweaks)
-  '**/.github/**',
+  // Editor and formatting preferences.
+  //
+  // These are the only config files still treated as trivial, and the test is
+  // narrow: changing one cannot change what executes, what is enforced in CI,
+  // or what merges without review. They alter how a human's editor behaves.
   '**/.vscode/**',
   '**/.idea/**',
   '**/.editorconfig',
@@ -54,9 +57,17 @@ export const SKIP_PATTERNS = [
   '**/.prettierignore',
   '**/.prettierrc*',
   '**/.eslintrc*',
-  '**/tsconfig.json',
-  '**/renovate.json',
-  '**/.renovaterc*',
+
+  // Inert GitHub metadata — prose and forms, not automation.
+  //
+  // `.github/**` as a whole used to be here under the heading "version bumps,
+  // CI tweaks". That comment described the intent; the pattern was far wider,
+  // and it exempted `.github/workflows/**` — executable configuration that runs
+  // with repository credentials, and the single most valuable file in most
+  // repositories to review. See #455.
+  '**/.github/ISSUE_TEMPLATE/**',
+  '**/.github/PULL_REQUEST_TEMPLATE*',
+  '**/.github/FUNDING.yml',
 ];
 
 /**
