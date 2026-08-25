@@ -1126,3 +1126,28 @@ describe('inline body cap invariant across stages (#474 review)', () => {
     expect(c.body.startsWith('<!-- mergewatch-inline')).toBe(true);
   });
 });
+
+describe('inline cap holds at the fingerprint boundary (#474 review)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  // The review flagged the boundary where `marked.length` approaches
+  // MAX_COMMENT_BODY - INLINE_MIN_PROSE. Its own worked examples all landed on
+  // exactly 65,536 — at the cap, never over — so rather than argue the
+  // arithmetic, sweep the boundary and assert the invariant empirically.
+  // Raw length L yields marked = 17 + 4*ceil(L/3); L ≈ 48,389 puts that at the
+  // guard threshold, so this sweep straddles it.
+  it('never exceeds the cap across the whole boundary region', () => {
+    for (let raw = 48_370; raw <= 48_410; raw++) {
+      const [c] = buildInlineComments([{
+        file: 'src/app.ts', line: 10, severity: 'critical' as const,
+        title: 'T'.repeat(1_000),
+        description: 'd'.repeat(80_000),
+        suggestion: '',
+        fingerprint: 'f'.repeat(raw),
+      }], ['src/app.ts']);
+      expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    }
+  });
+});
