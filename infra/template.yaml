@@ -104,6 +104,11 @@ Globals:
         # DynamoDB table names — injected so Lambda code doesn't hardcode them
         INSTALLATIONS_TABLE: !Ref InstallationsTable
         REVIEWS_TABLE: !Ref ReviewsTable
+        # #471 — the filter outcome ledger. A SEPARATE table, not a suffixed
+        # sort key on ReviewsTable: queryByPR matches begins_with("42#"), so a
+        # trace row there would come back as a review and could evict a real
+        # one from the previous-review lookup under its small Limit.
+        REVIEW_TRACES_TABLE: !Ref ReviewTracesTable
         API_KEYS_TABLE: !Ref ApiKeysTable
         SESSIONS_TABLE: !Ref SessionsTable
         # FB-A / FB-E: shared across ReviewAgent (writes) and InsightsRollup (reads/writes).
@@ -431,6 +436,7 @@ Resources:
           STAGE: !Ref Stage
           INSTALLATIONS_TABLE: !Ref InstallationsTable
           REVIEWS_TABLE: !Ref ReviewsTable
+          REVIEW_TRACES_TABLE: !Ref ReviewTracesTable
           API_KEYS_TABLE: !Ref ApiKeysTable
           SESSIONS_TABLE: !Ref SessionsTable
           DEFAULT_BEDROCK_MODEL_ID: !Ref DefaultBedrockModelId
@@ -635,6 +641,52 @@ Resources:
   #   - Get review for specific PR+commit: PK=repoFullName, SK=prNumber#sha
   #   - List all reviews for a repo:       PK=repoFullName (query)
   #   - List reviews for a PR:             PK=repoFullName, SK begins_with("42#")
+
+  # #471 — filter outcome ledger, one row per review.
+  #
+  # Separate from ReviewsTable by necessity, not preference: queryByPR uses
+  # begins_with(prNumberCommitSha, "42#") and every call site passes a small
+  # Limit, so a `42#abc123#TRACE` row on that table would be returned as a
+  # review and could push a real one out of the previous-review lookup feeding
+  # previousFindings, the delta and FP-B. It also keeps traces clear of the
+  # 400KB item cap.
+  #
+  # TTL is ENABLED here, unlike ReviewsTable where the block is commented out:
+  # a trace is a debugging and trust artifact with a 30-day life, not a system
+  # of record. The application sets `ttl` via buildReviewTrace.
+  ReviewTracesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'mergewatch-review-traces-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+
+      KeySchema:
+        - AttributeName: repoFullName
+          KeyType: HASH
+        - AttributeName: prNumberCommitSha
+          KeyType: RANGE
+
+      AttributeDefinitions:
+        - AttributeName: repoFullName
+          AttributeType: S
+        - AttributeName: prNumberCommitSha
+          AttributeType: S
+
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: MergeWatch
+        - Key: Stage
+          Value: !Ref Stage
+
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
 
   ReviewsTable:
     Type: AWS::DynamoDB::Table
@@ -1134,6 +1186,7 @@ Resources:
                   # Table ARNs
                   - !GetAtt InstallationsTable.Arn
                   - !GetAtt ReviewsTable.Arn
+                  - !GetAtt ReviewTracesTable.Arn
                   - !GetAtt ApiKeysTable.Arn
                   - !GetAtt SessionsTable.Arn
                   - !GetAtt FindingDispositionsTable.Arn
@@ -1144,6 +1197,7 @@ Resources:
                   # Index ARNs (for future GSIs)
                   - !Sub '${InstallationsTable.Arn}/index/*'
                   - !Sub '${ReviewsTable.Arn}/index/*'
+                  - !Sub '${ReviewTracesTable.Arn}/index/*'
                   - !Sub '${ApiKeysTable.Arn}/index/*'
                   - !Sub '${SessionsTable.Arn}/index/*'
                   - !Sub '${FindingDispositionsTable.Arn}/index/*'
@@ -1259,6 +1313,10 @@ Outputs:
   InstallationsTableName:
     Description: Name of the DynamoDB installations table
     Value: !Ref InstallationsTable
+
+  ReviewTracesTableName:
+    Description: DynamoDB table storing per-review filter outcome ledgers (#471)
+    Value: !Ref ReviewTracesTable
 
   ReviewsTableName:
     Description: Name of the DynamoDB reviews table

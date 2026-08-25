@@ -63,6 +63,7 @@ import {
   languagesFromFiles,
   findingMatchKeys,
   resolveReviewModelId,
+  buildReviewTrace,
 } from '@mergewatch/core';
 import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
@@ -77,7 +78,9 @@ import {
   buildWorkDoneSection, computeReviewDelta, resolveAppLogin,
   checkInputBudget, describeOverBudget,
 } from '@mergewatch/core';
-import { DynamoInstallationStore } from '@mergewatch/storage-dynamo';
+import { DynamoInstallationStore,
+  DynamoReviewTraceStore,
+} from '@mergewatch/storage-dynamo';
 import {
 
   DynamoReviewStore,
@@ -121,6 +124,10 @@ const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://mergewatch
 
 const installationStore = new DynamoInstallationStore(dynamodb, INSTALLATIONS_TABLE);
 const reviewStore = new DynamoReviewStore(dynamodb, REVIEWS_TABLE);
+// #471 — separate table, separate store. Writes are best-effort (see below):
+// a trace is a debugging artifact and must never be able to fail a review.
+const REVIEW_TRACES_TABLE = process.env.REVIEW_TRACES_TABLE ?? 'mergewatch-review-traces';
+const reviewTraceStore = new DynamoReviewTraceStore(dynamodb, REVIEW_TRACES_TABLE);
 // FB-A — per-finding cross-PR dispositions. Best-effort writes; if the
 // table doesn't exist yet (mid-deploy state) the store layer swallows.
 const dispositionStore = new DynamoFindingDispositionStore(dynamodb, FINDING_DISPOSITIONS_TABLE);
@@ -1071,6 +1078,15 @@ export async function handler(
       : undefined;
 
     const completedAt = new Date().toISOString();
+
+    // #471 — persist the filter ledger. Deliberately AFTER the comment is
+    // posted and wrapped so it cannot fail the review: the developer getting
+    // their review matters, the debugging artifact does not.
+    await reviewTraceStore
+      .put(buildReviewTrace(repoFullName, prNumberCommitSha, result.filterOutcomes, new Date()))
+      .catch((err: unknown) => {
+        console.warn('[filter-trace] failed to persist trace for %s %s:', repoFullName, prNumberCommitSha, err);
+      });
 
     await reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'complete', {
       commentId,

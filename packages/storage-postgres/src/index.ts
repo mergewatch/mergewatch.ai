@@ -1,5 +1,6 @@
 export { PostgresInstallationStore } from './installation-store.js';
 export { PostgresReviewStore } from './review-store.js';
+export { PostgresReviewTraceStore } from './review-trace-store.js';
 export { PostgresFindingDispositionStore } from './finding-disposition-store.js';
 export { PostgresFPInsightStore } from './fp-insight-store.js';
 export { PostgresPRLifecycleStore } from './pr-lifecycle-store.js';

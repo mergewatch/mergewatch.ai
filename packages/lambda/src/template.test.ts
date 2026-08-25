@@ -24,6 +24,9 @@ describe('infra/template.yaml — Globals.Function.Environment.Variables', () =>
     'FP_INSIGHTS_TABLE',
     'INSTALLATIONS_TABLE',
     'REVIEWS_TABLE',
+    // #471 — same #181 failure mode: a trace writer resolving to the
+    // unsuffixed default name would ResourceNotFoundException into a void.
+    'REVIEW_TRACES_TABLE',
   ])('exposes %s as a shared Lambda env var', (varName) => {
     expect(globalsBlock).toMatch(new RegExp(`^\\s+${varName}:`, 'm'));
   });

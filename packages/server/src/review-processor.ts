@@ -20,6 +20,7 @@ import {
   parseEnvModelPricing,
   selectOrgAgentsForReview, unionCustomAgents, blockingCriticalAgents, languagesFromFiles,
   findingMatchKeys,
+  buildReviewTrace,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 // #416 — deployment stage, so review artifacts (comment marker, check-run
@@ -295,7 +296,7 @@ async function handleInlineReplyJob(
 
 export async function processReviewJob(
   job: ReviewJobPayload,
-  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'satisfactionStore' | 'costStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
+  deps: Pick<WebhookDeps, 'installationStore' | 'reviewStore' | 'reviewTraceStore' | 'dispositionStore' | 'fpInsightStore' | 'prLifecycleStore' | 'satisfactionStore' | 'costStore' | 'authProvider' | 'llm' | 'dashboardBaseUrl'>,
 ): Promise<void> {
   const { installationId, owner, repo, prNumber, mode } = job;
   const instId = String(installationId);
@@ -917,6 +918,18 @@ export async function processReviewJob(
           (severityRank[f.severity] ?? 99) < (severityRank[top] ?? 99) ? f.severity : top,
         result.findings[0].severity) as 'info' | 'warning' | 'critical'
       : undefined;
+
+    // #471 — persist the filter ledger. After the comment is posted and
+    // wrapped so it can never fail the review: the developer getting their
+    // review matters, the debugging artifact does not. Optional store, so a
+    // deployment that has not wired it is simply unaffected.
+    if (deps.reviewTraceStore) {
+      await deps.reviewTraceStore
+        .put(buildReviewTrace(repoFullName, prNumberCommitSha, result.filterOutcomes, new Date()))
+        .catch((err: unknown) => {
+          console.warn('[filter-trace] failed to persist trace for %s %s:', repoFullName, prNumberCommitSha, err);
+        });
+    }
 
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'complete', {
       completedAt: new Date().toISOString(),

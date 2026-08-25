@@ -35,6 +35,10 @@
  * maxFileSize: 500
  * ```
  */
+// Type-only, and erased at compile time — filter-trace.ts imports ReviewTraceItem
+// back from here, so a value import would be a runtime cycle. This is not.
+import type { FindingOutcome } from '../filter-trace.js';
+
 export interface RepoConfig {
   /** Whether MergeWatch is enabled for this repo (default: true) */
   enabled?: boolean;
@@ -462,6 +466,41 @@ export interface FindingEvidence {
    * category and is noise, while "security + bugs agreed" is real signal.
    */
   agents?: string[];
+}
+
+/**
+ * #471 — one review's filter ledger, persisted.
+ *
+ * Deliberately its OWN table rather than a sort-key row beside the review.
+ * `queryByPR` matches on `begins_with(prNumberCommitSha, "42#")`, so any
+ * suffixed key like `42#abc123#TRACE` is returned as if it were a review — and
+ * every call site passes `limit: 5`, so trace rows could evict real reviews
+ * from the previous-review lookup that feeds `previousFindings`, the delta and
+ * FP-B. That is a silent correctness regression inside the review pipeline,
+ * not a query annoyance.
+ */
+export interface ReviewTraceItem {
+  /** Same partition key as the review this describes. */
+  repoFullName: string;
+  /** Same sort key as the review: `42#abc123`. */
+  prNumberCommitSha: string;
+  /** The ledger. Capped — see `truncated`. */
+  outcomes: FindingOutcome[];
+  /**
+   * True when `outcomes` holds fewer rows than the review actually produced.
+   * A truncated trace must never read as complete: this is the whole point of
+   * #401, where a bare number described a malfunction as productive filtering.
+   */
+  truncated?: boolean;
+  /** How many outcomes existed before the cap. Present only when truncated. */
+  totalOutcomes?: number;
+  createdAt: string;
+  /**
+   * Dynamo TTL (epoch seconds). Shorter than a review's retention: this is a
+   * debugging and trust artifact, not a system of record (#295 is that).
+   * Postgres has no native TTL — see `review_traces.expires_at`.
+   */
+  ttl?: number;
 }
 
 /** A single finding stored on a ReviewItem (matches comment-formatter Finding). */
