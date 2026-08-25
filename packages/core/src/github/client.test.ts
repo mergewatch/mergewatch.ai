@@ -1067,3 +1067,35 @@ describe('inline comment body size guard (#468)', () => {
     );
   });
 });
+
+describe('inline fingerprint bounding (#474 review)', () => {
+  const changedFiles = ['src/app.ts'];
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('drops an absurd fingerprint rather than emitting a body over the cap', () => {
+    // A "code line" this long is pathological, but the fingerprint is derived
+    // from model output and was the one field left unbounded. Slicing to
+    // MAX - fingerprint.length - 1 went NEGATIVE here, and slice(0, -n) trims
+    // from the end rather than returning '' — so the body stayed long and the
+    // assembled comment blew the cap, the exact failure this PR prevents.
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'T', description: 'd', suggestion: '', fingerprint: 'x'.repeat(80_000),
+    }], changedFiles);
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(c.body).not.toContain('mw-fp');
+  });
+
+  it('keeps a large-but-usable fingerprint intact', () => {
+    const fp = 'y'.repeat(1_000);
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'T', description: 'd'.repeat(50_000), suggestion: '', fingerprint: fp,
+    }], changedFiles);
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(extractInlineCommentFingerprint(c.body)).toBe(fp);
+  });
+});

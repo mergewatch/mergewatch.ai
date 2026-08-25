@@ -79,6 +79,12 @@ const INLINE_FIELD_MAX = 4_000;
 /** Inline finding titles are model-generated and otherwise unbounded. */
 const INLINE_TITLE_MAX = 500;
 
+/**
+ * Prose an inline comment must still be able to carry. A fingerprint that
+ * cannot leave at least this much room is not worth the comment it would cost.
+ */
+const INLINE_MIN_PROSE = 1_000;
+
 const HARD_TRUNCATION_NOTICE = "\n\n_Truncated to fit GitHub's comment size limit._";
 
 /** Cut `value` to `max` characters, marking the cut so it never reads as complete. */
@@ -618,18 +624,35 @@ export function buildInlineComments(
  */
 function buildInlineCommentBody(
   marker: string,
-  f: Pick<InlineCommentCandidate, 'title' | 'description' | 'suggestion' | 'fingerprint'>,
+  f: Pick<InlineCommentCandidate, 'file' | 'line' | 'title' | 'description' | 'suggestion' | 'fingerprint'>,
 ): string {
   const title = clampField(f.title, INLINE_TITLE_MAX);
   const description = clampField(f.description, INLINE_FIELD_MAX);
   const suggestion = f.suggestion ? clampField(f.suggestion, INLINE_FIELD_MAX) : '';
-  const fingerprint = f.fingerprint
+  const marked = f.fingerprint
     ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->`
     : '';
 
+  // The fingerprint is derived from a model-supplied code line, so it is as
+  // unbounded as the prose around it. If it cannot leave room for the finding
+  // it annotates, drop it: losing re-review matching on one pathological
+  // finding beats emitting a body over the cap and losing the comment whole.
+  const fingerprint = marked.length <= MAX_COMMENT_BODY - INLINE_MIN_PROSE ? marked : '';
+  if (marked && !fingerprint) {
+    console.warn(
+      'Inline fingerprint for %s:%d is %d chars — dropping it to keep the comment postable.',
+      f.file,
+      f.line,
+      marked.length,
+    );
+  }
+
   let body = `${marker}\n**🔴 ${title}**\n\n${description}${suggestion ? `\n\n> **Suggestion:** ${suggestion}` : ''}`;
   if (body.length + fingerprint.length > MAX_COMMENT_BODY) {
-    body = `${body.slice(0, MAX_COMMENT_BODY - fingerprint.length - 1)}…`;
+    // Non-negative by construction: the fingerprint above is capped at
+    // MAX_COMMENT_BODY - INLINE_MIN_PROSE, so this leaves INLINE_MIN_PROSE - 1
+    // at worst. Math.max keeps that guarantee local rather than inferred.
+    body = `${body.slice(0, Math.max(0, MAX_COMMENT_BODY - fingerprint.length - 1))}…`;
   }
   return body + fingerprint;
 }
