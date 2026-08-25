@@ -35,6 +35,7 @@ import {
   EVIDENCE_REASON_MAX,
   type OrchestratedFinding,
 } from './reviewer.js';
+import { formatReviewComment } from '../comment-formatter.js';
 import { AGENT_MODE_SUFFIX, AGENT_MODE_PLACEHOLDER, FINDING_VERIFICATION_PROMPT } from './prompts.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -4011,5 +4012,110 @@ describe('filter outcome ledger (#470)', () => {
     const surfaced = result.filterOutcomes.find((o) => o.outcome === 'surfaced')!;
     expect(surfaced.title).toBe('Missing null check on payload');
     expect(surfaced.stage).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Convergence survives the orchestrator (#477)
+// ---------------------------------------------------------------------------
+
+describe('cross-agent convergence across the orchestrator boundary (#477)', () => {
+  const allAgents = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+  const empty = JSON.stringify({ findings: [] });
+  const summaryResponse = JSON.stringify({ summary: 'Refactor.' });
+  const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+
+  // Two agents independently flag foo.ts:3, sharing the token "command" so
+  // FP-C genuinely merges them. Critical, because that is the severity the
+  // renderer shows convergence for.
+  const securityFinding = JSON.stringify({
+    findings: [{
+      file: 'foo.ts', line: 3, severity: 'critical', category: 'security',
+      title: 'Command injection via user input',
+      description: 'exec receives unsanitized command input',
+      suggestion: 'escape it',
+    }],
+  });
+  const bugFinding = JSON.stringify({
+    findings: [{
+      file: 'foo.ts', line: 3, severity: 'critical', category: 'bug',
+      title: 'Command argument not escaped',
+      description: 'the command argument is passed through unescaped',
+      suggestion: 'escape it',
+    }],
+  });
+
+  // The orchestrator rebuilds findings from its own JSON and the schema has no
+  // `evidence` property — so this deliberately carries NO evidence. If the
+  // re-attach regresses, convergence is simply gone and the assertion fails.
+  function orchestratorEchoing(title: string, line = 3, description = 'exec receives unsanitized command input') {
+    return JSON.stringify({
+      findings: [{
+        file: 'foo.ts', line, severity: 'critical', category: 'security',
+        title, description, suggestion: 'escape it',
+      }],
+      mergeScore: 2, mergeScoreReason: 'Critical present.',
+    });
+  }
+
+  async function run(orchestrator: string) {
+    const llm = createMockLLM([
+      securityFinding, bugFinding, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+    return runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext,
+        modelId: 'heavy-model', lightModelId: 'light-model',
+        maxFindings: 25, enabledAgents: allAgents,
+      },
+      { llm },
+    );
+  }
+
+  const MERGED_TITLE = 'Command injection via user input — and 1 related cross-agent concern';
+
+  it('convergence reaches the RENDERED comment, not just the finding object', async () => {
+    // The seam the three #469 test suites each stopped short of: FP-C sets the
+    // field, the renderer displays a hand-built one, and withEvidenceCode
+    // merges a hand-injected one — but nothing crossed the orchestrator.
+    const result = await run(orchestratorEchoing(MERGED_TITLE));
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].evidence?.agents).toEqual(['security', 'bug']);
+
+    const comment = formatReviewComment({
+      summary: 'Refactor.',
+      findings: result.findings,
+      mergeScore: result.mergeScore,
+    });
+    expect(comment).toContain('security + bug agreed independently');
+  });
+
+  it('does NOT attribute convergence to an unrelated finding at the same line', async () => {
+    // A false "two agents agreed" is worse than none: the signal's whole value
+    // is that it is rarer and stronger than one agent's opinion.
+    const result = await run(orchestratorEchoing(
+      'Missing copyright header',
+      3,
+      'the file header lacks a license notice',
+    ));
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].evidence?.agents).toBeUndefined();
+
+    const comment = formatReviewComment({
+      summary: 'Refactor.', findings: result.findings, mergeScore: result.mergeScore,
+    });
+    expect(comment).not.toContain('agreed independently');
+  });
+
+  it('degrades to no convergence when the orchestrator rewrites the line', async () => {
+    // Best-effort, matching the withCodeFingerprints contract: a missed
+    // re-attach means no convergence line, never a wrong one.
+    const result = await run(orchestratorEchoing(MERGED_TITLE, 2));
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].evidence?.agents).toBeUndefined();
   });
 });
