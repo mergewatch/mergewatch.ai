@@ -54,6 +54,83 @@ export const BOT_COMMENT_MARKER = "<!-- mergewatch-review -->";
 export const INLINE_BOT_COMMENT_MARKER = "<!-- mergewatch-inline -->";
 
 // ---------------------------------------------------------------------------
+// Body size guards (#468)
+// ---------------------------------------------------------------------------
+
+/**
+ * GitHub's hard cap on an issue-comment body. A body over this fails the POST
+ * with a 422 and the review never appears on the PR at all — not truncated,
+ * not an error comment. Silence, indistinguishable from MergeWatch not being
+ * installed, after the review already spent the tokens.
+ *
+ * The formatter sheds whole sections against a lower budget so truncation is
+ * graceful and disclosed. This is the backstop for what it cannot see: the
+ * stage marker prepended below, and any future section that grows without a
+ * budget of its own.
+ */
+export const MAX_COMMENT_BODY = 65_536;
+
+/**
+ * Working ceiling for a check run's `output.summary` (GitHub's hard cap is
+ * 65,535). Like INLINE_BODY_MAX below, it keeps a reserve rather than landing
+ * exactly on the boundary.
+ */
+const MAX_CHECK_SUMMARY = 65_000;
+
+/**
+ * Working ceiling for an assembled inline body.
+ *
+ * MAX_COMMENT_BODY is the hard API limit; this sits below it so an inline
+ * comment never lands *exactly* on the boundary. The reserve absorbs any
+ * difference between how we count and how GitHub does: String.length counts
+ * UTF-16 code units, and a '…' is one of those but three UTF-8 bytes, while an
+ * astral emoji is two code units and four bytes. Whether the documented
+ * 65,536-character limit means characters or bytes, a 512-character reserve
+ * makes the question moot at the margin — and the summary-comment path already
+ * carries a much larger one (60,000 against the same cap).
+ */
+const INLINE_BODY_MAX = MAX_COMMENT_BODY - 512;
+
+/** Per-field ceiling for inline comment prose, mirroring PREV_FINDING_FIELD_MAX. */
+const INLINE_FIELD_MAX = 4_000;
+
+/** Inline finding titles are model-generated and otherwise unbounded. */
+const INLINE_TITLE_MAX = 500;
+
+/**
+ * Prose an inline comment must still be able to carry. A fingerprint that
+ * cannot leave at least this much room is not worth the comment it would cost.
+ */
+const INLINE_MIN_PROSE = 1_000;
+
+const HARD_TRUNCATION_NOTICE = "\n\n_Truncated to fit GitHub's comment size limit._";
+
+/** Cut `value` to `max` characters, marking the cut so it never reads as complete. */
+function clampField(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+/**
+ * Last line of defence before any comment POST.
+ *
+ * Returns the body untouched in the overwhelmingly common case that it already
+ * fits, and otherwise cuts it to the cap with a visible notice. A truncated
+ * review is recoverable by the reader; a 422 leaves them nothing to recover
+ * from. Applied to the *marked* body, because the marker is prepended after
+ * the formatter has already measured and is part of what GitHub counts.
+ */
+export function enforceCommentBodyLimit(body: string, context: string): string {
+  if (body.length <= MAX_COMMENT_BODY) return body;
+  console.warn(
+    'Comment body for %s is %d chars, over GitHub\'s %d limit — truncating rather than losing the review.',
+    context,
+    body.length,
+    MAX_COMMENT_BODY,
+  );
+  return body.slice(0, MAX_COMMENT_BODY - HARD_TRUNCATION_NOTICE.length) + HARD_TRUNCATION_NOTICE;
+}
+
+// ---------------------------------------------------------------------------
 // PR data fetching
 // ---------------------------------------------------------------------------
 
@@ -198,7 +275,10 @@ export async function postReviewComment(
   body: string,
   stage?: Stage,
 ): Promise<number> {
-  const markedBody = `${reviewMarker(stage)}\n${body}`;
+  const markedBody = enforceCommentBodyLimit(
+    `${reviewMarker(stage)}\n${body}`,
+    `${owner}/${repo}#${prNumber}`,
+  );
 
   const { data } = await octokit.issues.createComment({
     owner,
@@ -228,7 +308,10 @@ export async function updateReviewComment(
   body: string,
   stage?: Stage,
 ): Promise<void> {
-  const markedBody = `${reviewMarker(stage)}\n${body}`;
+  const markedBody = enforceCommentBodyLimit(
+    `${reviewMarker(stage)}\n${body}`,
+    `${owner}/${repo} comment ${commentId}`,
+  );
 
   await octokit.issues.updateComment({
     owner,
@@ -360,7 +443,10 @@ export async function createCheckRun(
       ...(params.detailsUrl && { details_url: params.detailsUrl }),
       output: {
         title: params.title,
-        summary: params.summary,
+        // The catch below is deliberately non-fatal, so an oversized summary
+        // fails invisibly today — the check run simply never appears.
+        // Truncating before the call is the only way this stays visible.
+        summary: clampField(params.summary, MAX_CHECK_SUMMARY),
       },
     });
   } catch (err) {
@@ -542,8 +628,51 @@ export function buildInlineComments(
       path: f.file,
       line: f.line,
       side: 'RIGHT',
-      body: `${marker}\n**🔴 ${f.title}**\n\n${f.description}${f.suggestion ? `\n\n> **Suggestion:** ${f.suggestion}` : ''}${f.fingerprint ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->` : ''}`,
+      body: buildInlineCommentBody(marker, f),
     }));
+}
+
+/**
+ * Assemble one inline comment body, bounded at every unbounded input.
+ *
+ * `title`, `description` and `suggestion` are raw model prose posted straight
+ * through, so each gets its own ceiling. The `mw-fp` fingerprint is appended
+ * last and never truncated: `/resolve` rebuilds the suppression key from it
+ * (#182), so losing it would silently break re-review matching.
+ */
+function buildInlineCommentBody(
+  marker: string,
+  f: Pick<InlineCommentCandidate, 'file' | 'line' | 'title' | 'description' | 'suggestion' | 'fingerprint'>,
+): string {
+  const title = clampField(f.title, INLINE_TITLE_MAX);
+  const description = clampField(f.description, INLINE_FIELD_MAX);
+  const suggestion = f.suggestion ? clampField(f.suggestion, INLINE_FIELD_MAX) : '';
+  const marked = f.fingerprint
+    ? `\n\n<!-- mw-fp:${encodeInlineFingerprint(f.fingerprint)} -->`
+    : '';
+
+  // The fingerprint is derived from a model-supplied code line, so it is as
+  // unbounded as the prose around it. If it cannot leave room for the finding
+  // it annotates, drop it: losing re-review matching on one pathological
+  // finding beats emitting a body over the cap and losing the comment whole.
+  const fingerprint = marked.length <= INLINE_BODY_MAX - INLINE_MIN_PROSE ? marked : '';
+  if (marked && !fingerprint) {
+    console.warn(
+      'Inline fingerprint for %s:%d is %d chars — dropping it to keep the comment postable.',
+      f.file,
+      f.line,
+      marked.length,
+    );
+  }
+
+  let body = `${marker}\n**🔴 ${title}**\n\n${description}${suggestion ? `\n\n> **Suggestion:** ${suggestion}` : ''}`;
+  if (body.length + fingerprint.length > INLINE_BODY_MAX) {
+    // Non-negative by construction: the fingerprint above is capped at
+    // INLINE_BODY_MAX - INLINE_MIN_PROSE, so this leaves INLINE_MIN_PROSE - 1
+    // at worst. Math.max keeps that guarantee local rather than inferred.
+    body = `${body.slice(0, Math.max(0, INLINE_BODY_MAX - fingerprint.length - 1))}…`;
+  }
+  return body + fingerprint;
 }
 
 const INLINE_TITLE_REGEX = /\*\*🔴 (.+?)\*\*/;

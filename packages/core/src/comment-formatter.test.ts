@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -678,5 +678,121 @@ describe('malformed agent output disclosure (#401)', () => {
     } as any);
     expect(out).toContain('Unparsed agent output');
     expect(out).toContain('Malformed agent output');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comment size budget (#468)
+// ---------------------------------------------------------------------------
+
+describe('comment size budget (#468)', () => {
+  // A valid mermaid graph large enough to blow the budget on its own.
+  function hugeDiagram(edges: number): string {
+    return `graph TD\n${Array.from({ length: edges }, (_, i) => `  N${i} --> N${i + 1}`).join('\n')}`;
+  }
+
+  function findings(n: number, severity: Finding['severity'], descLen: number): Finding[] {
+    return Array.from({ length: n }, (_, i) =>
+      makeFinding({
+        severity,
+        title: `${severity} finding ${i}`,
+        description: 'd'.repeat(descLen),
+        suggestion: '',
+        line: i + 1,
+      }),
+    );
+  }
+
+  it('leaves an under-budget comment untouched — no notice, no shedding', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: findings(2, 'info', 50),
+      diagram: 'graph TD\n  A --> B',
+      mergeScore: 5,
+    }));
+    expect(result.length).toBeLessThanOrEqual(COMMENT_BODY_BUDGET);
+    expect(result).toContain('```mermaid');
+    expect(result).not.toContain('omitted');
+    expect(result).not.toContain('truncated to fit');
+  });
+
+  it('keeps the body within budget when the diagram alone blows it', () => {
+    const result = formatReviewComment(baseOptions({
+      diagram: hugeDiagram(9000),
+      mergeScore: 4,
+    }));
+    expect(result.length).toBeLessThanOrEqual(COMMENT_BODY_BUDGET);
+  });
+
+  it('sheds the diagram FIRST — info findings survive when dropping the diagram is enough', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: findings(3, 'info', 100),
+      diagram: hugeDiagram(9000),
+      mergeScore: 4,
+    }));
+    // Drop order is diagram -> work-done -> previously-reported -> info -> warnings.
+    expect(result).not.toContain('```mermaid');
+    expect(result).toContain('info finding 0');
+    expect(result).toContain('info finding 2');
+  });
+
+  it('never drops the verdict, the summary, or any critical', () => {
+    const criticals = findings(20, 'critical', 1_000);
+    const result = formatReviewComment(baseOptions({
+      // Info alone is far over budget; every critical must still survive.
+      findings: [...criticals, ...findings(60, 'info', 1_500)],
+      summary: 'This PR rewrites the auth middleware.',
+      mergeScore: 1,
+      mergeScoreReason: 'critical issues found',
+    }));
+
+    expect(result.length).toBeLessThanOrEqual(COMMENT_BODY_BUDGET);
+    expect(result).toContain('This PR rewrites the auth middleware.');
+    expect(result).toContain('critical issues found');
+    for (const f of criticals) {
+      expect(result).toContain(f.title);
+    }
+  });
+
+  it('says how many findings were dropped — the list never reads as complete', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [...findings(2, 'critical', 100), ...findings(60, 'info', 1_500)],
+      mergeScore: 2,
+      reviewDetailUrl: 'https://mergewatch.ai/r/abc',
+    }));
+    expect(result).toContain('60 info findings');
+    expect(result).toContain('[View the full review](https://mergewatch.ai/r/abc)');
+  });
+
+  it('degrades the notice when reviewDetailUrl is absent — never a dead link', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [...findings(2, 'critical', 100), ...findings(60, 'info', 1_500)],
+      mergeScore: 2,
+      // Self-hosted: no dashboard, so no URL.
+    }));
+    expect(result).toContain('omitted to fit GitHub');
+    expect(result).toContain('60 info findings');
+    expect(result).not.toContain('View the full review');
+    expect(result).not.toContain('](http');
+  });
+
+  it('truncates within the criticals and says so when they alone exceed budget', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: findings(80, 'critical', 2_000),
+      mergeScore: 1,
+    }));
+    expect(result.length).toBeLessThanOrEqual(COMMENT_BODY_BUDGET);
+    expect(result).toContain('some findings are not shown');
+  });
+
+  it('places the notice above the findings, not buried at the bottom', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [...findings(2, 'critical', 100), ...findings(60, 'info', 1_500)],
+      summary: 'Auth rewrite.',
+      mergeScore: 2,
+    }));
+    const noticeAt = result.indexOf('omitted to fit GitHub');
+    const firstCriticalAt = result.indexOf('critical finding 0');
+    expect(noticeAt).toBeGreaterThan(-1);
+    expect(noticeAt).toBeLessThan(firstCriticalAt);
   });
 });

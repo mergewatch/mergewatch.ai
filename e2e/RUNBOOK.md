@@ -252,6 +252,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup`, `correctness` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` · _script-verified, no fixture_ |
+| [E2E-100](#e2e-100-468--an-oversized-review-truncates-visibly-never-vanishes) | A review body over GitHub's 65,536-char comment limit truncates with a notice naming what was dropped, instead of failing the POST and vanishing from the PR; verdict, summary and all criticals never shed, and inline `mw-fp` fingerprints survive truncation (#468) | 3m | 60s | #474 | `output`, `review-core` · _unit-test-gated, no fixture_ |
 | [E2E-99](#e2e-99-401--malformed-agent-output-is-disclosed-not-counted-as-suppression) | Agent responses that parse but return unusable findings no longer inflate the suppressed counter; they surface as a distinct "Malformed agent output" warning (#401) | 2m | 60s | #429 | `agents`, `output` · _unit-test-gated, no fixture_ |
 | [E2E-98](#e2e-98-423--oversized-diffs-skip-with-a-reason-never-hard-fail) | Build artifacts excluded by default and oversized files dropped by size; a diff still over the model's context budget yields a neutral "diff too large" skip naming sizes and remedy, never a raw ValidationException (#423) | 4m | 60s | #426 | `skip`, `config`, `correctness` |
 | [E2E-97](#e2e-97-421--marketplace-purchase-recorded-and-attached) | A Marketplace `purchased` is recorded under `#MARKETPLACE` and attached to the installation on `installation.created`; redelivery does not double-record or move `purchasedAt`; `cancelled` revokes nothing (#421) | 5m | 60s | #422 | `marketplace`, `correctness` |
@@ -3474,6 +3475,42 @@ Two production reviews reported `1430` and `3869 findings removed by dedup & qua
 - ❌ A malfunctioning agent shows only an odd number and no warning — the disclosure regressed, and the symptom is again invisible
 - ❌ Real findings are dropped as "malformed" — the usability test is too strict; it requires only a non-empty `title`
 - ❌ The two warnings collapse into one message — a parse failure and a malformed shape have different causes and different remedies
+
+---
+
+### E2E-100: #468 — an oversized review truncates visibly, never vanishes
+
+**Status:** 🆕 NEW (#468) — unit-gated; opportunistic in the suite.
+
+**Behavior:** every review write path is now bounded. GitHub caps an issue-comment body at 65,536 characters and rejects anything larger with a `422`. Before this there was no length check anywhere on the write paths, so an oversized review failed the POST and the developer saw **nothing on the PR at all** — not a truncated comment, not an error. Silence, indistinguishable from MergeWatch never having run, after the review had already spent the tokens.
+
+Four paths, each with its own bound:
+
+1. **The summary comment.** `formatReviewComment` assembles ordered sections rather than one flat line list, and sheds the lowest-priority ones until the body fits a 60,000-character budget. Drop order: diagram → work-done → previously-reported → info → warnings.
+2. **The pre-POST assertion.** `postReviewComment` and `updateReviewComment` enforce the hard cap on the **marked** body — the marker is prepended after the formatter has already measured, and GitHub counts it.
+3. **Inline comments.** `title`, `description` and `suggestion` are raw model prose posted straight through; each now has a ceiling. The `mw-fp` fingerprint is appended after truncation and never cut.
+4. **The check run summary.** Truncated before the call — the surrounding `try/catch` is non-fatal by design, so an oversized summary fails invisibly today.
+
+The verdict, the summary, and **every critical** are never droppable. Whatever survives is what MergeWatch is asserting about the PR, so a surviving findings list must never read as complete when it is not.
+
+**Setup.** Hard to force deterministically — nothing reaches 65KB routinely, which is exactly why this never fired. Treat `packages/core/src/comment-formatter.test.ts` and `packages/core/src/github/client.test.ts` as the primary gate, and verify opportunistically on any PR with a large diagram plus a long carried-over delta history.
+
+**Expected outcomes.**
+- [ ] A body over budget **posts**, truncated, rather than failing with a 422
+- [ ] The verdict line, the summary prose, and every critical finding survive a body forced well over budget
+- [ ] The truncation notice names what was dropped **with counts** (`60 info findings`), so the list never reads as complete
+- [ ] With no `reviewDetailUrl` (self-hosted, no dashboard) the notice degrades to `N section(s) omitted…` and renders **no link**
+- [ ] The notice appears **above** the findings, not buried under them
+- [ ] An inline comment on a runaway finding is capped and its `mw-fp` fingerprint still round-trips, so `/resolve` keeps working
+- [ ] A normal review is **byte-identical** to before — no notice, no shedding, no reordering
+
+**Failure modes.**
+- ❌ A review is missing from a PR with no error anywhere — the guard is not covering a path
+- ❌ Findings are dropped with no notice, or a notice with no counts — the partial list reads as complete, which is worse than truncating
+- ❌ A critical is shed while the diagram survives — the drop order inverted
+- ❌ The notice links to a dashboard that does not exist on a self-hosted deploy
+- ❌ `/resolve` stops matching a previously reported finding — the fingerprint was truncated away
+- ❌ An ordinary review changes shape — the section refactor was supposed to be output-neutral
 
 ---
 
