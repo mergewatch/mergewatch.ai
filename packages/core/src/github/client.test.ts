@@ -1147,7 +1147,9 @@ describe('inline cap holds at the fingerprint boundary (#474 review)', () => {
         suggestion: '',
         fingerprint: 'f'.repeat(raw),
       }], ['src/app.ts']);
-      expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+      // Strictly below: the inline path reserves headroom rather than
+      // landing on the boundary, so encoding-width differences cannot bite.
+      expect(c.body.length).toBeLessThan(MAX_COMMENT_BODY);
     }
   });
 });

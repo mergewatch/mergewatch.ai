@@ -70,8 +70,26 @@ export const INLINE_BOT_COMMENT_MARKER = "<!-- mergewatch-inline -->";
  */
 export const MAX_COMMENT_BODY = 65_536;
 
-/** GitHub caps a check run's `output.summary` one character lower. */
-const MAX_CHECK_SUMMARY = 65_535;
+/**
+ * Working ceiling for a check run's `output.summary` (GitHub's hard cap is
+ * 65,535). Like INLINE_BODY_MAX below, it keeps a reserve rather than landing
+ * exactly on the boundary.
+ */
+const MAX_CHECK_SUMMARY = 65_000;
+
+/**
+ * Working ceiling for an assembled inline body.
+ *
+ * MAX_COMMENT_BODY is the hard API limit; this sits below it so an inline
+ * comment never lands *exactly* on the boundary. The reserve absorbs any
+ * difference between how we count and how GitHub does: String.length counts
+ * UTF-16 code units, and a '…' is one of those but three UTF-8 bytes, while an
+ * astral emoji is two code units and four bytes. Whether the documented
+ * 65,536-character limit means characters or bytes, a 512-character reserve
+ * makes the question moot at the margin — and the summary-comment path already
+ * carries a much larger one (60,000 against the same cap).
+ */
+const INLINE_BODY_MAX = MAX_COMMENT_BODY - 512;
 
 /** Per-field ceiling for inline comment prose, mirroring PREV_FINDING_FIELD_MAX. */
 const INLINE_FIELD_MAX = 4_000;
@@ -637,7 +655,7 @@ function buildInlineCommentBody(
   // unbounded as the prose around it. If it cannot leave room for the finding
   // it annotates, drop it: losing re-review matching on one pathological
   // finding beats emitting a body over the cap and losing the comment whole.
-  const fingerprint = marked.length <= MAX_COMMENT_BODY - INLINE_MIN_PROSE ? marked : '';
+  const fingerprint = marked.length <= INLINE_BODY_MAX - INLINE_MIN_PROSE ? marked : '';
   if (marked && !fingerprint) {
     console.warn(
       'Inline fingerprint for %s:%d is %d chars — dropping it to keep the comment postable.',
@@ -648,11 +666,11 @@ function buildInlineCommentBody(
   }
 
   let body = `${marker}\n**🔴 ${title}**\n\n${description}${suggestion ? `\n\n> **Suggestion:** ${suggestion}` : ''}`;
-  if (body.length + fingerprint.length > MAX_COMMENT_BODY) {
+  if (body.length + fingerprint.length > INLINE_BODY_MAX) {
     // Non-negative by construction: the fingerprint above is capped at
-    // MAX_COMMENT_BODY - INLINE_MIN_PROSE, so this leaves INLINE_MIN_PROSE - 1
+    // INLINE_BODY_MAX - INLINE_MIN_PROSE, so this leaves INLINE_MIN_PROSE - 1
     // at worst. Math.max keeps that guarantee local rather than inferred.
-    body = `${body.slice(0, Math.max(0, MAX_COMMENT_BODY - fingerprint.length - 1))}…`;
+    body = `${body.slice(0, Math.max(0, INLINE_BODY_MAX - fingerprint.length - 1))}…`;
   }
   return body + fingerprint;
 }
