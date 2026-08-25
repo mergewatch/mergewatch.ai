@@ -302,6 +302,106 @@ export function buildWorkDoneSection(
   };
 }
 
+// ─── Comment size guard (#468) ─────────────────────────────────────────────
+
+/**
+ * Working budget for the assembled comment body.
+ *
+ * GitHub rejects an issue comment over 65,536 characters with a 422, and the
+ * review then vanishes from the PR entirely — no truncated comment, no error,
+ * nothing. That is the worst failure available here, because it is
+ * indistinguishable from MergeWatch never having run.
+ *
+ * The budget sits below the hard cap (which lives in github/client.ts, with
+ * the API call that enforces it) to leave room for two things the formatter
+ * cannot see: the stage marker the client prepends, and the truncation notice
+ * this module may add after measuring.
+ */
+export const COMMENT_BODY_BUDGET = 60_000;
+
+/** A contiguous run of body lines that is kept or shed as a unit. */
+interface Section {
+  id: string;
+  /**
+   * Lower sheds first. {@link KEEP} marks a section that is never droppable —
+   * the verdict, the summary, and every critical finding. Whatever survives is
+   * what MergeWatch is asserting about this PR, so a surviving findings list
+   * must never read as complete when it is not.
+   */
+  priority: number;
+  /** Phrase naming what is lost, used by the truncation notice. */
+  label?: string;
+  lines: string[];
+  dropped?: boolean;
+}
+
+const KEEP = Number.POSITIVE_INFINITY;
+
+/**
+ * Where the truncation notice goes, most-preferred first. It belongs high in
+ * the comment: a reader who learns content is missing only after scrolling
+ * past the findings has already drawn the wrong conclusion. Each anchor may be
+ * absent (`showSummary: false`, no `mergeScore`), so this degrades down to the
+ * header, which always renders.
+ */
+const NOTICE_ANCHORS = ['summary', 'score', 'header'];
+
+function buildTruncationNotice(dropped: Section[], reviewDetailUrl?: string): string {
+  const lost = dropped.map((s) => s.label ?? s.id).join(', ');
+  if (reviewDetailUrl) {
+    return `_This comment was truncated to fit GitHub's size limit — omitted: ${lost}. [View the full review](${reviewDetailUrl})._`;
+  }
+  // Self-hosted deployments have no dashboard, so `reviewDetailUrl` is absent
+  // and there is no destination to point at. Never render a dead link, and
+  // never imply a fuller version exists somewhere the reader can reach.
+  return `_${dropped.length} section${dropped.length !== 1 ? 's' : ''} omitted to fit GitHub's comment size limit — ${lost}._`;
+}
+
+function assembleSections(sections: Section[], reviewDetailUrl?: string): string {
+  const live = sections.filter((s) => !s.dropped);
+  const dropped = sections.filter((s) => s.dropped);
+  const notice = dropped.length > 0 ? buildTruncationNotice(dropped, reviewDetailUrl) : '';
+  const anchorId = notice
+    ? NOTICE_ANCHORS.find((id) => live.some((s) => s.id === id))
+    : undefined;
+
+  const out: string[] = [];
+  for (const s of live) {
+    out.push(...s.lines);
+    if (notice && s.id === anchorId) {
+      out.push(notice, '');
+    }
+  }
+  return out.join('\n');
+}
+
+/**
+ * Join the assembled sections, shedding the lowest-priority ones until the
+ * body fits. The notice is recomputed on every pass because it names what was
+ * dropped, so it grows as more goes — measuring once up front would undercount.
+ */
+function fitSections(sections: Section[], budget: number, reviewDetailUrl?: string): string {
+  let body = assembleSections(sections, reviewDetailUrl);
+  if (body.length <= budget) return body;
+
+  const shed = sections
+    .filter((s) => Number.isFinite(s.priority))
+    .sort((a, b) => a.priority - b.priority);
+
+  for (const s of shed) {
+    s.dropped = true;
+    body = assembleSections(sections, reviewDetailUrl);
+    if (body.length <= budget) return body;
+  }
+
+  // Everything droppable is gone and the verdict plus the criticals alone
+  // still exceed the budget. Cutting inside the critical list is the only
+  // move left; the one thing that must not happen is it reading as complete.
+  const notice = "\n\n_Truncated to fit GitHub's comment size limit — some findings are not shown._";
+  return `${body.slice(0, Math.max(0, budget - notice.length))}${notice}`;
+}
+
+
 // ─── Main formatter ────────────────────────────────────────────────────────
 
 /**
@@ -342,22 +442,29 @@ export function formatReviewComment(options: FormatOptions): string {
     conventionsTruncated,
   } = options;
 
-  const lines: string[] = [];
+  const sections: Section[] = [];
+  const section = (id: string, priority: number, label?: string): string[] => {
+    const s: Section = { id, priority, lines: [], ...(label ? { label } : {}) };
+    sections.push(s);
+    return s.lines;
+  };
 
   // Note: the hidden marker (<!-- mergewatch-review -->) is prepended by
   // postReviewComment / updateReviewComment in github/client.ts — not here.
 
   // 1. Header — custom or default logo wordmark
+  const header = section('header', KEEP);
   if (ux?.commentHeader) {
     // #369 — repo-controlled: renders as literal text, never live markup.
-    lines.push(escapeUserContent(ux.commentHeader));
+    header.push(escapeUserContent(ux.commentHeader));
   } else {
-    lines.push('<img src="https://raw.githubusercontent.com/mergewatch/mergewatch.ai/main/assets/mergewatch-wordmark.svg" alt="mergewatch" height="48" />');
+    header.push('<img src="https://raw.githubusercontent.com/mergewatch/mergewatch.ai/main/assets/mergewatch-wordmark.svg" alt="mergewatch" height="48" />');
   }
-  lines.push('');
+  header.push('');
 
   // 2. Work Done section (stats bar)
   if (workDone && (ux?.showWorkDone !== false)) {
+    const work = section('work-done', 20, 'the work-done stats');
     const parts: string[] = [
       `**${workDone.filesScanned}** file${workDone.filesScanned !== 1 ? 's' : ''} scanned`,
       `**${workDone.linesScanned.toLocaleString()}** lines reviewed`,
@@ -366,12 +473,13 @@ export function formatReviewComment(options: FormatOptions): string {
     if (workDone.hasDependencyFiles) {
       parts.push('dependency files detected');
     }
-    lines.push(`> ${parts.join(' \u00B7 ')}`);
-    lines.push('');
+    work.push(`> ${parts.join(' \u00B7 ')}`);
+    work.push('');
   }
 
   // 3. Delta strip (re-review progress)
   if (delta) {
+    const deltaStrip = section('delta', KEEP);
     const deltaParts: string[] = [];
     if (delta.resolvedCount > 0) {
       deltaParts.push(`\u2705 **${delta.resolvedCount}** resolved`);
@@ -383,8 +491,8 @@ export function formatReviewComment(options: FormatOptions): string {
       deltaParts.push(`\u27A1\uFE0F **${delta.carriedOverCount}** carried over`);
     }
     if (deltaParts.length > 0) {
-      lines.push(`> ${deltaParts.join(' \u00B7 ')}`);
-      lines.push('');
+      deltaStrip.push(`> ${deltaParts.join(' \u00B7 ')}`);
+      deltaStrip.push('');
     }
   }
 
@@ -392,41 +500,45 @@ export function formatReviewComment(options: FormatOptions): string {
   // Only present on re-reviews where something actually shifted; the agent
   // returns null for first reviews and unchanged re-reviews.
   if (deltaCaption && deltaCaption.trim()) {
-    lines.push(`> 📝 ${deltaCaption.trim()}`);
-    lines.push('');
+    const deltaCap = section('delta-caption', KEEP);
+    deltaCap.push(`> 📝 ${deltaCaption.trim()}`);
+    deltaCap.push('');
   }
 
   // 4. Merge readiness score — highly visible
   if (mergeScore != null) {
+    const score = section('score', KEEP);
     const scoreDisplay = renderMergeScore(mergeScore);
     const reasonSuffix = mergeScoreReason ? ` \u2014 ${mergeScoreReason}` : '';
-    lines.push(`> ${scoreDisplay}${reasonSuffix}`);
+    score.push(`> ${scoreDisplay}${reasonSuffix}`);
     // FP-J L3 \u2014 dispute-rate disclosure renders as a quieter sub-line so the
     // primary verdict stays the most visible signal. Only emitted when the
     // reconcile pass identified at least one action finding from a
     // chronically-disputed category (>= 5 surfacings AND >= 75% dispute rate
     // over the 30d window). Omitted on the clean path.
     if (disputeDisclosure && disputeDisclosure.trim()) {
-      lines.push(`> <sub>\ud83d\udcca ${disputeDisclosure.trim()}</sub>`);
+      score.push(`> <sub>\ud83d\udcca ${disputeDisclosure.trim()}</sub>`);
     }
-    lines.push('');
+    score.push('');
   }
 
   // 5. Diagram (moved up — appears right after merge score)
   if (diagram && showDiagram && isValidMermaidDiagram(diagram)) {
+    const diagramSec = section('diagram', 10, 'the diagram');
     const captionText = diagramCaption ? `**Diagram** \u2014 ${diagramCaption}` : '**Diagram**';
-    lines.push(captionText);
-    lines.push('');
-    lines.push('```mermaid');
-    lines.push(diagram);
-    lines.push('```');
-    lines.push('');
+    diagramSec.push(captionText);
+    diagramSec.push('');
+    diagramSec.push('```mermaid');
+    diagramSec.push(diagram);
+    diagramSec.push('```');
+    diagramSec.push('');
   }
 
   // 6. Summary — inline 2-sentence prose (not collapsible)
   if (summary && showSummary) {
-    lines.push(truncateSummary(summary));
-    lines.push('');
+    const summarySec = section('summary', KEEP);
+    summarySec.push(truncateSummary(summary));
+    summarySec.push('');
   }
 
   // #240 — computed up front so the all-clear branches below can defer to
@@ -438,10 +550,11 @@ export function formatReviewComment(options: FormatOptions): string {
   // #240 — the all-clear celebration is only honest when nothing below will
   // render an unverified-concerns section. With unverified criticals present
   // the score is W7-clamped to advisory, so say that instead.
+  const action = section('action-items', KEEP);
   const pushAllClearOrAdvisory = () => {
     if (unverifiedCriticalCount > 0) {
-      lines.push('No blocking issues \u2014 see unverified concerns below.');
-      lines.push('');
+      action.push('No blocking issues \u2014 see unverified concerns below.');
+      action.push('');
     // `?? 5` keeps callers that omit mergeScore on the pre-#385 behavior.
     } else if (findings.length === 0 && (mergeScore ?? 5) <= 3) {
       // #385 \u2014 an empty finding list is not always a clean bill of health. When
@@ -450,13 +563,13 @@ export function formatReviewComment(options: FormatOptions): string {
       // four lines under that subtitle contradicts it, and a reader who skims
       // to the body merges on the strength of the wrong half. Defer to the
       // verdict line rather than talking over it.
-      lines.push('Nothing rendered \u2014 see the verdict above before merging.');
-      lines.push('');
+      action.push('Nothing rendered \u2014 see the verdict above before merging.');
+      action.push('');
     } else if (ux?.allClearMessage !== false) {
-      lines.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
-      lines.push('');
+      action.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
+      action.push('');
     } else {
-      lines.push('No issues found \u2014 looking good! \u2705');
+      action.push('No issues found \u2014 looking good! \u2705');
     }
   };
 
@@ -475,18 +588,18 @@ export function formatReviewComment(options: FormatOptions): string {
   if (findings.length === 0) {
     pushAllClearOrAdvisory();
   } else if (!showIssuesTable) {
-    lines.push(`${findings.length} issue${findings.length !== 1 ? 's' : ''} found.`);
+    action.push(`${findings.length} issue${findings.length !== 1 ? 's' : ''} found.`);
   } else if (actionFindings.length > 0) {
-    lines.push('#### Requires your attention');
-    lines.push('');
-    lines.push('| | Location | Finding |');
-    lines.push('|---|---|---|');
+    action.push('#### Requires your attention');
+    action.push('');
+    action.push('| | Location | Finding |');
+    action.push('|---|---|---|');
     for (const f of actionFindings) {
       const emoji = f.severity === 'critical' ? '\uD83D\uDD34' : '\u26A0\uFE0F';
       const shortFile = shortenPath(f.file);
-      lines.push(`| ${emoji} | \`${shortFile}:${f.line}\` | ${f.title} |`);
+      action.push(`| ${emoji} | \`${shortFile}:${f.line}\` | ${f.title} |`);
     }
-    lines.push('');
+    action.push('');
   } else {
     // No action items (info-only, or #240: only unverified criticals) —
     // all-clear, unless unverified concerns render below.
@@ -505,50 +618,54 @@ export function formatReviewComment(options: FormatOptions): string {
 
     // Critical (verified only) — shown open (not collapsed)
     if (criticalFindings.length > 0) {
-      lines.push(`### ${SEVERITY_META.critical.emoji} Critical (${criticalFindings.length})`);
+      const crit = section('critical', KEEP);
+      crit.push(`### ${SEVERITY_META.critical.emoji} Critical (${criticalFindings.length})`);
       for (const f of criticalFindings) {
-        lines.push(renderFinding(f, showConfidence));
+        crit.push(renderFinding(f, showConfidence));
       }
-      lines.push('');
+      crit.push('');
     }
 
     // FP-L — Unverified concerns (advisory). Only emitted when at least one
     // unverified critical exists; otherwise the sub-section is omitted entirely
     // so there's no empty header on the clean path.
     if (unverifiedCriticals.length > 0) {
-      lines.push(`### ⚠️ Unverified concerns (${unverifiedCriticals.length})`);
-      lines.push(
+      const unver = section('unverified', KEEP);
+      unver.push(`### ⚠️ Unverified concerns (${unverifiedCriticals.length})`);
+      unver.push(
         "> The verifier couldn't confirm these against the source. Review carefully; the PR is not blocked on them.",
       );
-      lines.push('');
+      unver.push('');
       for (const f of unverifiedCriticals) {
-        lines.push(renderFinding(f, showConfidence));
+        unver.push(renderFinding(f, showConfidence));
       }
-      lines.push('');
+      unver.push('');
     }
 
     // Warning — collapsed
     if (warningFindings.length > 0) {
-      lines.push(`<details><summary>${SEVERITY_META.warning.emoji} Warnings (${warningFindings.length})</summary>`);
-      lines.push('');
+      const warn = section('warnings', 50, `${warningFindings.length} warning detail${warningFindings.length !== 1 ? 's' : ''}`);
+      warn.push(`<details><summary>${SEVERITY_META.warning.emoji} Warnings (${warningFindings.length})</summary>`);
+      warn.push('');
       for (const f of warningFindings) {
-        lines.push(renderFinding(f, showConfidence));
+        warn.push(renderFinding(f, showConfidence));
       }
-      lines.push('');
-      lines.push('</details>');
-      lines.push('');
+      warn.push('');
+      warn.push('</details>');
+      warn.push('');
     }
 
     // Info — collapsed
     if (infoFindings.length > 0) {
-      lines.push(`<details><summary>${SEVERITY_META.info.emoji} Info (${infoFindings.length})</summary>`);
-      lines.push('');
+      const info = section('info', 40, `${infoFindings.length} info finding${infoFindings.length !== 1 ? 's' : ''}`);
+      info.push(`<details><summary>${SEVERITY_META.info.emoji} Info (${infoFindings.length})</summary>`);
+      info.push('');
       for (const f of infoFindings) {
-        lines.push(renderFinding(f, showConfidence));
+        info.push(renderFinding(f, showConfidence));
       }
-      lines.push('');
-      lines.push('</details>');
-      lines.push('');
+      info.push('');
+      info.push('</details>');
+      info.push('');
     }
   }
 
@@ -556,27 +673,28 @@ export function formatReviewComment(options: FormatOptions): string {
   // audit trail so authors can see what carried across and what was dropped
   // without cluttering the primary findings list.
   if (delta && (delta.resolved.length > 0 || delta.carriedOver.length > 0)) {
+    const prev = section('previously-reported', 30, `the previously reported list (${delta.resolved.length + delta.carriedOver.length})`);
     const prevTotal = delta.resolved.length + delta.carriedOver.length;
-    lines.push(`<details><summary>\uD83D\uDCCE Previously reported findings \u2014 ${prevTotal}</summary>`);
-    lines.push('');
+    prev.push(`<details><summary>\uD83D\uDCCE Previously reported findings \u2014 ${prevTotal}</summary>`);
+    prev.push('');
     if (delta.resolved.length > 0) {
-      lines.push(`**\u2705 Resolved on this commit (${delta.resolved.length})**`);
-      lines.push('');
+      prev.push(`**\u2705 Resolved on this commit (${delta.resolved.length})**`);
+      prev.push('');
       for (const f of delta.resolved) {
-        lines.push(`- \`${f.file}:${f.line}\` — ${f.title}`);
+        prev.push(`- \`${f.file}:${f.line}\` — ${f.title}`);
       }
-      lines.push('');
+      prev.push('');
     }
     if (delta.carriedOver.length > 0) {
-      lines.push(`**\u21BB Still present (${delta.carriedOver.length})**`);
-      lines.push('');
+      prev.push(`**\u21BB Still present (${delta.carriedOver.length})**`);
+      prev.push('');
       for (const f of delta.carriedOver) {
-        lines.push(`- \`${f.file}:${f.line}\` — ${f.title}`);
+        prev.push(`- \`${f.file}:${f.line}\` — ${f.title}`);
       }
-      lines.push('');
+      prev.push('');
     }
-    lines.push('</details>');
-    lines.push('');
+    prev.push('</details>');
+    prev.push('');
   }
 
   // 9. Review details drawer — collapsed: model, time, tokens, cost, suppressed
@@ -586,6 +704,7 @@ export function formatReviewComment(options: FormatOptions): string {
   const hasDegenerate = (degenerateResponseCount ?? 0) > 0;
   const hasDetails = totalTokens > 0 || durationMs != null || model || hasSuppressed || hasParseFailures || hasDegenerate || !!conventionsSource;
   if (hasDetails) {
+    const details = section('details', KEEP);
     const detailParts: string[] = [];
     if (totalTokens > 0) {
       detailParts.push(`${totalTokens.toLocaleString()} tokens`);
@@ -598,52 +717,53 @@ export function formatReviewComment(options: FormatOptions): string {
     if (durationMs != null) {
       detailParts.push(`${(durationMs / 1000).toFixed(1)}s`);
     }
-    lines.push(`<details><summary>\u2139\uFE0F Review details${detailParts.length > 0 ? ` \u2014 ${detailParts.join(' \u00B7 ')}` : ''}</summary>`);
-    lines.push('');
-    lines.push('| | |');
-    lines.push('|---|---|');
+    details.push(`<details><summary>\u2139\uFE0F Review details${detailParts.length > 0 ? ` \u2014 ${detailParts.join(' \u00B7 ')}` : ''}</summary>`);
+    details.push('');
+    details.push('| | |');
+    details.push('|---|---|');
     if (model) {
-      lines.push(`| **Model** | ${model} |`);
+      details.push(`| **Model** | ${model} |`);
     }
     if (durationMs != null) {
-      lines.push(`| **Review time** | ${(durationMs / 1000).toFixed(1)}s |`);
+      details.push(`| **Review time** | ${(durationMs / 1000).toFixed(1)}s |`);
     }
     if (totalTokens > 0) {
-      lines.push(`| **Tokens** | ${(inputTokens ?? 0).toLocaleString()} in · ${(outputTokens ?? 0).toLocaleString()} out · ${totalTokens.toLocaleString()} total |`);
+      details.push(`| **Tokens** | ${(inputTokens ?? 0).toLocaleString()} in · ${(outputTokens ?? 0).toLocaleString()} out · ${totalTokens.toLocaleString()} total |`);
     }
     if (estimatedCostUsd != null && estimatedCostUsd > 0) {
       if (cumulativeCostUsd != null && cumulativeCostUsd > estimatedCostUsd) {
-        lines.push(`| **Est. cost** | ~$${estimatedCostUsd.toFixed(4)} this run · ~$${cumulativeCostUsd.toFixed(4)} total for PR (LLM only) |`);
+        details.push(`| **Est. cost** | ~$${estimatedCostUsd.toFixed(4)} this run · ~$${cumulativeCostUsd.toFixed(4)} total for PR (LLM only) |`);
       } else {
-        lines.push(`| **Est. cost** | ~$${estimatedCostUsd.toFixed(4)} (LLM only) |`);
+        details.push(`| **Est. cost** | ~$${estimatedCostUsd.toFixed(4)} (LLM only) |`);
       }
     }
     if (hasSuppressed) {
-      lines.push(`| **Suppressed** | ${suppressedCount} finding${suppressedCount !== 1 ? 's' : ''} removed by dedup & quality filters |`);
+      details.push(`| **Suppressed** | ${suppressedCount} finding${suppressedCount !== 1 ? 's' : ''} removed by dedup & quality filters |`);
     }
     if (hasParseFailures) {
-      lines.push(`| **\u26A0\uFE0F Unparsed agent output** | ${parseFailureCount} agent response${parseFailureCount !== 1 ? 's' : ''} could not be parsed \u2014 findings may be missing from this review |`);
+      details.push(`| **\u26A0\uFE0F Unparsed agent output** | ${parseFailureCount} agent response${parseFailureCount !== 1 ? 's' : ''} could not be parsed \u2014 findings may be missing from this review |`);
     }
     if (hasDegenerate) {
       // #401 — distinct from an unparsed response: this one parsed cleanly and
       // would otherwise have been reported as ordinary suppression.
-      lines.push(`| **\u26A0\uFE0F Malformed agent output** | ${degenerateResponseCount} agent response${degenerateResponseCount !== 1 ? 's' : ''} returned unusable findings \u2014 findings may be missing from this review |`);
+      details.push(`| **\u26A0\uFE0F Malformed agent output** | ${degenerateResponseCount} agent response${degenerateResponseCount !== 1 ? 's' : ''} returned unusable findings \u2014 findings may be missing from this review |`);
     }
     if (conventionsSource) {
       const suffix = conventionsTruncated ? ' (truncated)' : '';
-      lines.push(`| **Conventions** | Loaded from \`${conventionsSource}\`${suffix} |`);
+      details.push(`| **Conventions** | Loaded from \`${conventionsSource}\`${suffix} |`);
     }
-    lines.push('');
-    lines.push('</details>');
-    lines.push('');
+    details.push('');
+    details.push('</details>');
+    details.push('');
   }
 
   // 10. Dashboard link + custom footer — compact, no horizontal rule
+  const footer = section('footer', KEEP);
   // #195 Phase 4 — one-click satisfaction prompt. The review path polls these
   // 👍/👎 reactions on the summary comment into the engagement rollup
   // (helpful-rate KPI). Rendered above the footer link as a call-to-action.
   if (showHelpfulPrompt) {
-    lines.push('<sub>Was this review helpful? React with 👍 or 👎 on this comment.</sub>');
+    footer.push('<sub>Was this review helpful? React with 👍 or 👎 on this comment.</sub>');
   }
 
   const footerParts: string[] = [];
@@ -655,8 +775,8 @@ export function formatReviewComment(options: FormatOptions): string {
     footerParts.push(escapeUserContent(commentFooter));
   }
   if (footerParts.length > 0) {
-    lines.push(`<sub>${footerParts.join(' \u00B7 ')}</sub>`);
+    footer.push(`<sub>${footerParts.join(' \u00B7 ')}</sub>`);
   }
 
-  return lines.join('\n');
+  return fitSections(sections, COMMENT_BODY_BUDGET, reviewDetailUrl);
 }

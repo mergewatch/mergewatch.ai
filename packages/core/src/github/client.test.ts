@@ -5,6 +5,12 @@ import {
   extractInlineCommentTitle,
   extractInlineCommentFingerprint,
   BOT_COMMENT_MARKER,
+  INLINE_BOT_COMMENT_MARKER,
+  postReviewComment,
+  updateReviewComment,
+  createCheckRun,
+  enforceCommentBodyLimit,
+  MAX_COMMENT_BODY,
   parseRepoConfigYaml,
   addPRReaction,
   removePRReaction,
@@ -936,5 +942,128 @@ describe('resolveAppLogin (#418)', () => {
   it('returns null when the comment has no author', async () => {
     const octokit = { issues: { getComment: async () => ({ data: {} }) } } as any;
     expect(await resolveAppLogin(octokit, 'o', 'r', 1)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Body size guards (#468)
+// ---------------------------------------------------------------------------
+
+describe('comment body size guard (#468)', () => {
+  function captureComment() {
+    const calls: Array<Record<string, unknown>> = [];
+    const octokit = {
+      issues: {
+        createComment: vi.fn(async (args: Record<string, unknown>) => { calls.push(args); return { data: { id: 7 } }; }),
+        updateComment: vi.fn(async (args: Record<string, unknown>) => { calls.push(args); return { data: {} }; }),
+      },
+    } as unknown as Octokit;
+    return { octokit, calls };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('posts an oversized body truncated instead of failing the request', async () => {
+    const { octokit, calls } = captureComment();
+    await postReviewComment(octokit, 'o', 'r', 1, 'x'.repeat(MAX_COMMENT_BODY * 2));
+    const body = calls[0].body as string;
+    expect(body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(body).toContain("Truncated to fit GitHub's comment size limit");
+  });
+
+  it('measures the MARKED body, not the formatter output', async () => {
+    // Exactly at the cap on its own — it is the prepended marker that pushes
+    // it over. A guard applied to the raw body would let this through and eat
+    // the 422 that loses the whole review.
+    const { octokit, calls } = captureComment();
+    await postReviewComment(octokit, 'o', 'r', 1, 'x'.repeat(MAX_COMMENT_BODY));
+    const body = calls[0].body as string;
+    expect(body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(body).toContain("Truncated to fit GitHub's comment size limit");
+  });
+
+  it('passes a body that already fits through untouched', async () => {
+    const { octokit, calls } = captureComment();
+    await postReviewComment(octokit, 'o', 'r', 1, 'a short review');
+    expect(calls[0].body).toBe(`${BOT_COMMENT_MARKER}\na short review`);
+  });
+
+  it('guards the re-review path too, not just create', async () => {
+    const { octokit, calls } = captureComment();
+    await updateReviewComment(octokit, 'o', 'r', 99, 'y'.repeat(MAX_COMMENT_BODY * 2));
+    const body = calls[0].body as string;
+    expect(body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(body).toContain("Truncated to fit GitHub's comment size limit");
+  });
+
+  it('enforceCommentBodyLimit is a no-op below the cap', () => {
+    const body = 'z'.repeat(MAX_COMMENT_BODY);
+    expect(enforceCommentBodyLimit(body, 'ctx')).toBe(body);
+  });
+});
+
+describe('check run summary size guard (#468)', () => {
+  it('truncates output.summary before the call', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const octokit = {
+      checks: { create: vi.fn(async (args: Record<string, unknown>) => { calls.push(args); return { data: {} }; }) },
+    } as unknown as Octokit;
+
+    await createCheckRun(octokit, 'o', 'r', 'sha', {
+      status: 'completed',
+      conclusion: 'success',
+      title: 'ok',
+      summary: 's'.repeat(70_000),
+    });
+
+    const output = calls[0].output as { summary: string };
+    // The surrounding try/catch is non-fatal by design, so an oversized
+    // summary fails invisibly — truncating is what keeps the check visible.
+    expect(output.summary.length).toBeLessThanOrEqual(65_535);
+    expect(output.summary.endsWith('…')).toBe(true);
+  });
+});
+
+describe('inline comment body size guard (#468)', () => {
+  const changedFiles = ['src/app.ts'];
+
+  it('caps runaway description and suggestion prose', () => {
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'T', description: 'd'.repeat(50_000), suggestion: 's'.repeat(50_000),
+    }], changedFiles);
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(c.body).toContain('…');
+  });
+
+  it('caps a runaway title without breaking title extraction', () => {
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'T'.repeat(5_000), description: 'd', suggestion: '',
+    }], changedFiles);
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(extractInlineCommentTitle(c.body).length).toBeLessThanOrEqual(500);
+  });
+
+  it('preserves the mw-fp fingerprint through truncation — /resolve depends on it', () => {
+    const fp = "app.get('/admin', (req,res) => res.json(db.query('--x')))";
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'T', description: 'd'.repeat(80_000), suggestion: '', fingerprint: fp,
+    }], changedFiles);
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(extractInlineCommentFingerprint(c.body)).toBe(fp);
+  });
+
+  it('leaves normal-sized inline bodies byte-identical', () => {
+    const [c] = buildInlineComments([{
+      file: 'src/app.ts', line: 10, severity: 'critical' as const,
+      title: 'SQL Injection', description: 'User input in query', suggestion: 'Parameterize',
+    }], changedFiles);
+    expect(c.body).toBe(
+      `${INLINE_BOT_COMMENT_MARKER}\n**🔴 SQL Injection**\n\nUser input in query\n\n> **Suggestion:** Parameterize`,
+    );
   });
 });
