@@ -169,6 +169,12 @@ export class TraceRecorder {
     let e = this.entries.get(key);
     if (!e) {
       this.enter(f, 'orchestrator');
+      // Read back the key `enter()` actually used, NOT the resolved one.
+      // These differ when an alias points at a row that never entered — an
+      // orchestrator rewrite that a merge stage then renamed. In that case the
+      // resolved key is dangling and has no row, so looking it up here would
+      // hand back `undefined` and the assertion below would throw on the very
+      // path this fallback exists to handle.
       e = this.entries.get(outcomeKey(f))!;
     }
     // First verdict wins: a later stage never rewrites an earlier one's record.

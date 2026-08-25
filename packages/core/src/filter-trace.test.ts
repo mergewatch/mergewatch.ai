@@ -132,3 +132,54 @@ describe('TraceRecorder', () => {
     expect(o.stage).toBeUndefined();
   });
 });
+
+describe('TraceRecorder — dangling alias (#478 review)', () => {
+  // An orchestrator rewrite that a merge stage then renames produces an alias
+  // whose TARGET never entered the ledger. The fallback in record() must key
+  // off the finding itself, not the resolved key: the resolved key has no row,
+  // so reading it back would hand `undefined` to a non-null assertion and
+  // throw on exactly the path the fallback exists to handle.
+  it('handles an alias pointing at a row that never entered', () => {
+    const t = new TraceRecorder();
+    const reworded = f({ title: 'Reworded by the orchestrator' });
+    const merged = f({ title: 'Reworded by the orchestrator — and 1 related concern' });
+
+    t.alias(outcomeKey(reworded), outcomeKey(merged));   // target never entered
+    expect(() => t.record(merged, 'surfaced')).not.toThrow();
+
+    const rows = t.outcomes();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].outcome).toBe('surfaced');
+  });
+
+  it('does not create a duplicate row when the same finding is recorded twice through a dangling alias', () => {
+    const t = new TraceRecorder();
+    const reworded = f({ title: 'Reworded' });
+    const merged = f({ title: 'Reworded — and 1 related concern' });
+
+    t.alias(outcomeKey(reworded), outcomeKey(merged));
+    t.record(merged, 'dropped', 'confidence-floor', { reason: 'first' });
+    t.record(merged, 'surfaced');
+
+    const rows = t.outcomes();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].outcome).toBe('dropped');   // first verdict still wins
+    expect(rows[0].reason).toBe('first');
+  });
+
+  it('still resolves through an alias whose target DID enter', () => {
+    // The ordinary case must keep working — this is the one the fallback is
+    // not involved in at all.
+    const t = new TraceRecorder();
+    const before = f({ title: 'Original' });
+    const after = f({ title: 'Original — and 1 related concern' });
+    t.enter(before, 'security');
+    t.alias(outcomeKey(before), outcomeKey(after));
+    t.record(after, 'surfaced');
+
+    const rows = t.outcomes();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('Original');
+    expect(rows[0].agents).toEqual(['security']);
+  });
+});
