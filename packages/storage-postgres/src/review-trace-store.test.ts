@@ -83,3 +83,35 @@ describe('PostgresReviewTraceStore', () => {
     expect(await new PostgresReviewTraceStore(db).get('o/r', 'nope')).toBeNull();
   });
 });
+
+describe('malformed stored data (#480 review)', () => {
+  function dbReturning(row: Row) {
+    return {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => [row]) })) })),
+      })),
+    } as any;
+  }
+
+  it('degrades a non-array jsonb outcomes column to an empty ledger', async () => {
+    // jsonb accepts any shape, so the column type is not a guarantee.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = dbReturning({
+      repoFullName: 'o/r', prNumberCommitSha: '42#abc', outcomes: { not: 'an array' },
+      truncated: false, totalOutcomes: null, createdAt: 'now', expiresAt: null,
+    });
+    const got = await new PostgresReviewTraceStore(db).get('o/r', '42#abc');
+    expect(got?.outcomes).toEqual([]);
+  });
+
+  it('ignores a non-numeric totalOutcomes rather than passing it through', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = dbReturning({
+      repoFullName: 'o/r', prNumberCommitSha: '42#abc', outcomes: [],
+      truncated: 'yes', totalOutcomes: 'lots', createdAt: 'now', expiresAt: null,
+    });
+    const got = await new PostgresReviewTraceStore(db).get('o/r', '42#abc');
+    expect(got?.totalOutcomes).toBeUndefined();
+    expect(got?.truncated).toBeUndefined();
+  });
+});

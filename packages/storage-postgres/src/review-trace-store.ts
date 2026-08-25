@@ -53,12 +53,23 @@ export class PostgresReviewTraceStore implements IReviewTraceStore {
 
     const r = rows[0];
     if (!r) return null;
+    // jsonb accepts any shape, so validate at the boundary rather than trusting
+    // the column type. #472 and #295 both iterate `outcomes`; handing them a
+    // non-array would crash the consumer instead of degrading here. Same guard
+    // finding-disposition-store.ts and review-store.ts already use.
+    if (!Array.isArray(r.outcomes)) {
+      console.warn(
+        '[filter-trace] malformed outcomes for %s %s — returning an empty ledger',
+        repoFullName,
+        prNumberCommitSha,
+      );
+    }
     return {
       repoFullName: r.repoFullName,
       prNumberCommitSha: r.prNumberCommitSha,
-      outcomes: (r.outcomes ?? []) as FindingOutcome[],
-      ...(r.truncated ? { truncated: true } : {}),
-      ...(r.totalOutcomes != null ? { totalOutcomes: r.totalOutcomes } : {}),
+      outcomes: Array.isArray(r.outcomes) ? (r.outcomes as FindingOutcome[]) : [],
+      ...(r.truncated === true ? { truncated: true } : {}),
+      ...(typeof r.totalOutcomes === 'number' ? { totalOutcomes: r.totalOutcomes } : {}),
       createdAt: r.createdAt,
       ...(r.expiresAt ? { ttl: Math.floor(r.expiresAt.getTime() / 1000) } : {}),
     };

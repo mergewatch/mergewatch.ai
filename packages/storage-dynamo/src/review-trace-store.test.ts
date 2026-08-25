@@ -75,3 +75,21 @@ describe('queryByPR isolation (#471 regression)', () => {
     expect(sent[0].input.KeyConditionExpression).toContain('begins_with(prNumberCommitSha');
   });
 });
+
+describe('malformed stored data (#480 review)', () => {
+  it('treats an item with non-array outcomes as absent', async () => {
+    // Consumers (#472, #295) iterate `outcomes`; handing them an object would
+    // crash there instead of failing at the storage boundary.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client } = makeClient({ ...TRACE, outcomes: { not: 'an array' } });
+    const got = await new DynamoReviewTraceStore(client, 'traces').get('o/r', '42#abc123');
+    expect(got).toBeNull();
+  });
+
+  it('treats an item missing outcomes entirely as absent', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client } = makeClient({ repoFullName: 'o/r', prNumberCommitSha: '42#abc123' });
+    const got = await new DynamoReviewTraceStore(client, 'traces').get('o/r', '42#abc123');
+    expect(got).toBeNull();
+  });
+});

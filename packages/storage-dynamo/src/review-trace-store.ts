@@ -49,6 +49,19 @@ export class DynamoReviewTraceStore implements IReviewTraceStore {
         Key: { repoFullName, prNumberCommitSha },
       }),
     );
-    return (result.Item as ReviewTraceItem | undefined) ?? null;
+    const item = result.Item as ReviewTraceItem | undefined;
+    if (!item) return null;
+    // Validate the one field consumers iterate. An item written by an older
+    // shape, or a partial write, would otherwise pass the cast and crash the
+    // dashboard (#472) or the audit export (#295) rather than failing here.
+    if (!Array.isArray(item.outcomes)) {
+      console.warn(
+        '[filter-trace] malformed trace item for %s %s — treating as absent',
+        repoFullName,
+        prNumberCommitSha,
+      );
+      return null;
+    }
+    return item;
   }
 }
