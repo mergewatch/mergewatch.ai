@@ -1152,6 +1152,77 @@ describe('runReviewPipeline', () => {
     expect(result.mergeScoreReason).toContain('No issues');
   });
 
+  // #385 — W10 clustering runs BEFORE the FP-A confidence floor.
+  //
+  // The reported symptom: E2E-29's region-spread findings were filter-dropped
+  // before consolidation saw them, so no "and N related concerns" row survived
+  // — while E2E-32, the same shape sharing one exact line, came through fine
+  // via FP-C upstream. The asymmetry was ordering, not the findings.
+  it('clusters a region-spread group before the confidence floor can dismantle it (#385)', async () => {
+    // The security agent emits the pair; the rest are empty. Agents must
+    // actually produce findings or the orchestrator never runs.
+    const securityResponse = validFindingsJson([
+      {
+        line: 2, severity: 'critical', confidence: 40,
+        title: 'Import validation missing on bar payload',
+      },
+      {
+        line: 3, severity: 'warning', confidence: 95,
+        title: 'Payload validation needs a schema check',
+      },
+    ]);
+    const agentResponse = JSON.stringify({ findings: [] });
+    const summaryResponse = JSON.stringify({ summary: 'Refactor.' });
+    const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+    const orchestratorResponse = JSON.stringify({
+      findings: [
+        {
+          file: 'foo.ts', line: 2, severity: 'critical', category: 'security',
+          confidence: 40,
+          title: 'Import validation missing on bar payload',
+          description: '…', suggestion: '…',
+        },
+        {
+          file: 'foo.ts', line: 3, severity: 'warning', category: 'security',
+          confidence: 95,
+          title: 'Payload validation needs a schema check',
+          description: '…', suggestion: '…',
+        },
+      ],
+      mergeScore: 2,
+      mergeScoreReason: 'Critical present.',
+    });
+    const llm = createMockLLM([
+      securityResponse, agentResponse, agentResponse,
+      agentResponse, agentResponse, agentResponse,
+      summaryResponse, diagramResponse, orchestratorResponse,
+    ]);
+
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        enabledAgents: allAgentsEnabled,
+        minConfidence: 75,
+      },
+      { llm },
+    );
+
+    // Both survive as ONE finding carrying the audit trail. Under the old
+    // ordering the floor ran first: the 40-confidence critical was deleted
+    // outright and the survivor had nothing left to cluster with, so the
+    // "related concerns" block never existed.
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toMatch(/and 1 related concern/);
+    expect(result.findings[0].description).toMatch(/Related concerns clustered into this finding/);
+    // Severity is the strongest; confidence is now ALSO the strongest, which is
+    // what carries the merged finding over the floor rather than under it.
+    expect(result.findings[0].severity).toBe('critical');
+  });
+
   it('preserves the orchestrator mergeScore when there are visible findings post-filter', async () => {
     // Orchestrator returns a finding on a CHANGED line (line 3 — within
     // sampleDiff's range) with score 3. Filter keeps it. Score stays.

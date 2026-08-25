@@ -168,6 +168,53 @@ describe('clusterFindings', () => {
 
 // ─── FP-C: pre-orchestrator cross-agent dedup ───────────────────────────────
 
+// ─── #385 — a cluster is as well-evidenced as its strongest member ──────────
+//
+// These matter because W10 now runs BEFORE the FP-A confidence floor. The
+// merged finding is what the floor sees, so inheriting only the primary's
+// score would let a weak critical delete well-evidenced siblings.
+describe('#385 — merged confidence is the max across members', () => {
+  it('takes the highest confidence, not the primary severity holder\'s', () => {
+    const findings = [
+      // primary by severity, but poorly evidenced
+      f({ line: 10, severity: 'critical', confidence: 40, title: 'Input validation missing on payload' }),
+      f({ line: 12, severity: 'warning', confidence: 95, title: 'Payload validation needs schema check' }),
+    ];
+    const { findings: out, clusteredCount } = clusterFindings(findings);
+    expect(clusteredCount).toBe(1);
+    expect(out[0].severity).toBe('critical');   // severity still the strongest
+    expect(out[0].confidence).toBe(95);         // confidence now also the strongest
+  });
+
+  it('survives the FP-A floor it would previously have failed', () => {
+    // The regression this guards: with the primary's 40, a >=75 floor would
+    // drop the merged finding and take the 95-confidence sibling with it.
+    const [merged] = clusterFindings([
+      f({ line: 10, severity: 'critical', confidence: 40, title: 'Input validation missing on payload' }),
+      f({ line: 12, severity: 'warning', confidence: 95, title: 'Payload validation needs schema check' }),
+    ]).findings;
+    expect((merged.confidence ?? 100) >= 75).toBe(true);
+  });
+
+  it('leaves confidence absent when no member carries one', () => {
+    // Unscored findings default to 100 at the floor; inventing a number here
+    // would be a silent behaviour change for callers that never set it.
+    const { findings: out } = clusterFindings([
+      f({ line: 10, title: 'Input validation missing on payload' }),
+      f({ line: 12, title: 'Payload validation needs schema check' }),
+    ]);
+    expect(out[0].confidence).toBeUndefined();
+  });
+
+  it('ignores members with no confidence when taking the max', () => {
+    const { findings: out } = clusterFindings([
+      f({ line: 10, title: 'Input validation missing on payload' }),
+      f({ line: 12, confidence: 80, title: 'Payload validation needs schema check' }),
+    ]);
+    expect(out[0].confidence).toBe(80);
+  });
+});
+
 describe('dedupeCrossAgentByLine', () => {
   function cf(partial: Partial<ClusterableFinding> & { line: number; title: string }): ClusterableFinding {
     return { file: 'src/x.ts', severity: 'warning', description: '', ...partial };

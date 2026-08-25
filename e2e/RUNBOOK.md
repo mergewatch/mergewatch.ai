@@ -1333,6 +1333,7 @@ The bait: bug / security / style / error-handling agents each have a distinct an
 
 **Failure modes**
 - ❌ All N findings still appear separately in the table (clustering didn't fire — probable cause: no shared significant token after stop-word filtering; check `extractSignificantTokens` on the actual titles)
+- ❌ Fewer findings than planted and **no** "and N related concerns" row — the siblings were filtered before consolidation saw them. W10 runs BEFORE the FP-A confidence floor and the min-severity filter for exactly this reason (#385); if that ordering is ever reversed, a region-spread cluster is dismantled before it can form, while an exact-line duplicate still survives via FP-C upstream. That asymmetry between E2E-29 and E2E-32 is the tell.
 - ❌ Two findings on the same file in **different code regions** got merged into one (over-cluster — `maxLineSpan` may have been widened too far, or the token-overlap heuristic accepted a coincidental match)
 - ❌ The merged finding's severity is NOT the strongest in the cluster (severity-rank tie-break bug)
 - ❌ The merged finding's body lost the audit trail (the "Related concerns" list is missing or truncated)
