@@ -183,3 +183,32 @@ describe('TraceRecorder — dangling alias (#478 review)', () => {
     expect(rows[0].agents).toEqual(['security']);
   });
 });
+
+describe('TraceRecorder — alias chain termination (#478 review)', () => {
+  it('terminates on a cyclic alias chain instead of walking a fixed bound', () => {
+    const t = new TraceRecorder();
+    const a = f({ title: 'A' });
+    const b = f({ title: 'B' });
+    t.enter(a, 'security');
+    // Force a cycle directly — the pipeline only ever renames forward, but the
+    // recorder should not depend on its one caller behaving.
+    t.alias(outcomeKey(a), outcomeKey(b));
+    t.alias(outcomeKey(b), outcomeKey(a));
+    expect(() => t.record(b, 'surfaced')).not.toThrow();
+    expect(t.outcomes().length).toBeGreaterThan(0);
+  });
+
+  it('resolves a three-link chain to the original row', () => {
+    const t = new TraceRecorder();
+    const one = f({ title: 'One' });
+    const two = f({ title: 'Two' });
+    const three = f({ title: 'Three' });
+    t.enter(one, 'security');
+    t.alias(outcomeKey(one), outcomeKey(two));
+    t.alias(outcomeKey(two), outcomeKey(three));
+    t.record(three, 'surfaced');
+    const rows = t.outcomes();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('One');
+  });
+});

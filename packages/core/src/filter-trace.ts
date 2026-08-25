@@ -138,9 +138,17 @@ export class TraceRecorder {
   /** Resolve a possibly-renamed key back to the row that entered. */
   private resolve(key: string): string {
     let k = key;
-    // Bounded walk: a finding can be renamed by FP-C and again by W10.
-    for (let i = 0; i < 8 && this.aliases.has(k); i++) {
-      k = this.aliases.get(k)!;
+    // A finding can be renamed twice (FP-C, then W10), so this walks a chain.
+    // Termination is by cycle detection rather than an iteration count: a
+    // counter stops the hang but returns whichever key the loop happened to
+    // land on, which is a different wrong answer per bound. Breaking on the
+    // first repeat is deterministic and independent of chain length.
+    const seen = new Set<string>([k]);
+    while (this.aliases.has(k)) {
+      const next = this.aliases.get(k)!;
+      if (seen.has(next)) break;
+      seen.add(next);
+      k = next;
     }
     return k;
   }
