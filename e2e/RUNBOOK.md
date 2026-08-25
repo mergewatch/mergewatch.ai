@@ -3469,6 +3469,7 @@ Two production reviews reported `1430` and `3869 findings removed by dedup & qua
 - [ ] Where an agent does malfunction, the details drawer shows **⚠️ Malformed agent output — N agent response(s) returned unusable findings**, not an inflated Suppressed line
 - [ ] `[findings] DEGENERATE agent response: N of M entries unusable` appears in the logs when it happens
 - [ ] A normal review is unchanged — no new warning, suppressed counts still reflect real dedup work
+- [ ] **(#470)** The Suppressed number is now *derived* from the filter ledger rather than `raw − final`. On a repo with **custom agents** the number may legitimately drop: the old subtraction was measured upstream of where #385's custom-agent findings re-enter, so it counted them as suppressed. A change there is the fix, not a regression — but on a repo with no custom agents the two must agree exactly.
 - [ ] `⚠️ Unparsed agent output` (#382) still appears independently for genuinely unparseable responses
 
 **Failure modes.**

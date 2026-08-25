@@ -3869,3 +3869,147 @@ describe('normalizeEvidenceReason (#469)', () => {
     expect(normalizeEvidenceReason('Line 15 interpolates id.')).toBe('Line 15 interpolates id.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Filter outcome ledger (#470)
+// ---------------------------------------------------------------------------
+
+describe('filter outcome ledger (#470)', () => {
+  const allAgents = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+  const empty = JSON.stringify({ findings: [] });
+  const summaryResponse = JSON.stringify({ summary: 'Refactor.' });
+  const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+
+  // Two findings on changed lines, deliberately sharing no significant token
+  // so neither FP-C (same line) nor W10 (shared wording) merges them — this
+  // isolates the stage under test.
+  const twoFindings = JSON.stringify({
+    findings: [
+      { file: 'foo.ts', line: 2, severity: 'warning', category: 'bug', title: 'Unbounded retry loop', description: 'd', suggestion: 's' },
+      { file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: 'Missing null check on payload', description: 'd', suggestion: 's' },
+    ],
+  });
+
+  async function run(responses: string[], extra: Record<string, unknown> = {}) {
+    const llm = createMockLLM(responses);
+    return runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext,
+        modelId: 'heavy-model', lightModelId: 'light-model',
+        maxFindings: 25, enabledAgents: allAgents, ...extra,
+      },
+      { llm },
+    );
+  }
+
+  it('derives suppressedCount equal to the old raw-minus-final subtraction', async () => {
+    // No custom agents run here, which is the condition under which the old
+    // subtraction was correct — it double-counted #385 re-entrants otherwise.
+    const orchestrator = JSON.stringify({
+      findings: [{ file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: 'Missing null check on payload', description: 'd', suggestion: 's' }],
+      mergeScore: 3, mergeScoreReason: 'One warning.',
+    });
+    const result = await run([
+      twoFindings, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+
+    const totalRaw = 2;                       // what the old counter measured
+    const oldSubtraction = totalRaw - result.findings.length;
+    expect(result.suppressedCount).toBe(oldSubtraction);
+    expect(result.suppressedCount).toBe(1);
+  });
+
+  it('gives every finding that entered exactly one terminal outcome', async () => {
+    const orchestrator = JSON.stringify({
+      findings: [{ file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: 'Missing null check on payload', description: 'd', suggestion: 's' }],
+      mergeScore: 3, mergeScoreReason: 'One warning.',
+    });
+    const result = await run([
+      twoFindings, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+
+    const keys = result.filterOutcomes.map((o) => o.key);
+    expect(new Set(keys).size).toBe(keys.length);          // no finding recorded twice
+    expect(result.filterOutcomes).toHaveLength(2);          // no finding lost
+    for (const o of result.filterOutcomes) {
+      expect(['surfaced', 'merged', 'dropped', 'demoted']).toContain(o.outcome);
+    }
+    expect(result.filterOutcomes.filter((o) => o.outcome === 'surfaced')).toHaveLength(1);
+  });
+
+  it('attributes an orchestrator drop to its stage, with no reason', async () => {
+    // #473 would let the orchestrator explain itself; until then its drops are
+    // attributable but not explained, and the ledger should not invent a reason.
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const result = await run([
+      twoFindings, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+
+    const dropped = result.filterOutcomes.filter((o) => o.outcome === 'dropped');
+    expect(dropped).toHaveLength(2);
+    for (const o of dropped) {
+      expect(o.stage).toBe('orchestrator');
+      expect(o.reason).toBeUndefined();
+    }
+  });
+
+  it('records the agent that raised each finding', async () => {
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const result = await run([
+      twoFindings, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+    for (const o of result.filterOutcomes) {
+      expect(o.agents).toEqual(['security']);
+    }
+  });
+
+  it('does NOT turn an unparseable agent response into a ledger entry', async () => {
+    // A response that did not parse yields no finding object at all. It stays a
+    // parseFailureCount reliability warning, which already says the right thing.
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const result = await run([
+      'not json at all', empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+    expect(result.parseFailureCount).toBeGreaterThan(0);
+    expect(result.filterOutcomes).toHaveLength(0);
+  });
+
+  it('does NOT turn a degenerate (title-less) finding into a ledger entry', async () => {
+    // #401's shape: parses cleanly, but the entries are unusable. Counting
+    // those as "filtered" is what made a malfunction look like productive work.
+    const degenerate = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 2, severity: 'warning', category: 'bug', title: '', description: '', suggestion: '' },
+        { file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: '', description: '', suggestion: '' },
+      ],
+    });
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const result = await run([
+      degenerate, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+    expect(result.filterOutcomes).toHaveLength(0);
+  });
+
+  it('records a surfaced finding as surfaced, not merely as absent', async () => {
+    const orchestrator = JSON.stringify({
+      findings: [{ file: 'foo.ts', line: 3, severity: 'warning', category: 'bug', title: 'Missing null check on payload', description: 'd', suggestion: 's' }],
+      mergeScore: 3, mergeScoreReason: 'One warning.',
+    });
+    const result = await run([
+      twoFindings, empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse, orchestrator,
+    ]);
+    const surfaced = result.filterOutcomes.find((o) => o.outcome === 'surfaced')!;
+    expect(surfaced.title).toBe('Missing null check on payload');
+    expect(surfaced.stage).toBeUndefined();
+  });
+});

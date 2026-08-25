@@ -44,8 +44,8 @@ describe('extractSignificantTokens', () => {
 describe('clusterFindings', () => {
   it('returns inputs unchanged when there are < 2 findings', () => {
     const single = [f({ line: 1, title: 'Single finding about validation' })];
-    expect(clusterFindings(single)).toEqual({ findings: single, clusteredCount: 0 });
-    expect(clusterFindings([])).toEqual({ findings: [], clusteredCount: 0 });
+    expect(clusterFindings(single)).toEqual({ findings: single, clusteredCount: 0, merges: [] });
+    expect(clusterFindings([])).toEqual({ findings: [], clusteredCount: 0, merges: [] });
   });
 
   it('merges two findings when same file + close lines + shared significant token', () => {

@@ -28,6 +28,18 @@
 /** Minimal shape of a finding this module consumes. */
 import type { FindingEvidence } from './types/db.js';
 
+/**
+ * #470 — what a merge stage actually did, so the filter ledger can attribute
+ * each absorbed finding and follow the survivor across its rename. Both merge
+ * stages rewrite the primary's title, so recording only the absorbed set would
+ * leave the survivor looking like a different finding downstream.
+ */
+export interface MergeReport<T> {
+  primaryBefore: T;
+  primaryAfter: T;
+  absorbed: T[];
+}
+
 export interface ClusterableFinding {
   file: string;
   line: number;
@@ -146,14 +158,14 @@ function clusterPair(
 export function clusterFindings<T extends ClusterableFinding>(
   findings: T[],
   options: ClusterOptions = {},
-): { findings: T[]; clusteredCount: number } {
+): { findings: T[]; clusteredCount: number; merges: MergeReport<T>[] } {
   const opts: Required<ClusterOptions> = {
     maxLineSpan: options.maxLineSpan ?? 50,
     minTokenOverlap: options.minTokenOverlap ?? 1,
     maxClusterSize: options.maxClusterSize ?? 5,
   };
 
-  if (findings.length < 2) return { findings, clusteredCount: 0 };
+  if (findings.length < 2) return { findings, clusteredCount: 0, merges: [] };
 
   // Pre-extract token sets — repeated tokenization is by far the hot path.
   const tokenSets = findings.map((f) =>
@@ -194,6 +206,7 @@ export function clusterFindings<T extends ClusterableFinding>(
 
   const result: T[] = [];
   let clusteredCount = 0;
+  const merges: MergeReport<T>[] = [];
 
   for (const indices of buckets.values()) {
     if (indices.length === 1) {
@@ -241,10 +254,11 @@ export function clusterFindings<T extends ClusterableFinding>(
       description: `${primary.description}\n\n**Related concerns clustered into this finding (W10):**\n${relatedList}`,
     };
     result.push(merged);
+    merges.push({ primaryBefore: primary, primaryAfter: merged, absorbed: others });
     clusteredCount += others.length;
   }
 
-  return { findings: result, clusteredCount };
+  return { findings: result, clusteredCount, merges };
 }
 
 /**
@@ -278,7 +292,7 @@ export interface TaggedClusterableFindings<T extends ClusterableFinding> {
 
 export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
   taggedFindings: ReadonlyArray<TaggedClusterableFindings<T>>,
-): { taggedFindings: TaggedClusterableFindings<T>[]; dedupedCount: number } {
+): { taggedFindings: TaggedClusterableFindings<T>[]; dedupedCount: number; merges: MergeReport<T>[] } {
   // Flatten with category + original-order attribution.
   interface Entry { category: string; finding: T; order: number }
   const all: Entry[] = [];
@@ -289,7 +303,7 @@ export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
     }
   }
   if (all.length < 2) {
-    return { taggedFindings: taggedFindings.map((t) => ({ ...t, findings: [...(t.findings ?? [])] })), dedupedCount: 0 };
+    return { taggedFindings: taggedFindings.map((t) => ({ ...t, findings: [...(t.findings ?? [])] })), dedupedCount: 0, merges: [] };
   }
 
   // Group by exact `file::line`.
@@ -302,6 +316,7 @@ export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
   }
 
   const surviving: Entry[] = [];
+  const merges: MergeReport<T>[] = [];
   let dedupedCount = 0;
 
   for (const g of groups.values()) {
@@ -350,6 +365,11 @@ export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
         : {}),
     };
     surviving.push({ category: primary.category, finding: mergedFinding, order: primary.order });
+    merges.push({
+      primaryBefore: primary.finding,
+      primaryAfter: mergedFinding,
+      absorbed: others.map((o) => o.finding),
+    });
     dedupedCount += others.length;
   }
 
@@ -377,5 +397,6 @@ export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
       findings: byCategory.get(t.category) ?? [],
     })),
     dedupedCount,
+    merges,
   };
 }
