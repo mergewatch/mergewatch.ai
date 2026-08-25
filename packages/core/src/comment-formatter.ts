@@ -289,7 +289,25 @@ function renderEvidence(f: Finding): string {
   if (e.code?.trim()) {
     const startLine = e.codeStartLine;
     const gutter = startLine != null ? ` \`${f.file}:${startLine}\`` : '';
-    out += `\n\n  <sub>Cited code${gutter}</sub>\n\n\`\`\`\n${e.code}\n\`\`\``;
+    // #477 — two rendering hazards, both reachable because the cited code is
+    // raw source from the file at head:
+    //
+    //  1. A triple backtick in the code closes the fence early and the rest of
+    //     the review renders as broken markdown. #469 deliberately cites .md
+    //     files like any other, so this is not theoretical. CommonMark allows
+    //     any fence length >= 3 and requires the closer to be at least as long,
+    //     so open with one longer than the longest run in the code itself.
+    //  2. The finding is a `-` bullet, and in GFM a blank line followed by
+    //     unindented content ends the list — an unindented fence escapes the
+    //     bullet and detaches the `↳ reason` line below from its finding.
+    //     Indent the fence and its content to the list content column.
+    const longestRun = Math.max(
+      0,
+      ...(e.code.match(/`+/g) ?? []).map((run) => run.length),
+    );
+    const fence = '`'.repeat(Math.max(3, longestRun + 1));
+    const indented = e.code.split('\n').map((l) => `  ${l}`).join('\n');
+    out += `\n\n  <sub>Cited code${gutter}</sub>\n\n  ${fence}\n${indented}\n  ${fence}`;
   }
   if (reason) {
     out += `\n  ↳ ${reason}`;

@@ -2378,24 +2378,77 @@ ${content}`;
 export function withEvidenceCode<T extends OrchestratedFinding>(
   findings: T[],
   fileContents: Record<string, string>,
+  /**
+   * #477 — cross-agent convergence, carried around the orchestrator.
+   *
+   * FP-C sets `evidence.agents` pre-orchestrator, but `runOrchestratorAgent`
+   * rebuilds every finding from the model's JSON and ORCHESTRATOR_SCHEMA has
+   * no `evidence` property, so the field is destroyed in transit. Worse than
+   * absent: the schema is deliberately permissive, so the model *may* echo it
+   * back, making the behaviour intermittent rather than reliably missing.
+   *
+   * Re-attached here because this already runs post-orchestrator over the
+   * combined builtin + custom list and already merges into existing evidence.
+   */
+  convergence?: Map<string, ConvergenceRecord>,
 ): T[] {
   return findings.map((f) => {
     if (f.severity !== 'critical' && f.severity !== 'warning') return f;
+
+    const agents = resolveConvergence(f, convergence);
+    const withAgents = agents
+      ? { ...f, evidence: { ...(f.evidence ?? {}), agents } }
+      : f;
+
     const content = fileContents[f.file];
-    if (!content) return f;
+    if (!content) return withAgents;
     const lines = content.split('\n');
     const idx = f.line - 1;
-    if (idx < 0 || idx >= lines.length) return f;
+    if (idx < 0 || idx >= lines.length) return withAgents;
     const start = Math.max(0, idx - 1);
     const end = Math.min(lines.length, idx + 2);
     const code = lines.slice(start, end).join('\n');
     // An anchor on a blank line yields nothing worth rendering.
-    if (!code.trim()) return f;
+    if (!code.trim()) return withAgents;
     return {
-      ...f,
-      evidence: { ...(f.evidence ?? {}), code, codeStartLine: start + 1 },
+      ...withAgents,
+      evidence: { ...(withAgents.evidence ?? {}), code, codeStartLine: start + 1 },
     };
   });
+}
+
+/** #477 — what FP-C knew about a converged location, carried past the orchestrator. */
+export interface ConvergenceRecord {
+  agents: string[];
+  /** Significant tokens of the merged finding, used to reject a false match. */
+  tokens: Set<string>;
+}
+
+/**
+ * Decide whether a post-orchestrator finding is the one FP-C merged.
+ *
+ * Location alone is not enough. The orchestrator can return a *different*
+ * concern at the same line, and badging that one "security + bugs agreed"
+ * would be a fabricated claim on a trust surface. Convergence is valuable
+ * precisely because it is rarer and stronger than one agent's opinion, so a
+ * false positive costs more than a miss. Requiring a shared significant token
+ * tolerates the orchestrator rewording a title while rejecting an unrelated
+ * finding that merely landed on the same line.
+ *
+ * Best-effort by design, matching withCodeFingerprints: if the orchestrator
+ * rewrote the line number, this finds nothing and no convergence renders.
+ */
+function resolveConvergence(
+  f: OrchestratedFinding,
+  convergence?: Map<string, ConvergenceRecord>,
+): string[] | undefined {
+  if (!convergence) return undefined;
+  const rec = convergence.get(`${f.file}:${f.line}`);
+  if (!rec || rec.agents.length < 2) return undefined;
+  for (const t of extractSignificantTokens(`${f.title} ${f.description}`)) {
+    if (rec.tokens.has(t)) return rec.agents;
+  }
+  return undefined;
 }
 
 function withCodeFingerprints<T extends OrchestratedFinding>(
@@ -2932,7 +2985,18 @@ export async function runReviewPipeline(
   const fpCResult = dedupeCrossAgentByLine(builtinTagged);
   // FP-C merged siblings into a survivor whose title it rewrote; alias the
   // survivor so later stages still resolve to the row that entered.
+  // #477 — capture convergence before the orchestrator destroys it. The merged
+  // finding already carries evidence.agents (set by dedupeCrossAgentByLine), so
+  // no new return value is needed — just a note of where it was and what it said.
+  const convergence = new Map<string, ConvergenceRecord>();
   for (const m of fpCResult.merges) {
+    const agents = m.primaryAfter.evidence?.agents;
+    if (agents && agents.length > 1) {
+      convergence.set(`${m.primaryAfter.file}:${m.primaryAfter.line}`, {
+        agents,
+        tokens: extractSignificantTokens(`${m.primaryAfter.title} ${m.primaryAfter.description}`),
+      });
+    }
     const into = outcomeKey(m.primaryAfter);
     trace.alias(outcomeKey(m.primaryBefore), into);
     for (const a of m.absorbed) {
@@ -3244,6 +3308,7 @@ export async function runReviewPipeline(
       ...withCodeFingerprints(customFindings, groundingFileContents),
     ],
     groundingFileContents,
+    convergence,
   );
 
   // W3 convergence guard: drop findings the author already rebutted/deferred

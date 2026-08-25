@@ -3539,6 +3539,8 @@ This also repairs the **Unverified concerns** section, which explained every ite
 - [ ] The cited code is at most 3 lines and is the anchor line ±1
 - [ ] The verifier's sentence appears under the finding, capped at 200 chars
 - [ ] Two agents on one line render `security + bugs agreed independently`; a lone agent renders **no** attribution
+- [ ] **(#477)** Convergence survives the **orchestrator**, which rebuilds every finding from its own JSON and whose schema has no `evidence` property. This shipped broken in #476 and three unit suites missed it, each testing one side of the seam — the pipeline-level test in `reviewer.test.ts` is the one that catches it, and it asserts on the *rendered comment*
+- [ ] **(#477)** Cited code containing a triple backtick does not break the comment, and the code block renders **inside** its finding's bullet with the `↳` reason still attached
 - [ ] A warning shows the reason with **no** code block
 - [ ] An info finding shows **no** evidence affordance at all
 - [ ] Each item under "Unverified concerns" carries its own reason
@@ -3550,6 +3552,7 @@ This also repairs the **Unverified concerns** section, which explained every ite
 **Failure modes.**
 - ❌ Evidence on an info finding — an empty shell implying a check that never ran, which is the coverage illusion this exists to remove
 - ❌ A single agent named as if it were convergence — restates the category and dilutes the real signal
+- ❌ Convergence attributed to a finding that did NOT converge — a false "two agents agreed" is worse than none, since the signal's value is that it is rarer and stronger than one agent's opinion
 - ❌ Evidence collapsed behind a click on a critical — hiding proof on the highest-stakes finding is backwards
 - ❌ The reason runs to a paragraph — a finding needing a paragraph to justify itself has failed to justify itself
 - ❌ Comment growth is noticeably larger than ~350 chars per critical

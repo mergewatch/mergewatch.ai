@@ -940,3 +940,63 @@ describe('per-finding evidence (#469)', () => {
     expect(result).toContain('↳ r');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cited-code fence safety (#477)
+// ---------------------------------------------------------------------------
+
+describe('cited-code fence safety (#477)', () => {
+  function render(code: string) {
+    return formatReviewComment(baseOptions({
+      findings: [makeFinding({
+        severity: 'critical',
+        evidence: { code, codeStartLine: 14, reason: 'the reason sentence' },
+      })],
+      mergeScore: 1,
+    }));
+  }
+
+  it('opens a longer fence when the cited code contains a triple backtick', () => {
+    // Reachable, not theoretical: #469 cites .md files like any other, and a
+    // docs page quoting a code block closes the fence early — the rest of the
+    // review then renders as broken markdown.
+    const result = render('Here is a fence:\n```\nconst x = 1;\n```');
+    expect(result).toContain('````');
+    // The inner ``` must not be the closer.
+    const opener = result.slice(result.indexOf('Cited code')).match(/`{3,}/)![0];
+    expect(opener.length).toBeGreaterThan(3);
+  });
+
+  it('scales the fence past the longest backtick run, not just to four', () => {
+    const result = render('a ````` b');
+    expect(result).toContain('``````');
+  });
+
+  it('uses a plain 3-backtick fence when the code has none', () => {
+    const result = render('const x = 1;');
+    const opener = result.slice(result.indexOf('Cited code')).match(/`{3,}/)![0];
+    expect(opener).toBe('```');
+  });
+
+  it('indents the fence into the list item so the block stays in its bullet', () => {
+    // In GFM a blank line followed by unindented content ends the list, so an
+    // unindented fence escapes the bullet and detaches what follows.
+    const result = render('const x = 1;');
+    expect(result).toContain('\n  ```\n');
+    expect(result).toContain('\n  const x = 1;\n');
+  });
+
+  it('keeps the ↳ reason line attached after the code block', () => {
+    const result = render('const x = 1;');
+    const codeAt = result.indexOf('Cited code');
+    const reasonAt = result.indexOf('↳ the reason sentence');
+    expect(reasonAt).toBeGreaterThan(codeAt);
+    // Still at the list content column, i.e. still inside the bullet.
+    expect(result).toContain('\n  ↳ the reason sentence');
+  });
+
+  it('indents every line of a multi-line citation', () => {
+    const result = render('const a = 1;\nconst b = 2;\nconst c = 3;');
+    expect(result).toContain('\n  const a = 1;\n  const b = 2;\n  const c = 3;\n');
+  });
+});
