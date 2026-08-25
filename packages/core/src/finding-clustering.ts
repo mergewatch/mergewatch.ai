@@ -32,6 +32,12 @@ export interface ClusterableFinding {
   severity: 'critical' | 'warning' | 'info';
   title: string;
   description: string;
+  /**
+   * #385 — read so a merged finding can carry the STRONGEST confidence in its
+   * cluster, mirroring the strongest-severity rule. Absent means "unscored",
+   * which the FP-A floor already treats as 100.
+   */
+  confidence?: number;
 }
 
 const SEVERITY_RANK: Record<ClusterableFinding['severity'], number> = {
@@ -204,8 +210,24 @@ export function clusterFindings<T extends ClusterableFinding>(
     const relatedList = others
       .map((o) => `- \`${o.file}:${o.line}\` (${o.severity}) — ${o.title}`)
       .join('\n');
+    // #385 — confidence is the MAX across members, not the primary's.
+    //
+    // `primary` is chosen by severity alone, so without this a
+    // low-confidence critical absorbs higher-confidence warnings and inherits
+    // only its own weak score. Once clustering runs BEFORE the FP-A floor
+    // (which it now does), that would let one weak critical drag a whole
+    // cluster of well-evidenced findings below the threshold and delete them
+    // together — strictly worse than the pre-clustering behaviour.
+    //
+    // Taking the max mirrors the rule already applied to severity: a cluster
+    // is as serious, and as well-evidenced, as its strongest member.
+    const maxConfidence = members.reduce<number | undefined>((acc, m) => {
+      if (m.confidence == null) return acc;
+      return acc == null ? m.confidence : Math.max(acc, m.confidence);
+    }, undefined);
     const merged: T = {
       ...primary,
+      ...(maxConfidence != null ? { confidence: maxConfidence } : {}),
       title: `${primary.title} — and ${others.length} related concern${others.length === 1 ? '' : 's'}`,
       description: `${primary.description}\n\n**Related concerns clustered into this finding (W10):**\n${relatedList}`,
     };

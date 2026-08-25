@@ -2830,6 +2830,41 @@ export async function runReviewPipeline(
     agentAuthored,
   );
 
+  // #385 — W10 runs BEFORE the deleting filters below.
+  //
+  // It used to run after, so a region-spread cluster could be dismantled by
+  // the confidence floor before consolidation ever saw it: E2E-29 lost every
+  // sibling and rendered no "and N related concerns" row, while E2E-32 -- the
+  // same shape but sharing one exact line -- survived via FP-C upstream. The
+  // asymmetry was an artifact of ordering, not of the findings.
+  //
+  // Safe only because a merged finding now carries the MAX confidence of its
+  // members (finding-clustering.ts). Reordering without that would let a
+  // low-confidence critical absorb well-evidenced warnings and take the whole
+  // cluster below the floor -- worse than the behaviour being fixed.
+
+  // W10 — finding consolidation: cluster fragmented findings about the
+  // same code region (same file, lines within ±maxLineSpan, ≥1 shared
+  // significant token across title+description) into one finding with
+  // the strongest severity. Canonical case is voice-bot PR #37 where one
+  // "validate parsed S3 chunk file structure" concern was emitted as
+  // three separate findings at lines 82 / 130 / 150. Conservative defaults
+  // and a cluster-size cap keep over-clustering risk low. The absorbed
+  // count rolls into the downstream suppressedCount math.
+  {
+    const { findings: clustered, clusteredCount } = clusterFindings(
+      orchestratorResult.findings,
+    );
+    if (clusteredCount > 0) {
+      console.warn(
+        '[clustering] merged %d related finding%s into existing clusters',
+        clusteredCount,
+        clusteredCount === 1 ? '' : 's',
+      );
+      orchestratorResult.findings = clustered;
+    }
+  }
+
   // FP-A — Hard confidence-floor filter.
   // The orchestrator's prompt (rule #5) tells the model to drop findings with
   // confidence < 75, but nothing in code enforces it. This deterministic post-
@@ -2895,28 +2930,6 @@ export async function runReviewPipeline(
         suppressedCount === 1 ? '' : 's',
       );
       orchestratorResult.findings = collapsed;
-    }
-  }
-
-  // W10 — finding consolidation: cluster fragmented findings about the
-  // same code region (same file, lines within ±maxLineSpan, ≥1 shared
-  // significant token across title+description) into one finding with
-  // the strongest severity. Canonical case is voice-bot PR #37 where one
-  // "validate parsed S3 chunk file structure" concern was emitted as
-  // three separate findings at lines 82 / 130 / 150. Conservative defaults
-  // and a cluster-size cap keep over-clustering risk low. The absorbed
-  // count rolls into the downstream suppressedCount math.
-  {
-    const { findings: clustered, clusteredCount } = clusterFindings(
-      orchestratorResult.findings,
-    );
-    if (clusteredCount > 0) {
-      console.warn(
-        '[clustering] merged %d related finding%s into existing clusters',
-        clusteredCount,
-        clusteredCount === 1 ? '' : 's',
-      );
-      orchestratorResult.findings = clustered;
     }
   }
 
