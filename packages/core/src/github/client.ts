@@ -1219,6 +1219,7 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
       if (typeof u.reviewerChecklist === 'boolean') ux.reviewerChecklist = u.reviewerChecklist;
       if (typeof u.allClearMessage === 'boolean') ux.allClearMessage = u.allClearMessage;
       if (typeof u.commentHeader === 'string') ux.commentHeader = u.commentHeader;
+      if (typeof u.showEvidence === 'boolean') ux.showEvidence = u.showEvidence;
       config.ux = ux as UXConfig;
     }
 

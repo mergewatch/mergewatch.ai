@@ -30,6 +30,10 @@ import {
   type PreviousFinding,
   type ReviewPipelineOptions,
   isIntentClaimDismissal,
+  withEvidenceCode,
+  normalizeEvidenceReason,
+  EVIDENCE_REASON_MAX,
+  type OrchestratedFinding,
 } from './reviewer.js';
 import { AGENT_MODE_SUFFIX, AGENT_MODE_PLACEHOLDER, FINDING_VERIFICATION_PROMPT } from './prompts.js';
 
@@ -2488,7 +2492,7 @@ describe('verifyFindings', () => {
       '{"valid": false, "confidence": 0.95, "reason": "line 1 already awaits searchViaPostgres"}',
     ]);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+    expect(result).toEqual([{ ...critical, verification: 'unverified', evidence: { reason: 'line 1 already awaits searchViaPostgres' } }]);
   });
 
   it('#385 — a refuted WARNING is still dropped (drop authority below critical is unchanged)', async () => {
@@ -2503,7 +2507,7 @@ describe('verifyFindings', () => {
   it('keeps a critical the model confirms — tags it `verified` (W7 input)', async () => {
     const llm = createMockLLM(['{"valid": true, "confidence": 0.9, "reason": "genuine defect"}']);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...critical, verification: 'verified' }]);
+    expect(result).toEqual([{ ...critical, verification: 'verified', evidence: { reason: 'genuine defect' } }]);
   });
 
   it('keeps the finding when the file could not be fetched — leaves verification UNSET (W2 didn\'t run)', async () => {
@@ -2544,7 +2548,7 @@ describe('verifyFindings', () => {
       '{"valid": true, "confidence": 0.9, "reason": "confirmed on retry"}',
     ]);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...critical, verification: 'verified' }]);
+    expect(result).toEqual([{ ...critical, verification: 'verified', evidence: { reason: 'confirmed on retry' } }]);
     expect(llm.calls).toHaveLength(2);
   });
 
@@ -2587,7 +2591,7 @@ describe('verifyFindings', () => {
     const warning = { ...critical, severity: 'warning' as const };
     const llm = createMockLLM(['{"valid": true, "confidence": 0.85, "reason": "genuine smell"}']);
     const result = await verifyFindings([warning], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...warning, verification: 'verified' }]);
+    expect(result).toEqual([{ ...warning, verification: 'verified', evidence: { reason: 'genuine smell' } }]);
   });
 
   it('FP-E — keeps a warning the model can\'t verdict on — tags it `unverified`', async () => {
@@ -2628,7 +2632,7 @@ describe('verifyFindings', () => {
     ]);
     const result = await verifyFindings([c, w, i], fileContents, 'light', llm);
     expect(result).toEqual([
-      { ...c, verification: 'verified' },
+      { ...c, verification: 'verified', evidence: { reason: 'real bug' } },
       // w dropped (invalid)
       i, // pass-through, no tag
     ]);
@@ -2849,7 +2853,7 @@ describe('verifyFindings', () => {
         '{"valid": false, "confidence": 0.92, "reason": "abstraction-safe — Drizzle eq() parameterizes the value"}',
       ]);
       const result = await verifyFindings([finding], fileContents, 'light', llm);
-      expect(result).toEqual([{ ...finding, verification: 'unverified' }]);
+      expect(result).toEqual([{ ...finding, verification: 'unverified', evidence: { reason: 'abstraction-safe — Drizzle eq() parameterizes the value' } }]);
     });
 
     it('still KEEPS the finding when the model returns valid:true (regression: FP-K must not over-suppress)', async () => {
@@ -2861,7 +2865,7 @@ describe('verifyFindings', () => {
         '{"valid": true, "confidence": 0.85, "reason": "raw concat, no parameterization in sight"}',
       ]);
       const result = await verifyFindings([finding], fileContents, 'light', llm);
-      expect(result).toEqual([{ ...finding, verification: 'verified' }]);
+      expect(result).toEqual([{ ...finding, verification: 'verified', evidence: { reason: 'raw concat, no parameterization in sight' } }]);
     });
   });
 });
@@ -3627,7 +3631,7 @@ describe('verifyFindings — intent-claim guard (#372)', () => {
       '{"valid": false, "reason": "The query goes through a parameterized prepared statement two lines up."}',
     ]);
     const result = await verifyFindings([critical], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...critical, verification: 'unverified' }]);
+    expect(result).toEqual([{ ...critical, verification: 'unverified', evidence: { reason: 'The query goes through a parameterized prepared statement two lines up.' } }]);
   });
 });
 
@@ -3766,7 +3770,7 @@ describe('structured outputs (#390)', () => {
       },
     };
     const result = await verifyFindings([{ ...finding, category: 'security' }], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...finding, category: 'security', verification: 'unverified' }]);
+    expect(result).toEqual([{ ...finding, category: 'security', verification: 'unverified', evidence: { reason: 'the code is parameterized' } }]);
   });
 
   it('verifyFindings falls back to the text path when structured is unsupported', async () => {
@@ -3776,6 +3780,92 @@ describe('structured outputs (#390)', () => {
       async invokeStructured(): Promise<never> { throw new StructuredOutputUnsupportedError('none'); },
     };
     const result = await verifyFindings([{ ...finding, category: 'security' }], fileContents, 'light', llm);
-    expect(result).toEqual([{ ...finding, category: 'security', verification: 'verified' }]);
+    expect(result).toEqual([{ ...finding, category: 'security', verification: 'verified', evidence: { reason: 'real' } }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Evidence plumbing (#469)
+// ---------------------------------------------------------------------------
+
+describe('withEvidenceCode (#469)', () => {
+  const contents = {
+    'src/db.ts': ['const a = 1;', 'const b = 2;', 'query(`${id}`);', 'const d = 4;'].join('\n'),
+  };
+  // Typed, not inferred: an untyped literal narrows `evidence` out of T and
+  // every assertion below loses the field.
+  const base: OrchestratedFinding = {
+    file: 'src/db.ts', line: 3, severity: 'critical',
+    category: 'security', title: 't', description: 'd', suggestion: 's',
+  };
+
+  it('cites the anchor line plus one either side', () => {
+    const [f] = withEvidenceCode([base], contents);
+    expect(f.evidence?.code).toBe('const b = 2;\nquery(`${id}`);\nconst d = 4;');
+    expect(f.evidence?.codeStartLine).toBe(2);
+  });
+
+  it('caps the citation at 3 lines', () => {
+    const [f] = withEvidenceCode([base], contents);
+    expect(f.evidence!.code!.split('\n')).toHaveLength(3);
+  });
+
+  it('clamps at the start of file without wrapping', () => {
+    const [f] = withEvidenceCode([{ ...base, line: 1 }], contents);
+    expect(f.evidence?.code).toBe('const a = 1;\nconst b = 2;');
+    expect(f.evidence?.codeStartLine).toBe(1);
+  });
+
+  it('clamps at the end of file', () => {
+    const [f] = withEvidenceCode([{ ...base, line: 4 }], contents);
+    expect(f.evidence?.code).toBe('query(`${id}`);\nconst d = 4;');
+  });
+
+  it('skips info findings — the verifier never runs on them', () => {
+    const [f] = withEvidenceCode([{ ...base, severity: 'info' as const }], contents);
+    expect(f.evidence).toBeUndefined();
+  });
+
+  it('is a no-op when the file was not fetched', () => {
+    const [f] = withEvidenceCode([base], {});
+    expect(f.evidence).toBeUndefined();
+  });
+
+  it('is a no-op when the anchor is out of range', () => {
+    const [f] = withEvidenceCode([{ ...base, line: 999 }], contents);
+    expect(f.evidence).toBeUndefined();
+  });
+
+  it('preserves evidence already attached upstream', () => {
+    // Explicit generic: the inline `evidence` literal re-narrows T and would
+    // otherwise hide `code` from the assertion below.
+    const [f] = withEvidenceCode<OrchestratedFinding>(
+      [{ ...base, evidence: { agents: ['security', 'bugs'] } }],
+      contents,
+    );
+    expect(f.evidence?.agents).toEqual(['security', 'bugs']);
+    expect(f.evidence?.code).toContain('query(');
+  });
+});
+
+describe('normalizeEvidenceReason (#469)', () => {
+  it('caps at EVIDENCE_REASON_MAX with an ellipsis', () => {
+    const out = normalizeEvidenceReason('x'.repeat(500))!;
+    expect(out.length).toBe(EVIDENCE_REASON_MAX);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('flattens newlines so the reason stays one rendered line', () => {
+    expect(normalizeEvidenceReason('line one\nline two\ttab')).toBe('line one line two tab');
+  });
+
+  it('returns undefined for empty or whitespace-only input', () => {
+    expect(normalizeEvidenceReason(undefined)).toBeUndefined();
+    expect(normalizeEvidenceReason('')).toBeUndefined();
+    expect(normalizeEvidenceReason('   \n  ')).toBeUndefined();
+  });
+
+  it('leaves a short reason untouched', () => {
+    expect(normalizeEvidenceReason('Line 15 interpolates id.')).toBe('Line 15 interpolates id.');
   });
 });

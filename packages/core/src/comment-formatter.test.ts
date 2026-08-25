@@ -796,3 +796,147 @@ describe('comment size budget (#468)', () => {
     expect(noticeAt).toBeLessThan(firstCriticalAt);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-finding evidence (#469)
+// ---------------------------------------------------------------------------
+
+describe('per-finding evidence (#469)', () => {
+  const EVIDENCE = {
+    code: 'const q = `SELECT * FROM users WHERE id = ${id}`;',
+    codeStartLine: 14,
+    reason: 'Line 15 interpolates `id` straight into the SQL string.',
+  };
+
+  it('renders all three elements inline on a critical', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({
+        severity: 'critical',
+        evidence: { ...EVIDENCE, agents: ['security', 'bugs'] },
+      })],
+      mergeScore: 1,
+    }));
+    expect(result).toContain('Cited code');
+    expect(result).toContain('SELECT * FROM users');
+    expect(result).toContain('Line 15 interpolates');
+    expect(result).toContain('security + bugs agreed independently');
+  });
+
+  it('does not collapse critical evidence behind a <details>', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical', evidence: EVIDENCE })],
+      mergeScore: 1,
+    }));
+    // The critical section itself is uncollapsed; hiding proof behind a click
+    // on the highest-stakes finding would be backwards.
+    const criticalAt = result.indexOf('### 🔴');
+    const evidenceAt = result.indexOf('Cited code');
+    const detailsAt = result.indexOf('<details>', criticalAt);
+    expect(evidenceAt).toBeGreaterThan(criticalAt);
+    expect(detailsAt === -1 || evidenceAt < detailsAt).toBe(true);
+  });
+
+  it('gives a warning the reason only — no code block', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'warning', evidence: EVIDENCE })],
+      mergeScore: 3,
+    }));
+    expect(result).toContain('Line 15 interpolates');
+    expect(result).not.toContain('Cited code');
+    expect(result).not.toContain('SELECT * FROM users');
+  });
+
+  it('renders NOTHING for info — an empty shell would imply a check that never ran', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'info', evidence: EVIDENCE })],
+      mergeScore: 5,
+    }));
+    expect(result).not.toContain('Cited code');
+    expect(result).not.toContain('Line 15 interpolates');
+    expect(result).not.toContain('↳');
+  });
+
+  it('omits agent attribution when only one agent raised it', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical', evidence: { ...EVIDENCE, agents: ['security'] } })],
+      mergeScore: 1,
+    }));
+    expect(result).not.toContain('agreed independently');
+    expect(result).not.toContain('security +');
+  });
+
+  it('gives each unverified concern its own reason, not just the blanket sentence', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [
+        makeFinding({
+          severity: 'critical', verification: 'unverified', title: 'A',
+          evidence: { reason: 'Could not confirm: the sink is behind an interface.' },
+        }),
+        makeFinding({
+          severity: 'critical', verification: 'unverified', title: 'B', line: 40,
+          evidence: { reason: 'The cited line is a comment, not executable code.' },
+        }),
+      ],
+      mergeScore: 3,
+    }));
+    expect(result).toContain('Unverified concerns');
+    expect(result).toContain('the sink is behind an interface');
+    expect(result).toContain('The cited line is a comment');
+  });
+
+  it('ux.showEvidence: false suppresses evidence entirely', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical', evidence: { ...EVIDENCE, agents: ['security', 'bugs'] } })],
+      mergeScore: 1,
+      ux: { showEvidence: false },
+    }));
+    expect(result).not.toContain('Cited code');
+    expect(result).not.toContain('Line 15 interpolates');
+    expect(result).not.toContain('agreed independently');
+    // The finding itself still renders.
+    expect(result).toContain('SQL injection risk');
+  });
+
+  it('leaves the "Requires your attention" table unchanged', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical', evidence: EVIDENCE })],
+      mergeScore: 1,
+    }));
+    const table = result.slice(result.indexOf('| | Location | Finding |'), result.indexOf('### 🔴'));
+    expect(table).not.toContain('Cited code');
+    expect(table).not.toContain('↳');
+  });
+
+  it('back-compat: a finding with no evidence renders exactly as before', () => {
+    const withEvidence = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical' })], mergeScore: 1,
+    }));
+    const suppressed = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical' })], mergeScore: 1, ux: { showEvidence: false },
+    }));
+    expect(withEvidence).toBe(suppressed);
+  });
+
+  it('stays within the ~350-char budget for a fully populated critical', () => {
+    const bare = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical' })], mergeScore: 1,
+    }));
+    const full = formatReviewComment(baseOptions({
+      findings: [makeFinding({
+        severity: 'critical',
+        evidence: { ...EVIDENCE, agents: ['security', 'bugs'] },
+      })],
+      mergeScore: 1,
+    }));
+    expect(full.length - bare.length).toBeLessThanOrEqual(350);
+  });
+
+  it('omits the code block when the anchor line is blank', () => {
+    const result = formatReviewComment(baseOptions({
+      findings: [makeFinding({ severity: 'critical', evidence: { reason: 'r', code: '   \n  ' } })],
+      mergeScore: 1,
+    }));
+    expect(result).not.toContain('Cited code');
+    expect(result).toContain('↳ r');
+  });
+});

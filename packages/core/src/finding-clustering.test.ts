@@ -305,3 +305,58 @@ describe('dedupeCrossAgentByLine', () => {
     expect(bug.findings![0].description).toMatch(/\(error-handling\)/);
   });
 });
+
+describe('cross-agent convergence evidence (#469)', () => {
+  function cf(partial: Partial<ClusterableFinding> & { line: number; title: string }): ClusterableFinding {
+    return { file: 'src/x.ts', severity: 'warning', description: '', ...partial };
+  }
+
+  it('records which agents converged when a merge happens', () => {
+    const r = dedupeCrossAgentByLine([
+      { category: 'security', findings: [cf({ line: 10, severity: 'critical', title: 'Command injection via user input' })] },
+      { category: 'bug',      findings: [cf({ line: 10, severity: 'warning',  title: 'Command argument not escaped' })] },
+    ]);
+    const merged = r.taggedFindings.find((t) => t.category === 'security')!.findings![0];
+    expect(merged.evidence?.agents).toEqual(['security', 'bug']);
+  });
+
+  it('records no agents when a finding stands alone', () => {
+    const r = dedupeCrossAgentByLine([
+      { category: 'security', findings: [cf({ line: 1, title: 'Alone' })] },
+      { category: 'bug',      findings: [cf({ line: 2, title: 'Elsewhere entirely' })] },
+    ]);
+    for (const t of r.taggedFindings) {
+      for (const f of t.findings ?? []) {
+        expect(f.evidence?.agents).toBeUndefined();
+      }
+    }
+  });
+
+  it('does not attribute convergence to same-line findings that were NOT merged', () => {
+    // Same line, no shared significant token — these are different concerns
+    // that happen to collide, so claiming the agents "agreed" would be false.
+    const r = dedupeCrossAgentByLine([
+      { category: 'security', findings: [cf({ line: 10, title: 'Hardcoded credential exposure' })] },
+      { category: 'style',    findings: [cf({ line: 10, title: 'Prefer const over let' })] },
+    ]);
+    expect(r.dedupedCount).toBe(0);
+    for (const t of r.taggedFindings) {
+      for (const f of t.findings ?? []) {
+        expect(f.evidence?.agents).toBeUndefined();
+      }
+    }
+  });
+
+  it('preserves evidence already on the primary finding', () => {
+    const r = dedupeCrossAgentByLine([
+      { category: 'security', findings: [cf({
+        line: 10, severity: 'critical', title: 'Command injection via user input',
+        evidence: { reason: 'confirmed against the file' },
+      })] },
+      { category: 'bug', findings: [cf({ line: 10, title: 'Command argument not escaped' })] },
+    ]);
+    const merged = r.taggedFindings.find((t) => t.category === 'security')!.findings![0];
+    expect(merged.evidence?.reason).toBe('confirmed against the file');
+    expect(merged.evidence?.agents).toEqual(['security', 'bug']);
+  });
+});

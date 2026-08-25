@@ -7,6 +7,7 @@
 
 import type { UXConfig } from './config/defaults.js';
 import type { ReviewDelta } from './review-delta.js';
+import type { FindingEvidence } from './types/db.js';
 import { isValidMermaidDiagram } from './agents/reviewer.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -29,6 +30,12 @@ export interface Finding {
    * Absent → treated as a pre-W2 record and rendered as a normal critical.
    */
   verification?: 'verified' | 'unverified';
+  /**
+   * #469 — per-finding proof. Rendering is severity-asymmetric because the
+   * data is: the verifier never runs on info findings, so they have no reason
+   * to show and get no evidence affordance at all.
+   */
+  evidence?: FindingEvidence;
 }
 
 export interface WorkDoneSection {
@@ -257,7 +264,45 @@ function shortenPath(path: string): string {
 }
 
 /** Render a single finding as a detailed markdown list item. */
-function renderFinding(f: Finding, showConfidence: boolean): string {
+/**
+ * #469 — render a finding's proof, inline and short.
+ *
+ * Severity decides how much, because availability does. Criticals get all
+ * three elements uncollapsed: they already render open, and hiding proof
+ * behind a click on the highest-stakes finding is backwards. Warnings get the
+ * reason alone — a code block per warning is more chrome than signal at that
+ * volume. Info gets nothing, because `verifyFindings` skips info entirely and
+ * an empty evidence shell would imply a check that never ran.
+ */
+function renderEvidence(f: Finding): string {
+  const e = f.evidence;
+  if (!e) return '';
+  if (f.severity === 'info') return '';
+
+  const reason = e.reason?.trim();
+  if (f.severity === 'warning') {
+    return reason ? `\n  ↳ ${reason}` : '';
+  }
+
+  // Critical: cited code, then the reason, then convergence.
+  let out = '';
+  if (e.code?.trim()) {
+    const startLine = e.codeStartLine;
+    const gutter = startLine != null ? ` \`${f.file}:${startLine}\`` : '';
+    out += `\n\n  <sub>Cited code${gutter}</sub>\n\n\`\`\`\n${e.code}\n\`\`\``;
+  }
+  if (reason) {
+    out += `\n  ↳ ${reason}`;
+  }
+  // Only ever rendered on convergence — a single agent's name restates the
+  // category and tells the reader nothing they cannot already see.
+  if (e.agents && e.agents.length > 1) {
+    out += `\n  ↳ <sub>${e.agents.join(' + ')} agreed independently</sub>`;
+  }
+  return out;
+}
+
+function renderFinding(f: Finding, showConfidence: boolean, showEvidence = true): string {
   const confidenceBadge = showConfidence && f.confidence != null
     ? ` \`${f.confidence}%\``
     : '';
@@ -267,6 +312,9 @@ function renderFinding(f: Finding, showConfidence: boolean): string {
   }
   if (f.suggestion) {
     line += `\n  > **Suggestion:** ${f.suggestion}`;
+  }
+  if (showEvidence) {
+    line += renderEvidence(f);
   }
   return line;
 }
@@ -577,6 +625,9 @@ export function formatReviewComment(options: FormatOptions): string {
   // FP-L — unverified criticals are excluded from the action-items table. They
   // render below under "Unverified concerns" instead, so the top-of-comment
   // "Requires your attention" surface stays aligned with the W7-clamped score.
+  // #469 — evidence is a trust surface: on unless a repo opts out.
+  const showEvidence = ux?.showEvidence !== false;
+
   const grouped = groupBySeverity(findings);
   const actionFindings = findings.filter((f) => {
     if (f.severity === 'warning') return true;
@@ -621,7 +672,7 @@ export function formatReviewComment(options: FormatOptions): string {
       const crit = section('critical', KEEP);
       crit.push(`### ${SEVERITY_META.critical.emoji} Critical (${criticalFindings.length})`);
       for (const f of criticalFindings) {
-        crit.push(renderFinding(f, showConfidence));
+        crit.push(renderFinding(f, showConfidence, showEvidence));
       }
       crit.push('');
     }
@@ -637,7 +688,7 @@ export function formatReviewComment(options: FormatOptions): string {
       );
       unver.push('');
       for (const f of unverifiedCriticals) {
-        unver.push(renderFinding(f, showConfidence));
+        unver.push(renderFinding(f, showConfidence, showEvidence));
       }
       unver.push('');
     }
@@ -648,7 +699,7 @@ export function formatReviewComment(options: FormatOptions): string {
       warn.push(`<details><summary>${SEVERITY_META.warning.emoji} Warnings (${warningFindings.length})</summary>`);
       warn.push('');
       for (const f of warningFindings) {
-        warn.push(renderFinding(f, showConfidence));
+        warn.push(renderFinding(f, showConfidence, showEvidence));
       }
       warn.push('');
       warn.push('</details>');
@@ -661,7 +712,7 @@ export function formatReviewComment(options: FormatOptions): string {
       info.push(`<details><summary>${SEVERITY_META.info.emoji} Info (${infoFindings.length})</summary>`);
       info.push('');
       for (const f of infoFindings) {
-        info.push(renderFinding(f, showConfidence));
+        info.push(renderFinding(f, showConfidence, showEvidence));
       }
       info.push('');
       info.push('</details>');

@@ -1153,3 +1153,20 @@ describe('inline cap holds at the fingerprint boundary (#474 review)', () => {
     }
   });
 });
+
+describe('ux.showEvidence parsing (#469)', () => {
+  it('parses an explicit opt-out', () => {
+    const c = parseRepoConfigYaml('ux:\n  showEvidence: false\n');
+    expect(c?.ux?.showEvidence).toBe(false);
+  });
+
+  it('parses an explicit opt-in', () => {
+    const c = parseRepoConfigYaml('ux:\n  showEvidence: true\n');
+    expect(c?.ux?.showEvidence).toBe(true);
+  });
+
+  it('ignores a non-boolean so the default (on) survives a typo', () => {
+    const c = parseRepoConfigYaml('ux:\n  showEvidence: "nope"\n');
+    expect(c?.ux?.showEvidence).toBeUndefined();
+  });
+});

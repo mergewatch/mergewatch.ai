@@ -430,6 +430,40 @@ export interface ReviewItem {
   inlineResolvedKeys?: string[];
 }
 
+/**
+ * #469 — per-finding proof, so a reader can check a claim instead of taking
+ * the model's word for it. Every element is already produced somewhere in the
+ * pipeline and was being discarded; none of it is new inference.
+ *
+ * Severity-asymmetric by construction, because the data is: `verifyFindings`
+ * skips info entirely, so info findings have no `reason` to show and render no
+ * evidence affordance at all. An empty shell would be exactly the coverage
+ * illusion this work exists to remove.
+ */
+export interface FindingEvidence {
+  /**
+   * The cited code — anchor line ±1, at most 3 lines, from the file contents
+   * already fetched for grounding. The highest-value element by a wide margin:
+   * it makes the claim checkable at a glance.
+   */
+  code?: string;
+  /** 1-based line number of the first line of `code`, for the rendered gutter. */
+  codeStartLine?: number;
+  /**
+   * The W2/FP-E verifier's one-sentence justification, capped at
+   * EVIDENCE_REASON_MAX. Previously formatted into a console.warn and thrown
+   * away. Present on confirmation, on a refuted-and-demoted critical, and on a
+   * refused intent-claim dismissal — each of which is a reason the reader wants.
+   */
+  reason?: string;
+  /**
+   * Agent categories that independently raised this finding at the same line.
+   * Only ever populated with two or more: naming a single agent restates the
+   * category and is noise, while "security + bugs agreed" is real signal.
+   */
+  agents?: string[];
+}
+
 /** A single finding stored on a ReviewItem (matches comment-formatter Finding). */
 export interface ReviewFinding {
   file: string;
@@ -454,6 +488,12 @@ export interface ReviewFinding {
    * Optional / back-compat with pre-W7 stored reviews.
    */
   verification?: 'verified' | 'unverified';
+  /**
+   * #469 — per-finding proof rendered in the PR comment. Persisted so a
+   * re-review can show the same evidence without re-deriving it. Optional and
+   * back-compat: findings stored before #469 simply have none.
+   */
+  evidence?: FindingEvidence;
 }
 
 // =============================================================================
