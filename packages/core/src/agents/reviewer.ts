@@ -47,6 +47,7 @@ import { partitionDisputed } from '../triage.js';
 import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
 import { clusterFindings, dedupeCrossAgentByLine, extractSignificantTokens } from '../finding-clustering.js';
 import type { FindingEvidence } from '../types/db.js';
+import { TraceRecorder, outcomeKey, type FindingOutcome } from '../filter-trace.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -1549,6 +1550,13 @@ export interface ReviewPipelineResult {
   /** Number of findings suppressed by the orchestrator (deduplication + filtering) */
   suppressedCount: number;
   /**
+   * #470 — why every finding was dropped, merged, or demoted. `suppressedCount`
+   * above is derived from this rather than subtracted, so a stage that forgets
+   * to record shows up as a mismatch instead of quietly balancing the books.
+   * In-memory only in this stage; #471 persists it, #472 renders it.
+   */
+  filterOutcomes: FindingOutcome[];
+  /**
    * #382 — findings-bearing agent responses that could not be parsed. These
    * agents contributed zero raw findings, so the loss is invisible to
    * `suppressedCount`; a non-zero value means findings may be missing.
@@ -2110,6 +2118,12 @@ export async function verifyFindings(
    * here — same set the orchestrator sees.
    */
   previousFindings?: PreviousFinding[],
+  /**
+   * #470 — optional ledger. This function owns two of the twelve stages
+   * (FP-I's already-applied short-circuit and the verifier's own verdict), and
+   * both were previously visible only in CloudWatch.
+   */
+  trace?: TraceRecorder,
 ): Promise<OrchestratedFinding[]> {
   // Each task returns the disposition for one finding:
   //   - { keep: true }                            — pass-through (info-only).
@@ -2173,6 +2187,9 @@ export async function verifyFindings(
           '[finding-verify] dropped %s "%s" (%s:%d) — FP-I L2: suggestion already implemented at cited location',
           f.severity, f.title, f.file, f.line,
         );
+        trace?.record(f, 'dropped', 'fp-i-already-applied', {
+          reason: 'the suggestion is already implemented at the cited location',
+        });
         return { keep: false };
       }
 
@@ -2239,6 +2256,10 @@ ${content}`;
               f.line,
               (parsed.reason ?? '').slice(0, 200),
             );
+            trace?.record(f, 'demoted', 'finding-verify', {
+              reason: normalizeEvidenceReason(parsed.reason)
+                ?? 'dismissal rested on an in-code intent claim, which is unverified input',
+            });
             return { keep: true, verification: 'unverified', reason: parsed.reason };
           }
           // #385 — a refuted CRITICAL demotes to advisory, never deletes.
@@ -2258,6 +2279,9 @@ ${content}`;
               f.line,
               (parsed.reason ?? '').slice(0, 200),
             );
+            trace?.record(f, 'demoted', 'finding-verify', {
+              reason: normalizeEvidenceReason(parsed.reason),
+            });
             return { keep: true, verification: 'unverified', reason: parsed.reason };
           }
           console.warn(
@@ -2268,6 +2292,9 @@ ${content}`;
             f.line,
             (parsed.reason ?? '').slice(0, 200),
           );
+          trace?.record(f, 'dropped', 'finding-verify', {
+            reason: normalizeEvidenceReason(parsed.reason),
+          });
           return { keep: false };
         }
         if (parsed.valid === true) {
@@ -2853,19 +2880,6 @@ export async function runReviewPipeline(
     ...customTagged,
   ];
 
-  // Count total raw findings before orchestration. Captured before FP-C
-  // merges cross-agent doubles so the downstream `suppressedCount` math
-  // (totalRawFindings − filteredFindings.length) accurately reflects the
-  // dedup work, alongside W10's same-region clustering + W11's coverage
-  // suppression.
-  // #401 — count only well-formed entries. parseAgentFindings already filters
-  // the built-in agents, but custom/org-agent results arrive by another path,
-  // and `.length` on any non-array would otherwise contribute silently.
-  const totalRawFindings = taggedFindings.reduce(
-    (sum, t) => sum + (Array.isArray(t.findings) ? t.findings.filter(isUsableFinding).length : 0),
-    0,
-  );
-
   // #385 — custom/org-agent findings are user-legislated policy, so they are
   // routed AROUND every model-taste layer: the orchestrator (whose
   // anti-pedantry rule classified a blocking org agent's "new TODO" findings
@@ -2874,6 +2888,20 @@ export async function runReviewPipeline(
   // grounding/line-proximity geometry. They re-enter deterministically just
   // before W3 triage below — the one legitimate filter, because triage is
   // user action, not model opinion.
+  // #470 — register every finding that enters, attributed to the agent that
+  // raised it. This is the only point where per-agent attribution exists:
+  // FP-C's merge below collapses same-line findings and the categories are
+  // gone afterwards. `isUsableFinding` gates entry for the same reason it
+  // gates the count — a parse failure yields no finding object and a
+  // degenerate entry has no title, and neither is a filtering decision.
+  const trace = new TraceRecorder();
+  for (const t of taggedFindings) {
+    if (!Array.isArray(t.findings)) continue;
+    for (const f of t.findings) {
+      if (isUsableFinding(f)) trace.enter(f, t.category);
+    }
+  }
+
   const customCategorySet = new Set(enabledCustomAgents.map((a) => a.name));
   const builtinTagged = taggedFindings.filter((t) => !customCategorySet.has(t.category));
 
@@ -2884,7 +2912,36 @@ export async function runReviewPipeline(
   // POST-orchestrator on the final finding set. Custom-agent findings are
   // excluded (#385): an fp-c merge into a builtin finding would re-expose
   // them to the orchestrator's drop authority.
+  // #470 — several stages report only how many they removed, never which.
+  // Diffing before against after by identity recovers the "which" without
+  // rewriting each filter to thread findings through.
+  const recordDrops = (
+    before: OrchestratedFinding[],
+    after: OrchestratedFinding[],
+    stage: Parameters<TraceRecorder['record']>[2],
+    reasonFor?: (f: OrchestratedFinding) => string | undefined,
+  ) => {
+    const kept = new Set(after.map(outcomeKey));
+    for (const f of before) {
+      if (!kept.has(outcomeKey(f))) {
+        trace.record(f, 'dropped', stage, { reason: reasonFor?.(f) });
+      }
+    }
+  };
+
   const fpCResult = dedupeCrossAgentByLine(builtinTagged);
+  // FP-C merged siblings into a survivor whose title it rewrote; alias the
+  // survivor so later stages still resolve to the row that entered.
+  for (const m of fpCResult.merges) {
+    const into = outcomeKey(m.primaryAfter);
+    trace.alias(outcomeKey(m.primaryBefore), into);
+    for (const a of m.absorbed) {
+      trace.record(a, 'merged', 'fp-c-line-dedup', {
+        mergedInto: into,
+        reason: 'same file and line as a stronger finding, with overlapping wording',
+      });
+    }
+  }
   if (fpCResult.dedupedCount > 0) {
     console.warn(
       '[fp-c] merged %d cross-agent finding%s at the same (file, line)',
@@ -2902,6 +2959,18 @@ export async function runReviewPipeline(
     previousFindings,
     conventions,
     agentAuthored,
+  );
+
+  // #470 — the orchestrator is an LLM: it returns a new set, so what it
+  // dropped is only knowable by difference. It cannot explain itself without a
+  // schema change and extra output tokens (#473), so these record with a stage
+  // and no reason — attributable, but not explained. A finding whose title the
+  // orchestrator reworded reads here as a drop plus a new entry; that is what
+  // is actually observable, and inventing a link would be a guess.
+  recordDrops(
+    dedupedTaggedFindings.flatMap((t) => (t.findings ?? []) as OrchestratedFinding[]),
+    orchestratorResult.findings,
+    'orchestrator',
   );
 
   // #385 — W10 runs BEFORE the deleting filters below.
@@ -2926,9 +2995,19 @@ export async function runReviewPipeline(
   // and a cluster-size cap keep over-clustering risk low. The absorbed
   // count rolls into the downstream suppressedCount math.
   {
-    const { findings: clustered, clusteredCount } = clusterFindings(
+    const { findings: clustered, clusteredCount, merges } = clusterFindings(
       orchestratorResult.findings,
     );
+    for (const m of merges) {
+      const into = outcomeKey(m.primaryAfter);
+      trace.alias(outcomeKey(m.primaryBefore), into);
+      for (const a of m.absorbed) {
+        trace.record(a, 'merged', 'w10-clustering', {
+          mergedInto: into,
+          reason: 'same code region and shared wording as a stronger finding',
+        });
+      }
+    }
     if (clusteredCount > 0) {
       console.warn(
         '[clustering] merged %d related finding%s into existing clusters',
@@ -2947,9 +3026,16 @@ export async function runReviewPipeline(
   // default to 100 (no surprise suppression of legacy findings). The floor is
   // configurable via yml `minConfidence:` (default CONFIDENCE_FLOOR).
   {
-    const before = orchestratorResult.findings.length;
+    const beforeFindings = orchestratorResult.findings;
+    const before = beforeFindings.length;
     orchestratorResult.findings = orchestratorResult.findings.filter(
       (f) => (f.confidence ?? 100) >= minConfidence,
+    );
+    recordDrops(
+      beforeFindings,
+      orchestratorResult.findings,
+      'confidence-floor',
+      (f) => `confidence ${f.confidence ?? 100} is below the floor of ${minConfidence}`,
     );
     const dropped = before - orchestratorResult.findings.length;
     if (dropped > 0) {
@@ -2971,9 +3057,16 @@ export async function runReviewPipeline(
   if (minSeverity !== 'info') {
     const severityRank: Record<string, number> = { info: 0, warning: 1, critical: 2 };
     const threshold = severityRank[minSeverity];
-    const before = orchestratorResult.findings.length;
+    const beforeFindings = orchestratorResult.findings;
+    const before = beforeFindings.length;
     orchestratorResult.findings = orchestratorResult.findings.filter(
       (f) => (severityRank[f.severity] ?? threshold) >= threshold,
+    );
+    recordDrops(
+      beforeFindings,
+      orchestratorResult.findings,
+      'min-severity',
+      (f) => `severity ${f.severity} is below the configured threshold of ${minSeverity}`,
     );
     const dropped = before - orchestratorResult.findings.length;
     if (dropped > 0) {
@@ -2996,6 +3089,12 @@ export async function runReviewPipeline(
   if (detectNoTestHarness(conventions)) {
     const { findings: collapsed, suppressedCount } = suppressTestCoverageFindings(
       orchestratorResult.findings,
+    );
+    recordDrops(
+      orchestratorResult.findings,
+      collapsed,
+      'w11-scope-awareness',
+      () => "the repo's conventions declare no test harness, so coverage findings are collapsed",
     );
     if (suppressedCount > 0) {
       console.warn(
@@ -3050,6 +3149,24 @@ export async function runReviewPipeline(
       && p.grounded.severity === 'critical'
       && p.grounded.verification === 'unverified'
       && p.original.verification !== 'unverified').length;
+    for (const pair of groundedPairs) {
+      if (pair.grounded === null) {
+        trace.record(pair.original, 'dropped', 'grounding', {
+          reason: 'the cited anchor did not survive structural grounding',
+        });
+      } else if (
+        pair.grounded.severity === 'critical'
+        && pair.grounded.verification === 'unverified'
+        && pair.original.verification !== 'unverified'
+      ) {
+        // #385/#460 — a critical whose anchor could not be confirmed is
+        // demoted, never deleted. `demoted` is its own outcome precisely so
+        // this stops looking like a drop in the ledger.
+        trace.record(pair.grounded, 'demoted', 'grounding', {
+          reason: 'anchor unconfirmed against the file, so the critical was demoted rather than deleted',
+        });
+      }
+    }
     if (dropped > 0) {
       console.warn('[grounding] dropped %d finding%s whose anchor did not survive',
         dropped, dropped === 1 ? '' : 's');
@@ -3069,17 +3186,22 @@ export async function runReviewPipeline(
     // findings that contradict the bot's prior recommendations. No-op
     // on first reviews (previousFindings is undefined / empty).
     previousFindings,
+    trace,
   );
 
   // Filter findings to only those on or near actually changed lines.
   // `changedLines` was already computed up-front (used by FP-D too).
   const CHANGED_LINE_TOLERANCE = 3;
-  const onChangedLines = withCodeFingerprints(
-    groundedFindings.filter(
-      (f) => isLineNearChange(changedLines, f.file, f.line, CHANGED_LINE_TOLERANCE),
-    ),
-    groundingFileContents,
+  const nearChange = groundedFindings.filter(
+    (f) => isLineNearChange(changedLines, f.file, f.line, CHANGED_LINE_TOLERANCE),
   );
+  recordDrops(
+    groundedFindings,
+    nearChange,
+    'line-proximity',
+    (f) => `line ${f.line} is more than ${CHANGED_LINE_TOLERANCE} lines from any change in this PR`,
+  );
+  const onChangedLines = withCodeFingerprints(nearChange, groundingFileContents);
 
   // #385 — re-enter the custom/org-agent findings (partitioned out before
   // fp-c above). Deterministic dedup only: one entry per (agent, file, line),
@@ -3091,9 +3213,20 @@ export async function runReviewPipeline(
     .flatMap((t) => (t.findings ?? []).map((f) => ({ ...f, category: t.category } as OrchestratedFinding)))
     .filter((f) => {
       const key = `${f.category}|${f.file}|${f.line}`;
-      if (seenCustomKeys.has(key)) return false;
+      if (seenCustomKeys.has(key)) {
+        trace.record(f, 'dropped', 'custom-agent-dedup', {
+          reason: 'the same custom agent already reported this file and line',
+        });
+        return false;
+      }
       seenCustomKeys.add(key);
-      return !onChangedLines.some((k) => k.file === f.file && k.line === f.line);
+      const alreadySurfaced = onChangedLines.some((k) => k.file === f.file && k.line === f.line);
+      if (alreadySurfaced) {
+        trace.record(f, 'dropped', 'custom-agent-dedup', {
+          reason: 'a built-in finding already surfaced this location',
+        });
+      }
+      return !alreadySurfaced;
     });
   if (customFindings.length > 0) {
     console.log(
@@ -3123,6 +3256,9 @@ export async function runReviewPipeline(
     disputedKeys,
   );
   for (const f of triageSuppressed) {
+    trace.record(f, 'dropped', 'triage-suppressed', {
+      reason: 'the author rebutted or deferred this in a prior triage reply',
+    });
     console.warn(
       '[triage-suppressed] "%s" (%s:%d) — author rebutted/deferred this in a prior triage; not re-raising',
       f.title,
@@ -3133,6 +3269,10 @@ export async function runReviewPipeline(
 
   // Delta caption — only on re-reviews where something actually changed
   // commit-to-commit. Uses lightModel to match the other prose agents.
+  // #470 — everything still un-adjudicated survived to the reader.
+  trace.finalize(filteredFindings);
+  const filterOutcomes = trace.outcomes();
+
   const delta = computeReviewDelta(filteredFindings, previousFindings);
   const deltaCaption = delta
     ? await runDeltaCaptionAgent(delta, lightModelId, llm)
@@ -3194,7 +3334,12 @@ export async function runReviewPipeline(
     mergeScore,
     mergeScoreReason,
     ...(disputeDisclosure ? { disputeDisclosure } : {}),
-    suppressedCount: Math.max(0, totalRawFindings - filteredFindings.length),
+    // #470 — derived from the ledger, not subtracted. The old subtraction was
+    // measured upstream of where #385's custom-agent findings re-enter, so it
+    // counted them as suppressed; and a count cannot distinguish good
+    // filtering from a malfunction (#401), which is what the ledger is for.
+    suppressedCount: trace.suppressedCount(),
+    filterOutcomes,
     parseFailureCount: diag.parseFailures,
     degenerateResponseCount: diag.degenerateResponses,
     enabledAgentCount,
