@@ -46,6 +46,7 @@ import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
 import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
 import { clusterFindings, dedupeCrossAgentByLine, extractSignificantTokens } from '../finding-clustering.js';
+import type { FindingEvidence } from '../types/db.js';
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
@@ -87,6 +88,13 @@ export interface AgentFinding {
    * warnings is informational + used downstream by delta/UX.
    */
   verification?: 'verified' | 'unverified';
+  /**
+   * #469 — per-finding proof (cited code, the verifier's reason, cross-agent
+   * convergence). Assembled inside the pipeline because its inputs are local
+   * to it: `groundingFileContents` never leaves `runReviewPipeline`, and the
+   * verifier's reason is discarded inside `verifyFindings`.
+   */
+  evidence?: FindingEvidence;
 }
 
 export interface OrchestratedFinding extends AgentFinding {
@@ -1282,6 +1290,22 @@ export type PreviousFinding = {
 /** Maximum characters per serialised string field to limit prompt injection surface. */
 const PREV_FINDING_FIELD_MAX = 200;
 
+/**
+ * #469 — cap on the verifier reason surfaced to the developer. A finding that
+ * needs a paragraph to justify itself has failed to justify itself; the
+ * verifier prompt already specifies "one sentence citing the specific code".
+ * Same bound as PREV_FINDING_FIELD_MAX above, for the same reason.
+ */
+export const EVIDENCE_REASON_MAX = 200;
+
+/** Collapse whitespace and clamp a verifier reason to one renderable sentence. */
+export function normalizeEvidenceReason(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  const flat = reason.replace(/[\r\n\t\x00-\x1f\x7f]+/g, ' ').trim();
+  if (!flat) return undefined;
+  return flat.length <= EVIDENCE_REASON_MAX ? flat : `${flat.slice(0, EVIDENCE_REASON_MAX - 1)}…`;
+}
+
 /** Strip newlines/control chars and cap length to bound malicious input. */
 function sanitizePreviousFindingString(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -2121,7 +2145,9 @@ export async function verifyFindings(
     priorContextBlock,
   );
 
-  type Verdict = { keep: boolean; verification?: 'verified' | 'unverified' };
+  // #469 — `reason` rides along so the verifier's one-sentence justification
+  // reaches the developer instead of only CloudWatch.
+  type Verdict = { keep: boolean; verification?: 'verified' | 'unverified'; reason?: string };
   const verdicts = await withConcurrency<Verdict>(
     findings.map((f) => async () => {
       // FP-E: verify both criticals and warnings; skip only info-level.
@@ -2213,7 +2239,7 @@ ${content}`;
               f.line,
               (parsed.reason ?? '').slice(0, 200),
             );
-            return { keep: true, verification: 'unverified' };
+            return { keep: true, verification: 'unverified', reason: parsed.reason };
           }
           // #385 — a refuted CRITICAL demotes to advisory, never deletes.
           // The verifier runs on the light model and can refute a true
@@ -2232,7 +2258,7 @@ ${content}`;
               f.line,
               (parsed.reason ?? '').slice(0, 200),
             );
-            return { keep: true, verification: 'unverified' };
+            return { keep: true, verification: 'unverified', reason: parsed.reason };
           }
           console.warn(
             '[finding-verify] dropped false-positive %s "%s" (%s:%d): %s',
@@ -2245,7 +2271,7 @@ ${content}`;
           return { keep: false };
         }
         if (parsed.valid === true) {
-          return { keep: true, verification: 'verified' };
+          return { keep: true, verification: 'verified', reason: parsed.reason };
         }
         // Ambiguous twice: parsed but no usable verdict even after the retry.
         console.warn(
@@ -2283,7 +2309,20 @@ ${content}`;
   for (let i = 0; i < findings.length; i++) {
     const v = verdicts[i];
     if (!v.keep) continue;
-    result.push(v.verification ? { ...findings[i], verification: v.verification } : findings[i]);
+    const f = findings[i];
+    if (!v.verification) {
+      result.push(f);
+      continue;
+    }
+    // #469 — merge rather than overwrite: cross-agent convergence was already
+    // attached upstream by dedupeCrossAgentByLine and must survive this pass.
+    const reason = normalizeEvidenceReason(v.reason);
+    const evidence = reason ? { ...(f.evidence ?? {}), reason } : f.evidence;
+    result.push({
+      ...f,
+      verification: v.verification,
+      ...(evidence ? { evidence } : {}),
+    });
   }
   return result;
 }
@@ -2297,6 +2336,41 @@ ${content}`;
  * Best-effort: when the file wasn't fetched or the anchor is out of range,
  * the finding keeps no fingerprint and delta falls back to the title key.
  */
+/**
+ * #469 — attach the cited code to each finding's evidence: the anchor line
+ * ±1, at most 3 lines, from the contents already fetched for grounding.
+ *
+ * Critical and warning only, matching where evidence renders. Info findings
+ * are skipped deliberately — `verifyFindings` never runs on them, so they
+ * have no reason to pair the code with, and storing code that will never be
+ * shown just inflates every persisted review.
+ *
+ * Best-effort, like withCodeFingerprints below: no contents or an
+ * out-of-range anchor means no code, not a broken finding.
+ */
+export function withEvidenceCode<T extends OrchestratedFinding>(
+  findings: T[],
+  fileContents: Record<string, string>,
+): T[] {
+  return findings.map((f) => {
+    if (f.severity !== 'critical' && f.severity !== 'warning') return f;
+    const content = fileContents[f.file];
+    if (!content) return f;
+    const lines = content.split('\n');
+    const idx = f.line - 1;
+    if (idx < 0 || idx >= lines.length) return f;
+    const start = Math.max(0, idx - 1);
+    const end = Math.min(lines.length, idx + 2);
+    const code = lines.slice(start, end).join('\n');
+    // An anchor on a blank line yields nothing worth rendering.
+    if (!code.trim()) return f;
+    return {
+      ...f,
+      evidence: { ...(f.evidence ?? {}), code, codeStartLine: start + 1 },
+    };
+  });
+}
+
 function withCodeFingerprints<T extends OrchestratedFinding>(
   findings: T[],
   fileContents: Record<string, string>,
@@ -3028,10 +3102,16 @@ export async function runReviewPipeline(
       customFindings.length === 1 ? '' : 's',
     );
   }
-  const preTriageFindings = [
-    ...onChangedLines,
-    ...withCodeFingerprints(customFindings, groundingFileContents),
-  ];
+  // #469 — attach cited code once, after builtin and custom findings are
+  // combined, so a single call covers both paths rather than two that can
+  // drift apart.
+  const preTriageFindings = withEvidenceCode(
+    [
+      ...onChangedLines,
+      ...withCodeFingerprints(customFindings, groundingFileContents),
+    ],
+    groundingFileContents,
+  );
 
   // W3 convergence guard: drop findings the author already rebutted/deferred
   // in a prior `## mergewatch triage` reply (keyed via the W9 stable

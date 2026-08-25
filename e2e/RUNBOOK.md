@@ -252,6 +252,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup`, `correctness` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` · _script-verified, no fixture_ |
+| [E2E-101](#e2e-101-469--every-finding-carries-proof-a-reader-can-check) | Each critical renders cited code, the verifier's one-sentence reason, and cross-agent convergence inline; warnings show the reason only and info shows nothing; `ux.showEvidence: false` opts out (#469) | 2m | 60s | #476 | `output`, `review-core` · _unit-test-gated_ |
 | [E2E-100](#e2e-100-468--an-oversized-review-truncates-visibly-never-vanishes) | A review body over GitHub's 65,536-char comment limit truncates with a notice naming what was dropped, instead of failing the POST and vanishing from the PR; verdict, summary and all criticals never shed, and inline `mw-fp` fingerprints survive truncation (#468) | 3m | 60s | #474 | `output`, `review-core` · _unit-test-gated, no fixture_ |
 | [E2E-99](#e2e-99-401--malformed-agent-output-is-disclosed-not-counted-as-suppression) | Agent responses that parse but return unusable findings no longer inflate the suppressed counter; they surface as a distinct "Malformed agent output" warning (#401) | 2m | 60s | #429 | `agents`, `output` · _unit-test-gated, no fixture_ |
 | [E2E-98](#e2e-98-423--oversized-diffs-skip-with-a-reason-never-hard-fail) | Build artifacts excluded by default and oversized files dropped by size; a diff still over the model's context budget yields a neutral "diff too large" skip naming sizes and remedy, never a raw ValidationException (#423) | 4m | 60s | #426 | `skip`, `config`, `correctness` |
@@ -3511,6 +3512,47 @@ The verdict, the summary, and **every critical** are never droppable. Whatever s
 - ❌ The notice links to a dashboard that does not exist on a self-hosted deploy
 - ❌ `/resolve` stops matching a previously reported finding — the fingerprint was truncated away
 - ❌ An ordinary review changes shape — the section refactor was supposed to be output-neutral
+
+---
+
+### E2E-101: #469 — every finding carries proof a reader can check
+
+**Status:** 🆕 NEW (#469) — unit-gated; verify opportunistically on any PR with a real critical.
+
+**Behavior:** a finding used to be four pieces of model prose — title, description, suggestion, confidence — with nothing showing the code it was about or that anything had checked it. The W2/FP-E verifier was already producing exactly that confirmation, one sentence citing specific code, and formatting it into a `console.warn` before throwing it away. Evidence is that sentence, plus the cited code, plus cross-agent convergence, routed to the developer instead of CloudWatch. No new inference: every element already existed.
+
+Rendering is **severity-asymmetric because the data is**. `verifyFindings` skips info entirely, so info findings have no verifier reason to show:
+
+| severity | renders |
+|---|---|
+| critical | cited code (≤ 3 lines) + reason + convergence, **inline, uncollapsed** |
+| warning | the reason only, one `↳` line, no code block |
+| info | **nothing** |
+
+This also repairs the **Unverified concerns** section, which explained every item with one blanket sentence; each demoted critical now shows its own reason.
+
+**Setup.** A PR with a genuine critical on a file the reviewer can fetch. `03-critical-finding` is the natural fixture.
+
+**Expected outcomes.**
+- [ ] A critical renders the cited code inline, not behind a `<details>`
+- [ ] The cited code is at most 3 lines and is the anchor line ±1
+- [ ] The verifier's sentence appears under the finding, capped at 200 chars
+- [ ] Two agents on one line render `security + bugs agreed independently`; a lone agent renders **no** attribution
+- [ ] A warning shows the reason with **no** code block
+- [ ] An info finding shows **no** evidence affordance at all
+- [ ] Each item under "Unverified concerns" carries its own reason
+- [ ] The "Requires your attention" table is unchanged — no new column
+- [ ] Grounding result and confidence-vs-floor do **not** appear
+- [ ] `ux.showEvidence: false` removes evidence entirely, leaving findings otherwise identical
+- [ ] Evidence survives a re-review — it round-trips through storage (`findings` is jsonb; no migration)
+
+**Failure modes.**
+- ❌ Evidence on an info finding — an empty shell implying a check that never ran, which is the coverage illusion this exists to remove
+- ❌ A single agent named as if it were convergence — restates the category and dilutes the real signal
+- ❌ Evidence collapsed behind a click on a critical — hiding proof on the highest-stakes finding is backwards
+- ❌ The reason runs to a paragraph — a finding needing a paragraph to justify itself has failed to justify itself
+- ❌ Comment growth is noticeably larger than ~350 chars per critical
+- ❌ A pre-#469 stored review fails to render — evidence is optional and its absence must be silent
 
 ---
 

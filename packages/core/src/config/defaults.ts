@@ -29,6 +29,12 @@ export interface UXConfig {
   allClearMessage: boolean;
   /** Custom header text for the review comment (replaces default logo) */
   commentHeader: string;
+  /**
+   * #469 — whether to render per-finding evidence (cited code, the verifier's
+   * reason, cross-agent convergence). Default true: this is a trust surface,
+   * and a reader who cannot check a claim has to take it on faith.
+   */
+  showEvidence: boolean;
 }
 
 export const DEFAULT_UX_CONFIG: UXConfig = {
@@ -38,6 +44,7 @@ export const DEFAULT_UX_CONFIG: UXConfig = {
   reviewerChecklist: true,
   allClearMessage: true,
   commentHeader: '',
+  showEvidence: true,
 };
 
 export interface RulesConfig {

@@ -26,6 +26,8 @@
  */
 
 /** Minimal shape of a finding this module consumes. */
+import type { FindingEvidence } from './types/db.js';
+
 export interface ClusterableFinding {
   file: string;
   line: number;
@@ -38,6 +40,13 @@ export interface ClusterableFinding {
    * which the FP-A floor already treats as 100.
    */
   confidence?: number;
+  /**
+   * #469 — carried through so cross-agent convergence recorded here survives
+   * the rest of the pipeline. This is the only point where "which agents
+   * independently raised this" is known: the merge below collapses them and
+   * the categories are gone afterwards.
+   */
+  evidence?: FindingEvidence;
 }
 
 const SEVERITY_RANK: Record<ClusterableFinding['severity'], number> = {
@@ -327,10 +336,18 @@ export function dedupeCrossAgentByLine<T extends ClusterableFinding>(
     const relatedList = others
       .map((o) => `- (${o.category}) ${o.finding.title}`)
       .join('\n');
+    // #469 — record WHICH agents converged before the merge discards them.
+    // Two agents reaching the same line independently is real signal; a single
+    // agent's name just restates the category, so this is only ever populated
+    // with two or more and the renderer drops anything shorter.
+    const agents = Array.from(new Set([primary.category, ...others.map((o) => o.category)]));
     const mergedFinding: T = {
       ...primary.finding,
       title: `${primary.finding.title} — and ${others.length} related cross-agent concern${others.length === 1 ? '' : 's'}`,
       description: `${primary.finding.description}\n\n**Related cross-agent concerns merged into this finding (FP-C):**\n${relatedList}`,
+      ...(agents.length > 1
+        ? { evidence: { ...(primary.finding.evidence ?? {}), agents } }
+        : {}),
     };
     surviving.push({ category: primary.category, finding: mergedFinding, order: primary.order });
     dedupedCount += others.length;
