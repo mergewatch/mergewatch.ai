@@ -1099,3 +1099,30 @@ describe('inline fingerprint bounding (#474 review)', () => {
     expect(extractInlineCommentFingerprint(c.body)).toBe(fp);
   });
 });
+
+describe('inline body cap invariant across stages (#474 review)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  // The marker is the FIRST component of `body`, so `body.length` already
+  // counts it and the overflow check measures the assembled string. Pinning
+  // that here across the longest stage marker (dev, 30 chars vs prod's 26) so
+  // a future marker change cannot quietly break the guarantee.
+  it.each([undefined, 'dev', 'staging-long-suffix'])('stays within the cap for stage %s', (stage) => {
+    const [c] = buildInlineComments(
+      [{
+        file: 'src/app.ts', line: 10, severity: 'critical' as const,
+        title: 'T'.repeat(5_000),
+        description: 'd'.repeat(90_000),
+        suggestion: 's'.repeat(90_000),
+        fingerprint: 'f'.repeat(2_000),
+      }],
+      ['src/app.ts'],
+      undefined,
+      stage,
+    );
+    expect(c.body.length).toBeLessThanOrEqual(MAX_COMMENT_BODY);
+    expect(c.body.startsWith('<!-- mergewatch-inline')).toBe(true);
+  });
+});
