@@ -96,6 +96,9 @@ export default function FilterTrail({ reviewId }: { reviewId: string }) {
             still shown above, as advisory.
           </p>
         )}
+        {/* `outcomes.length` is what the reader can actually see and
+            `totalOutcomes` is what the review produced, so the ratio is exact
+            whether rows were lost to the size cap, to corruption, or both. */}
         {data.truncated && (
           <p className="mt-1.5 text-xs text-fg-tertiary">
             Showing {data.outcomes.length} of {data.totalOutcomes} outcomes — the rest were not

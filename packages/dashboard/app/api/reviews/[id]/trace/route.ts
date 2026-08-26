@@ -65,8 +65,22 @@ export async function GET(
     return NextResponse.json({ error: "Access check failed" }, { status: 500 });
   }
 
-  const store = await getDashboardStore();
-  const trace = await store.reviews.getReviewTrace(repoFullName, prNumberCommitSha);
-
-  return NextResponse.json({ trace });
+  // A store error must not propagate as an unformatted 500 with nothing
+  // logged. The client already distinguishes a failed fetch from an absent
+  // trace, so the UI stays honest either way — but without this the operator
+  // has no record that the store failed at all, and a transient infrastructure
+  // fault looks identical to "no trace recorded" in every log they can read.
+  try {
+    const store = await getDashboardStore();
+    const trace = await store.reviews.getReviewTrace(repoFullName, prNumberCommitSha);
+    return NextResponse.json({ trace });
+  } catch (err) {
+    console.error(
+      "[trace] getReviewTrace failed for %s %s:",
+      repoFullName,
+      prNumberCommitSha,
+      err,
+    );
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
 }
