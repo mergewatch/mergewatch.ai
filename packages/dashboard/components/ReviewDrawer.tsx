@@ -6,6 +6,7 @@ import RelativeTime from "./RelativeTime";
 import {
   X,
   ExternalLink,
+  ArrowUpRight,
   Clock,
   FileText,
   GitBranch,
@@ -16,6 +17,7 @@ import {
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
+import Link from "next/link";
 import { FindingsSection } from "./FindingEvidence";
 import FilterTrail from "./FilterTrail";
 import type { DetailFinding } from "../lib/review-findings";
@@ -423,7 +425,19 @@ export default function ReviewDrawer({
                 </div>
               </div>
 
-              <div className="px-5 py-4">
+              <div className="px-5 py-4 space-y-2">
+                {/* The detail page is the shareable, linkable form of this same
+                    review — it is what the PR comment's "View full details" and
+                    the check run's Details link point at. Until now the drawer
+                    was a dead end: nothing in the dashboard linked to it. */}
+                {review.repoFullName && review.id && (
+                  <Link
+                    href={`/dashboard/reviews/${encodeURIComponent(`${review.repoFullName}:${review.id}`)}`}
+                    className="flex items-center justify-center gap-2 rounded-lg border border-border-default px-4 py-2.5 text-sm text-fg-secondary hover:border-fg-faint hover:text-fg-primary transition-colors"
+                  >
+                    Open full review <ArrowUpRight size={14} />
+                  </Link>
+                )}
                 <a
                   href={prUrl}
                   target="_blank"
