@@ -234,3 +234,33 @@ describe("funnel invariants (#482 review)", () => {
     expect(removed).toBeLessThanOrEqual(f.raw - f.surfaced - demotedCount(outcomes));
   });
 });
+
+describe("funnel treats merges correctly (#482 review)", () => {
+  it("counts a merged finding as removed — it is folded into one that remains", () => {
+    // A and B merge: B is recorded `merged`, A survives and surfaces. Only one
+    // finding is visible, so `remaining` must be 1. Excluding merges would
+    // report 2 and disagree with the list above it.
+    const f = buildFunnel([
+      o({ title: "A", outcome: "surfaced" }),
+      o({ title: "B", outcome: "merged", stage: "w10-clustering", mergedInto: "A" }),
+    ]);
+    expect(f.raw).toBe(2);
+    expect(f.surfaced).toBe(1);
+    expect(f.steps.at(-1)!.remaining).toBe(1);
+  });
+
+  it("holds remaining === surfaced + demoted with merges, drops and demotions together", () => {
+    const outcomes = [
+      o({ outcome: "surfaced" }),
+      o({ outcome: "surfaced" }),
+      o({ outcome: "merged", stage: "fp-c-line-dedup" }),
+      o({ outcome: "merged", stage: "w10-clustering" }),
+      o({ outcome: "dropped", stage: "min-severity" }),
+      o({ outcome: "demoted", stage: "grounding" }),
+    ];
+    const f = buildFunnel(outcomes);
+    expect(f.steps.at(-1)!.remaining).toBe(f.surfaced + demotedCount(outcomes));
+    expect(f.steps.at(-1)!.remaining).toBe(3);
+    for (const s of f.steps) expect(s.remaining).toBeGreaterThanOrEqual(0);
+  });
+});

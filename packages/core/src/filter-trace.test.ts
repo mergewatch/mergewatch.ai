@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TraceRecorder, outcomeKey, type TraceableFinding, buildReviewTrace, MAX_TRACE_OUTCOMES, type FindingOutcome } from './filter-trace.js';
+import { TraceRecorder, outcomeKey, type TraceableFinding, buildReviewTrace, MAX_TRACE_OUTCOMES, isUsableOutcome, usableOutcomes, type FindingOutcome } from './filter-trace.js';
 
 function f(over: Partial<TraceableFinding> = {}): TraceableFinding {
   return {
@@ -324,5 +324,52 @@ describe('no undefined values in the ledger (#471 prod bug)', () => {
     t.finalize([f({ title: 'a', confidence: undefined })]);
     const rows = t.outcomes();
     expect(JSON.parse(JSON.stringify(rows))).toEqual(rows);
+  });
+});
+
+describe('isUsableOutcome / usableOutcomes (#482 review)', () => {
+  const good = {
+    key: 'k', file: 'a.ts', line: 1, severity: 'warning',
+    title: 't', agents: ['security'], outcome: 'dropped',
+  };
+
+  it('accepts a well-formed row', () => {
+    expect(isUsableOutcome(good)).toBe(true);
+  });
+
+  it('rejects a row with no agents — the renderer calls agents.join()', () => {
+    // `e.agents.length` throws outright on this, which Array.isArray on the
+    // container could never catch.
+    const { agents, ...noAgents } = good;
+    expect(isUsableOutcome(noAgents)).toBe(false);
+  });
+
+  it('rejects rows missing the fields the renderer dereferences', () => {
+    for (const field of ['key', 'file', 'title', 'line', 'outcome']) {
+      const bad: Record<string, unknown> = { ...good };
+      delete bad[field];
+      expect(isUsableOutcome(bad), `missing ${field}`).toBe(false);
+    }
+  });
+
+  it('rejects an unknown outcome value', () => {
+    expect(isUsableOutcome({ ...good, outcome: 'exploded' })).toBe(false);
+  });
+
+  it('rejects non-objects', () => {
+    for (const v of [null, undefined, 'x', 42, []]) expect(isUsableOutcome(v)).toBe(false);
+  });
+
+  it('keeps good rows and reports the original total', () => {
+    // Losing one corrupt row should not cost the reader the other ninety-nine.
+    const { outcomes, total } = usableOutcomes([good, {}, { ...good, key: 'k2' }]);
+    expect(outcomes).toHaveLength(2);
+    expect(total).toBe(3);
+  });
+
+  it('reports total === length when nothing was lost', () => {
+    const { outcomes, total } = usableOutcomes([good]);
+    expect(outcomes).toHaveLength(1);
+    expect(total).toBe(1);
   });
 });

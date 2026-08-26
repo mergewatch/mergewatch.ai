@@ -23,6 +23,7 @@ import type {
   OrgCustomAgent,
   ReviewTraceItem,
 } from '@mergewatch/core';
+import { usableOutcomes } from '@mergewatch/core';
 import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
 import { installations, installationSettings, reviews, reviewTraces } from './schema.js';
 
@@ -238,12 +239,21 @@ class PostgresDashboardReviewStore implements IDashboardReviewStore {
     // jsonb accepts any shape, so validate at the boundary — the consumer
     // iterates `outcomes` and a non-array would crash it (#480 review).
     if (!Array.isArray(r.outcomes)) return null;
+    // #482 review — and the ELEMENTS are equally unvalidated. The renderer
+    // calls `e.agents.join(...)`, which throws on a row missing that field, so
+    // Array.isArray alone is not enough.
+    const { outcomes, total } = usableOutcomes(r.outcomes);
+    const lost = total - outcomes.length;
     return {
       repoFullName: r.repoFullName,
       prNumberCommitSha: r.prNumberCommitSha,
-      outcomes: r.outcomes as ReviewTraceItem['outcomes'],
-      ...(r.truncated === true ? { truncated: true } : {}),
-      ...(typeof r.totalOutcomes === 'number' ? { totalOutcomes: r.totalOutcomes } : {}),
+      outcomes,
+      // A partial trail must not read as complete, so dropped rows reuse the
+      // same "you are not seeing everything" affordance as the size cap.
+      ...(r.truncated === true || lost > 0 ? { truncated: true } : {}),
+      ...(typeof r.totalOutcomes === 'number'
+        ? { totalOutcomes: r.totalOutcomes }
+        : lost > 0 ? { totalOutcomes: total } : {}),
       createdAt: r.createdAt,
       ...(r.expiresAt ? { ttl: Math.floor(r.expiresAt.getTime() / 1000) } : {}),
     };

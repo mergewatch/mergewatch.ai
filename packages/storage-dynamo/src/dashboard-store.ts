@@ -25,7 +25,7 @@ import type {
   OrgCustomAgent,
   ReviewTraceItem,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, usableOutcomes } from '@mergewatch/core';
 
 // ─── Installation store ─────────────────────────────────────────────────────
 
@@ -496,7 +496,19 @@ export class DynamoDashboardReviewStore implements IDashboardReviewStore {
     // Same boundary check the trace store itself uses (#480 review): the
     // consumer iterates `outcomes`, so a malformed row must not reach it.
     if (!item || !Array.isArray(item.outcomes)) return null;
-    return item;
+    // #482 review — the ELEMENTS are unvalidated too. The renderer calls
+    // `e.agents.join(...)`, which throws on a row missing that field.
+    const { outcomes, total } = usableOutcomes(item.outcomes);
+    const lost = total - outcomes.length;
+    return {
+      ...item,
+      outcomes,
+      // A partial trail must not read as complete.
+      ...(item.truncated || lost > 0 ? { truncated: true } : {}),
+      ...(item.totalOutcomes != null
+        ? { totalOutcomes: item.totalOutcomes }
+        : lost > 0 ? { totalOutcomes: total } : {}),
+    };
   }
 
   async updateFeedback(
