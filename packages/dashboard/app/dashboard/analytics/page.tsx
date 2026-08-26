@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { resolveActiveInstallation } from "@/lib/server-org";
 import {
   fetchUserInstallations,
   TokenExpiredError,
@@ -35,9 +36,11 @@ export default async function AnalyticsPage({ searchParams }: AnalyticsPageProps
   if (installations.length === 0) redirect("/onboarding");
 
   const orgParam = typeof params.org === "string" ? params.org : undefined;
-  const activeInstallation = orgParam
-    ? installations.find((i) => String(i.id) === orgParam) ?? installations[0]
-    : installations[0];
+  const activeInstallation = await resolveActiveInstallation({
+    installations,
+    orgParam,
+    githubUserId: (session as any).githubUserId as string | undefined,
+  });
 
   const installationId = String(activeInstallation.id);
 
