@@ -222,10 +222,21 @@ const MERGE_SCORE_META: Record<number, { emoji: string; label: string }> = {
   1: { emoji: '\uD83D\uDD34', label: 'Do not merge' },
 };
 
+/**
+ * The verdict wording for a merge score, clamped to 1–5.
+ *
+ * Exported so the dashboard (#472) shows the SAME verdict as the PR comment.
+ * Two copies of this table would drift, and a review that reads "Needs fixes"
+ * on GitHub and something else on the dashboard is worse than either alone.
+ */
+export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
+  const clamped = Math.max(1, Math.min(5, score));
+  return { ...MERGE_SCORE_META[clamped], score: clamped };
+}
+
 /** Render the merge score as a prominent badge line. */
 function renderMergeScore(score: number): string {
-  const clamped = Math.max(1, Math.min(5, score));
-  const { emoji, label } = MERGE_SCORE_META[clamped];
+  const { emoji, label, score: clamped } = mergeScoreMeta(score);
   return `${emoji} **${clamped}/5 — ${label}**`;
 }
 

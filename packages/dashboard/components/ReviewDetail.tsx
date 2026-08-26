@@ -3,6 +3,12 @@
 import Link from "next/link";
 import RelativeTime from "./RelativeTime";
 import {
+  sortFindingsBySeverity,
+  findingsSummaryLine,
+  mergeScoreMeta,
+  type DetailFinding,
+} from "../lib/review-findings";
+import {
   ArrowLeft,
   ExternalLink,
   GitCommit,
@@ -38,6 +44,82 @@ export interface ReviewData {
   completedAt?: string;
   commentId?: number;
   settingsUsed?: SettingsUsed;
+  /**
+   * #472 Part A — these three were already returned by the store and by
+   * /api/reviews/[id]; page.tsx simply did not pass them through, so every
+   * review detail page rendered no findings, no summary and no score.
+   */
+  findings?: DetailFinding[];
+  summaryText?: string;
+  mergeScore?: number;
+  mergeScoreReason?: string;
+}
+
+// Borrowed from ReviewDrawer so the two surfaces describe the same review the
+// same way. A second palette here would drift.
+const severityStyles: Record<string, { dot: string; label: string }> = {
+  critical: { dot: "bg-red-500", label: "Critical" },
+  warning: { dot: "bg-yellow-500", label: "Warning" },
+  info: { dot: "bg-blue-500", label: "Info" },
+};
+
+function SeverityDot({ severity }: { severity?: string }) {
+  const s = severityStyles[severity ?? ""] ?? severityStyles.info;
+  return <span className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${s.dot}`} title={s.label} />;
+}
+
+function FindingsSection({ findings }: { findings: DetailFinding[] }) {
+  const sorted = sortFindingsBySeverity(findings);
+  return (
+    <div className="rounded-lg border border-border-default overflow-hidden">
+      <div className="bg-surface-card-hover px-4 py-2.5 border-b border-border-default flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-fg-muted">
+          Findings ({findings.length})
+        </h3>
+        <span className="text-xs text-fg-tertiary">{findingsSummaryLine(findings)}</span>
+      </div>
+      <div className="divide-y divide-border-subtle">
+        {sorted.map((f, i) => (
+          <div key={`${f.file}:${f.line}:${i}`} className="flex items-start gap-2.5 px-4 py-3">
+            <SeverityDot severity={f.severity} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-fg-primary">{f.title}</span>
+                {f.category && (
+                  <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase text-fg-secondary">
+                    {f.category}
+                  </span>
+                )}
+                {f.confidence != null && (
+                  <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] text-fg-secondary">
+                    {f.confidence}%
+                  </span>
+                )}
+                {/* FP-L — an unverified critical is advisory, and saying so here
+                    keeps the dashboard aligned with the PR comment's split. */}
+                {f.verification === "unverified" && (
+                  <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] text-fg-tertiary">
+                    unverified
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs">
+                <code className="text-fg-tertiary">{f.file}:{f.line}</code>
+              </p>
+              {f.description && (
+                <p className="mt-1.5 text-xs leading-relaxed text-fg-secondary">{f.description}</p>
+              )}
+              {f.suggestion && (
+                <p className="mt-1.5 text-xs leading-relaxed text-fg-tertiary">
+                  <span className="font-medium">Suggestion: </span>{f.suggestion}
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 const statusConfig: Record<
@@ -307,7 +389,52 @@ export default function ReviewDetail({ review }: { review: ReviewData }) {
         )}
       </div>
 
-      {/* Future: reasoning flow, agent traces, etc. */}
+      {/* #472 Part A — the review's actual result. The data was always here;
+          only the prop plumbing was missing. */}
+      {(review.mergeScore != null || review.summaryText || (review.findings?.length ?? 0) > 0) && (
+        <div className="mt-6 space-y-4">
+          {review.mergeScore != null && (() => {
+            const meta = mergeScoreMeta(review.mergeScore);
+            return (
+              <div className="rounded-lg border border-border-default px-4 py-3">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-sm font-semibold text-fg-primary">
+                    {meta.emoji} {meta.score}/5 — {meta.label}
+                  </span>
+                  {review.mergeScoreReason && (
+                    <span className="text-sm text-fg-secondary">{review.mergeScoreReason}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {review.summaryText && (
+            <div className="rounded-lg border border-border-default overflow-hidden">
+              <div className="bg-surface-card-hover px-4 py-2.5 border-b border-border-default">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-fg-muted">
+                  Summary
+                </h3>
+              </div>
+              <p className="px-4 py-3 text-sm leading-relaxed text-fg-secondary">
+                {review.summaryText}
+              </p>
+            </div>
+          )}
+
+          {(review.findings?.length ?? 0) > 0
+            ? <FindingsSection findings={review.findings!} />
+            : review.status === "completed" && (
+              <div className="rounded-lg border border-border-default px-4 py-8 text-center text-sm text-fg-tertiary">
+                No findings were rendered for this review.
+                <br />
+                <span className="text-xs text-fg-faint">
+                  A clean review, or every finding was filtered — the decision trail will say which.
+                </span>
+              </div>
+            )}
+        </div>
+      )}
     </div>
   );
 }
