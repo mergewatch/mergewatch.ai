@@ -4163,7 +4163,10 @@ describe('ledger survives fingerprinting (#484)', () => {
         diff: sampleDiff, context: sampleContext,
         modelId: 'heavy-model', lightModelId: 'light-model',
         maxFindings: 25, enabledAgents: allAgents,
-        groundingFetch: { octokit: octokitWithFile(FILE), owner: 'o', repo: 'r', ref: 'sha' },
+        groundingFetch: {
+          octokit: octokitWithFile(FILE), owner: 'o', repo: 'r', ref: 'sha',
+          maxContextKB: 256, maxRounds: 1,
+        },
       },
       { llm },
     );
