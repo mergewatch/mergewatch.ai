@@ -146,3 +146,28 @@ export function mergeScoreMeta(score: number): { emoji: string; label: string; s
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
   return { ...MERGE_SCORE_LABELS[clamped], score: clamped };
 }
+
+/**
+ * The canonical trace/detail key for a review, tolerant of which field the API
+ * happened to send.
+ *
+ * This key has now caused three bugs. #487: rebuilt from `prNumber` +
+ * `commitSha`, which is lossy because `commitSha` is derived as
+ * `split("#")[1] ?? ""`. Then: guarded on `review.id`, which the single-review
+ * endpoint never returned — the drawer CASTS its fetch response, so the
+ * declared type was a lie and the guard was silently false, hiding both the
+ * decision trail and the full-review link with no error anywhere.
+ *
+ * Returns null when neither field is usable, so callers render nothing rather
+ * than a broken key — a missing affordance is recoverable, a wrong lookup that
+ * reports "no decision trail was recorded" is not.
+ */
+export function reviewKey(review: {
+  repoFullName?: string;
+  id?: string;
+  prNumberCommitSha?: string;
+}): string | null {
+  const key = review.id || review.prNumberCommitSha;
+  if (!review.repoFullName || !key) return null;
+  return `${review.repoFullName}:${key}`;
+}

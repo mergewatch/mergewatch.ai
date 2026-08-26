@@ -6,6 +6,7 @@ import {
   mergeScoreMeta,
   confidenceVsFloor,
   groundingSummary,
+  reviewKey,
 } from "./review-findings";
 
 const f = (severity: string, title: string) => ({ severity, title });
@@ -130,5 +131,30 @@ describe("groundingSummary (#472 Part B)", () => {
 
   it("treats blank cited code as no anchor", () => {
     expect(groundingSummary({ evidence: { code: "   " } })).toBe("No grounding recorded");
+  });
+});
+
+describe("reviewKey", () => {
+  it("prefers id", () => {
+    expect(reviewKey({ repoFullName: "o/r", id: "42#abc" })).toBe("o/r:42#abc");
+  });
+
+  it("falls back to prNumberCommitSha when the API omits id", () => {
+    // Exactly what happened: the single-review endpoint never returned `id`,
+    // the drawer cast its response to a type that declared it required, and
+    // every `review.id` guard was silently false.
+    expect(reviewKey({ repoFullName: "o/r", prNumberCommitSha: "42#abc" })).toBe("o/r:42#abc");
+  });
+
+  it("returns null rather than a broken key when the repo is missing", () => {
+    expect(reviewKey({ id: "42#abc" })).toBeNull();
+  });
+
+  it("returns null rather than a broken key when both id fields are missing", () => {
+    expect(reviewKey({ repoFullName: "o/r" })).toBeNull();
+  });
+
+  it("treats an empty string as missing, not as a key", () => {
+    expect(reviewKey({ repoFullName: "o/r", id: "", prNumberCommitSha: "" })).toBeNull();
   });
 });
