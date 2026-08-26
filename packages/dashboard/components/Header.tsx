@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
+import { clearOrgCookie } from "@/lib/org-selection";
 import { Menu, User } from "lucide-react";
 
 interface HeaderProps {
@@ -98,7 +99,7 @@ export default function Header({ userName, userImage, onMenuToggle }: HeaderProp
                 </div>
               </Link>
               <button
-                onClick={() => signOut({ callbackUrl: "/" })}
+                onClick={() => { clearOrgCookie(); signOut({ callbackUrl: "/" }); }}
                 className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-primer-muted transition hover:bg-surface-card hover:text-red-400"
               >
                 <svg
