@@ -34,6 +34,9 @@ export type {
   ReviewStats,
   RepoStats,
 } from './storage/dashboard-types.js';
+// A class, so a value export — `export type` would compile and then fail at
+// runtime on the `instanceof` the API route uses to name this failure (#494).
+export { TraceStorageNotConfiguredError } from './storage/dashboard-types.js';
 
 // ─── Agents ─────────────────────────────────────────────────────────────────
 export {
