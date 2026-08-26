@@ -16,6 +16,9 @@ import {
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
+import { FindingsSection } from "./FindingEvidence";
+import FilterTrail from "./FilterTrail";
+import type { DetailFinding } from "../lib/review-findings";
 
 // -- Types ------------------------------------------------------------------
 
@@ -46,19 +49,13 @@ interface ReviewDetail {
   mergeScoreReason?: string;
 }
 
-interface Finding {
-  file: string;
-  line: number;
-  severity: "critical" | "warning" | "info";
-  confidence?: number;
-  category: "security" | "bug" | "style";
-  title: string;
-  description: string;
-  suggestion: string;
-}
+// #486 — the shared shape, so the drawer and the page cannot drift apart.
+type Finding = DetailFinding;
 
 interface SettingsUsed {
   severityThreshold: string;
+  /** #486 — the confidence floor in force, shown against each finding's score. */
+  minConfidence?: number;
   commentTypes: { syntax: boolean; logic: boolean; style: boolean };
   maxComments: number;
   summaryEnabled: boolean;
@@ -75,28 +72,11 @@ const statusStyles: Record<string, { bg: string; text: string; label: string }> 
   skipped: { bg: "bg-[#555]/15", text: "text-fg-secondary", label: "Skipped" },
 };
 
-const severityStyles: Record<string, { dot: string; label: string }> = {
-  critical: { dot: "bg-red-500", label: "Critical" },
-  warning: { dot: "bg-yellow-500", label: "Warning" },
-  info: { dot: "bg-blue-500", label: "Info" },
-};
-
 function StatusBadge({ status }: { status: string }) {
   const s = statusStyles[status] ?? statusStyles.pending;
   return (
     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${s.bg} ${s.text}`}>
       {s.label}
-    </span>
-  );
-}
-
-function SeverityDot({ severity }: { severity?: string }) {
-  if (!severity) return null;
-  const s = severityStyles[severity];
-  if (!s) return null;
-  return (
-    <span className="inline-flex items-center gap-1" title={s.label}>
-      <span className={`inline-block h-2 w-2 rounded-full ${s.dot}`} />
     </span>
   );
 }
@@ -347,44 +327,33 @@ export default function ReviewDrawer({
                 icon={AlertCircle}
                 defaultOpen
               >
+                {/* #486 — the SAME component the detail page renders, so the drawer
+                    carries the full review rather than a summary of it. This was
+                    hand-rolled markup, which is why evidence was unreachable from the
+                    surface people actually click. */}
                 {(!review.findings || review.findings.length === 0) ? (
                   <p className="text-sm text-fg-tertiary">No issues found.</p>
                 ) : (
-                  <div className="space-y-3">
-                    {review.findings.map((f, i) => (
-                      <div key={i} className="rounded-lg border border-border-subtle p-3">
-                        <div className="flex items-start gap-2">
-                          <SeverityDot severity={f.severity} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-medium text-fg-primary">{f.title}</span>
-                              <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] text-fg-secondary uppercase">
-                                {f.category}
-                              </span>
-                              {f.confidence != null && (
-                                <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] text-fg-secondary">
-                                  {f.confidence}%
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-1 text-xs text-fg-secondary">
-                              <code className="text-fg-secondary">{f.file}:{f.line}</code>
-                            </p>
-                            {f.description && (
-                              <p className="mt-1.5 text-xs text-fg-secondary leading-relaxed">{f.description}</p>
-                            )}
-                            {f.suggestion && (
-                              <div className="mt-2 rounded bg-[#0d1a0d] border border-[#1a2e1a] px-2.5 py-1.5 text-xs text-[#6fcc6f]">
-                                {f.suggestion}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <FindingsSection
+                    findings={review.findings as DetailFinding[]}
+                    minConfidence={review.settingsUsed?.minConfidence}
+                  />
                 )}
               </DrawerSection>
+
+              {/* #486 — keyed on `id`, which IS the canonical prNumberCommitSha the
+                  trace is stored under. Rebuilding it from prNumber+commitSha was
+                  lossy: commitSha is derived as `split("#")[1] ?? ""`, so a key with
+                  no '#' yields `repo:42#` — a lookup that finds nothing and renders
+                  "No decision trail was recorded", which would be a false statement
+                  rather than an absent trail. */}
+              {review.status === "complete" && review.repoFullName && review.id && (
+                <DrawerSection title="Decision trail" icon={AlertCircle}>
+                  <FilterTrail
+                    reviewId={`${review.repoFullName}:${review.id}`}
+                  />
+                </DrawerSection>
+              )}
 
               {review.settingsUsed && (
                 <DrawerSection title="Settings Used" icon={BarChart3}>

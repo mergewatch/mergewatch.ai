@@ -223,6 +223,29 @@ const MERGE_SCORE_META: Record<number, { emoji: string; label: string }> = {
 };
 
 /**
+ * #486 — the dashboard URL for one review, built the SAME way by both runtimes.
+ *
+ * They had drifted into two different shapes. SaaS produced a single encoded
+ * segment; self-hosted produced `.../{encodedRepo}/{prNumberCommitSha}` — two
+ * segments against a one-segment `[id]` route, so it 404'd. Worse, the `#` in
+ * `42#abc` went unencoded, which a browser treats as a fragment: the commit SHA
+ * never reached the server at all.
+ *
+ * Returns undefined when there is no dashboard, which is the normal
+ * self-hosted case — the comment then omits the link rather than rendering a
+ * dead one.
+ */
+export function buildReviewDetailUrl(
+  dashboardBaseUrl: string | undefined,
+  repoFullName: string,
+  prNumberCommitSha: string,
+): string | undefined {
+  if (!dashboardBaseUrl) return undefined;
+  const base = dashboardBaseUrl.replace(/\/+$/, '');
+  return `${base}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;
+}
+
+/**
  * The verdict wording for a merge score, clamped to 1–5.
  *
  * Exported so the dashboard (#472) shows the SAME verdict as the PR comment.

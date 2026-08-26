@@ -140,7 +140,7 @@ export type { ReviewThreadComment } from './github/client.js';
 
 // ─── Comment formatter ──────────────────────────────────────────────────────
 export { formatReviewComment,
-  mergeScoreMeta, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent } from './comment-formatter.js';
+  mergeScoreMeta, buildReviewDetailUrl, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent } from './comment-formatter.js';
 export type { Finding, WorkDoneSection } from './comment-formatter.js';
 
 // ─── Review delta ────────────────────────────────────────────────────────────

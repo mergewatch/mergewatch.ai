@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, buildReviewDetailUrl, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1022,5 +1022,49 @@ describe('mergeScoreMeta — fractional scores (#481 review)', () => {
   it('still clamps out of range', () => {
     expect(mergeScoreMeta(0).score).toBe(1);
     expect(mergeScoreMeta(99).score).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review detail URL — one shape for both runtimes (#486)
+// ---------------------------------------------------------------------------
+
+describe('buildReviewDetailUrl (#486)', () => {
+  it('encodes the whole key into ONE path segment', () => {
+    // The dashboard route is a single [id] segment parsed on the last colon.
+    // Self-hosted used to emit `.../{repo}/{pr#sha}` — two segments — which
+    // 404'd, and left `#` unencoded so the SHA became a browser fragment.
+    const url = buildReviewDetailUrl('https://mw.example', 'owner/repo', '42#abc123')!;
+    const path = url.slice('https://mw.example'.length);
+    expect(path).toBe('/dashboard/reviews/owner%2Frepo%3A42%23abc123');
+    expect(path.split('/dashboard/reviews/')[1]).not.toContain('/');
+  });
+
+  it('encodes the # so the commit SHA reaches the server', () => {
+    const url = buildReviewDetailUrl('https://mw.example', 'owner/repo', '42#abc123')!;
+    expect(url).not.toContain('#');
+    expect(url).toContain('%23');
+  });
+
+  it('round-trips through the route parser', () => {
+    // Mirror of parseReviewId in app/api/reviews/[id]/route.ts.
+    const url = buildReviewDetailUrl('https://mw.example', 'owner/repo', '42#abc123')!;
+    const id = url.split('/dashboard/reviews/')[1];
+    const decoded = decodeURIComponent(id);
+    const idx = decoded.lastIndexOf(':');
+    expect(decoded.slice(0, idx)).toBe('owner/repo');
+    expect(decoded.slice(idx + 1)).toBe('42#abc123');
+  });
+
+  it('returns undefined when there is no dashboard — the normal self-hosted case', () => {
+    // The comment then omits the link rather than rendering a dead one.
+    expect(buildReviewDetailUrl(undefined, 'owner/repo', '42#abc')).toBeUndefined();
+    expect(buildReviewDetailUrl('', 'owner/repo', '42#abc')).toBeUndefined();
+  });
+
+  it('tolerates a trailing slash on the base URL', () => {
+    // DASHBOARD_BASE_URL is operator-set; a trailing slash is a coin flip.
+    expect(buildReviewDetailUrl('https://mw.example/', 'o/r', '1#a'))
+      .toBe(buildReviewDetailUrl('https://mw.example', 'o/r', '1#a'));
   });
 });
