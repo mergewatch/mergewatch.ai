@@ -202,23 +202,40 @@ export class TraceRecorder {
     }
   }
 
-  /** The ledger. */
+  /**
+   * The ledger.
+   *
+   * Optional fields are OMITTED when absent rather than set to `undefined`.
+   * DynamoDB's document marshaller rejects undefined outright —
+   *
+   *   Error: Pass options.removeUndefinedValues=true to remove undefined
+   *   values from map/array/set.
+   *
+   * — so emitting them made every trace write fail for any review with a
+   * non-trivial ledger. The write is best-effort, so it failed silently and
+   * #471 shipped to production looking fine while persisting almost nothing.
+   * Only empty ledgers marshalled cleanly.
+   *
+   * Fixed here rather than by passing `removeUndefinedValues` at the client:
+   * the record should be clean at the source, for every backend, rather than
+   * relying on one store's marshaller to tidy up after it.
+   */
   outcomes(): FindingOutcome[] {
     return [...this.entries.values()].map((e) => ({
       key: e.key,
       file: e.file,
       line: e.line,
       severity: e.severity,
-      confidence: e.confidence,
+      ...(e.confidence != null ? { confidence: e.confidence } : {}),
       title: e.title,
       agents: [...e.agents],
       // An entry with no recorded verdict never reached a terminal stage. That
       // is a bug in the wiring, not a state to invent a value for — call it
       // dropped with no stage so the self-consistency test can see it.
       outcome: e.outcome ?? 'dropped',
-      stage: e.stage,
-      reason: e.reason,
-      mergedInto: e.mergedInto,
+      ...(e.stage ? { stage: e.stage } : {}),
+      ...(e.reason ? { reason: e.reason } : {}),
+      ...(e.mergedInto ? { mergedInto: e.mergedInto } : {}),
     }));
   }
 
