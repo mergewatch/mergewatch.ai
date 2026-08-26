@@ -64,6 +64,12 @@ export async function GET(
 
   return NextResponse.json({
     review: {
+      // The canonical key, under the same name the LIST endpoint uses.
+      // ReviewDrawer's ReviewDetail declares `id` as required and casts this
+      // response to it, so omitting it made the type a lie and every
+      // `review.id` guard silently false — hiding the decision trail and the
+      // full-review link with no error anywhere.
+      id: item.prNumberCommitSha,
       repoFullName: item.repoFullName,
       prNumberCommitSha: item.prNumberCommitSha,
       prNumber: Number(String(item.prNumberCommitSha).split("#")[0]),

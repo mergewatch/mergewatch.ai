@@ -19,13 +19,17 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { FindingsSection } from "./FindingEvidence";
+import { reviewKey } from "../lib/review-findings";
 import FilterTrail from "./FilterTrail";
 import type { DetailFinding } from "../lib/review-findings";
 
 // -- Types ------------------------------------------------------------------
 
 interface ReviewDetail {
-  id: string;
+  /** Optional: the single-review endpoint historically omitted this. */
+  id?: string;
+  /** What that endpoint actually returns — the same canonical key. */
+  prNumberCommitSha?: string;
   repoFullName: string;
   prNumber: number;
   commitSha: string;
@@ -349,10 +353,10 @@ export default function ReviewDrawer({
                   no '#' yields `repo:42#` — a lookup that finds nothing and renders
                   "No decision trail was recorded", which would be a false statement
                   rather than an absent trail. */}
-              {review.status === "complete" && review.repoFullName && review.id && (
+              {review.status === "complete" && reviewKey(review) && (
                 <DrawerSection title="Decision trail" icon={AlertCircle}>
                   <FilterTrail
-                    reviewId={`${review.repoFullName}:${review.id}`}
+                    reviewId={reviewKey(review)!}
                   />
                 </DrawerSection>
               )}
@@ -430,9 +434,9 @@ export default function ReviewDrawer({
                     review — it is what the PR comment's "View full details" and
                     the check run's Details link point at. Until now the drawer
                     was a dead end: nothing in the dashboard linked to it. */}
-                {review.repoFullName && review.id && (
+                {reviewKey(review) && (
                   <Link
-                    href={`/dashboard/reviews/${encodeURIComponent(`${review.repoFullName}:${review.id}`)}`}
+                    href={`/dashboard/reviews/${encodeURIComponent(reviewKey(review)!)}`}
                     className="flex items-center justify-center gap-2 rounded-lg border border-border-default px-4 py-2.5 text-sm text-fg-secondary hover:border-fg-faint hover:text-fg-primary transition-colors"
                   >
                     Open full review <ArrowUpRight size={14} />
