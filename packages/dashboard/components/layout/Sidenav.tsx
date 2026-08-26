@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { clearOrgCookie } from "@/lib/org-selection";
 import { useTheme } from "next-themes";
 import {
   Home,
@@ -379,7 +380,7 @@ export default function Sidenav({
                   <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
                 </button>
                 <button
-                  onClick={() => signOut({ callbackUrl: "/" })}
+                  onClick={() => { clearOrgCookie(); signOut({ callbackUrl: "/" }); }}
                   className="flex w-full items-center gap-2 px-3 py-2 text-xs text-fg-secondary transition hover:bg-hover hover:text-red-400"
                 >
                   <LogOut size={13} />
@@ -414,7 +415,7 @@ export default function Sidenav({
                     <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
                   </button>
                   <button
-                    onClick={() => signOut({ callbackUrl: "/" })}
+                    onClick={() => { clearOrgCookie(); signOut({ callbackUrl: "/" }); }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-xs text-fg-secondary transition hover:bg-hover hover:text-red-400"
                   >
                     <LogOut size={13} />
