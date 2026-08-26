@@ -10,6 +10,13 @@
 
 export type Severity = "critical" | "warning" | "info";
 
+export interface FindingEvidence {
+  code?: string;
+  codeStartLine?: number;
+  reason?: string;
+  agents?: string[];
+}
+
 export interface DetailFinding {
   file: string;
   line: number;
@@ -20,6 +27,48 @@ export interface DetailFinding {
   description?: string;
   suggestion?: string;
   verification?: "verified" | "unverified";
+  /** #469 — per-finding proof, rendered in full here (#472 Part B). */
+  evidence?: FindingEvidence;
+}
+
+/**
+ * #472 Part B — confidence against the floor that was actually in force.
+ *
+ * Deliberately cut from the PR comment as too jargon-heavy for that surface,
+ * but exactly what someone auditing a finding on the dashboard wants: "82%"
+ * alone does not say whether it nearly missed the cut.
+ */
+export function confidenceVsFloor(
+  confidence: number | undefined,
+  floor: number | undefined,
+): string | null {
+  if (confidence == null) return null;
+  if (floor == null) return `${confidence}%`;
+  return `${confidence}% (floor ${floor})`;
+}
+
+/**
+ * #472 Part B — the grounding result in words.
+ *
+ * "anchor confirmed" is internal jargon nobody can act on in a PR comment,
+ * which is why #469 kept it out. On the dashboard, where the reader has
+ * deliberately opened the evidence, it is the answer to "did anything check
+ * that this line exists?".
+ */
+export function groundingSummary(f: {
+  verification?: "verified" | "unverified";
+  evidence?: FindingEvidence;
+}): string {
+  const anchored = Boolean(f.evidence?.code?.trim());
+  if (f.verification === "verified") {
+    return anchored ? "Anchor confirmed · verified against the file" : "Verified against the file";
+  }
+  if (f.verification === "unverified") {
+    return anchored
+      ? "Anchor confirmed · the verifier could not confirm the defect"
+      : "The verifier could not confirm the defect";
+  }
+  return anchored ? "Anchor confirmed · not verified" : "No grounding recorded";
 }
 
 /**

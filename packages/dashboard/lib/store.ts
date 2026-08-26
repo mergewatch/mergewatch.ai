@@ -23,6 +23,10 @@ export async function getDashboardStore(): Promise<IDashboardStore> {
     _store = createDynamoDashboardStore({
       installationsTable: process.env.DYNAMODB_TABLE_INSTALLATIONS ?? 'mergewatch-installations',
       reviewsTable: process.env.DYNAMODB_TABLE_REVIEWS ?? 'mergewatch-reviews',
+      // #472 — the #471 filter-trace table. Unset on a deployment provisioned
+      // before #471; the trail panel then says no trace was recorded rather
+      // than showing an empty trail.
+      reviewTracesTable: process.env.DYNAMODB_TABLE_REVIEW_TRACES,
       // FB-F..FB-J — optional. Unset on older deployments → dashboard
       // chart routes render a zero-state. Defaults to the FB-E SAM table
       // name when the stage suffix is supplied via env (SaaS path).

@@ -4,6 +4,8 @@ import {
   severityCounts,
   findingsSummaryLine,
   mergeScoreMeta,
+  confidenceVsFloor,
+  groundingSummary,
 } from "./review-findings";
 
 const f = (severity: string, title: string) => ({ severity, title });
@@ -89,5 +91,44 @@ describe("mergeScoreMeta", () => {
     for (const score of [1, 1.4, 2, 2.5, 3, 3.7, 4, 4.9, 5, 0, 99]) {
       expect(mergeScoreMeta(score)).toEqual(core.mergeScoreMeta(score));
     }
+  });
+});
+
+describe("confidenceVsFloor (#472 Part B)", () => {
+  it("shows the floor that was in force, not just the score", () => {
+    // "82%" alone does not say whether it nearly missed the cut.
+    expect(confidenceVsFloor(82, 75)).toBe("82% (floor 75)");
+  });
+
+  it("falls back to the bare score when no floor is known", () => {
+    expect(confidenceVsFloor(82, undefined)).toBe("82%");
+  });
+
+  it("renders nothing when the finding is unscored", () => {
+    expect(confidenceVsFloor(undefined, 75)).toBeNull();
+  });
+});
+
+describe("groundingSummary (#472 Part B)", () => {
+  it("reports a verified finding with a confirmed anchor", () => {
+    expect(groundingSummary({ verification: "verified", evidence: { code: "x = 1" } }))
+      .toContain("Anchor confirmed");
+  });
+
+  it("says plainly when the verifier could not confirm", () => {
+    expect(groundingSummary({ verification: "unverified", evidence: { code: "x = 1" } }))
+      .toContain("could not confirm");
+  });
+
+  it("does not claim an anchor when there is no cited code", () => {
+    expect(groundingSummary({ verification: "verified" })).not.toContain("Anchor confirmed");
+  });
+
+  it("says nothing was recorded rather than implying a pass", () => {
+    expect(groundingSummary({})).toBe("No grounding recorded");
+  });
+
+  it("treats blank cited code as no anchor", () => {
+    expect(groundingSummary({ evidence: { code: "   " } })).toBe("No grounding recorded");
   });
 });

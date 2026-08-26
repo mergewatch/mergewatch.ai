@@ -328,6 +328,8 @@ export {
   TraceRecorder,
   outcomeKey,
   buildReviewTrace,
+  isUsableOutcome,
+  usableOutcomes,
   MAX_TRACE_OUTCOMES,
   TRACE_TTL_DAYS,
 } from './filter-trace.js';

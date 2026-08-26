@@ -11,7 +11,9 @@
  *   - PostgresDashboardStore (packages/storage-postgres) — self-hosted / Docker
  */
 
-import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight, NpsResponseRecord, OrgCustomAgent } from '../types/db.js';
+import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFPInsight, NpsResponseRecord, OrgCustomAgent,
+  ReviewTraceItem,
+} from '../types/db.js';
 
 // ─── Paginated result wrapper ───────────────────────────────────────────────
 
@@ -68,6 +70,21 @@ export interface IDashboardReviewStore {
 
   /** Get a single review by composite key. */
   getReview(repoFullName: string, prNumberCommitSha: string): Promise<ReviewItem | null>;
+
+  /**
+   * #472 — the filter outcome ledger for one review (#470/#471), or null when
+   * none was written (a review from before #471, or a trace write that failed).
+   *
+   * REQUIRED, not optional, and that is the point. A Dynamo-only
+   * implementation would leave self-hosted users looking at an empty decision
+   * trail with no error — worse than the feature not existing, because an
+   * empty trail reads as "nothing was filtered". Requiring it here makes
+   * shipping one backend a compile error rather than a silent asymmetry.
+   */
+  getReviewTrace(
+    repoFullName: string,
+    prNumberCommitSha: string,
+  ): Promise<ReviewTraceItem | null>;
 
   /** Set or clear feedback on a review. */
   updateFeedback(

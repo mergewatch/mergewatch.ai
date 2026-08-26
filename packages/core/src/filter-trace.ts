@@ -265,6 +265,43 @@ export class TraceRecorder {
  */
 export const MAX_TRACE_OUTCOMES = 500;
 
+/**
+ * Is this a structurally usable outcome row?
+ *
+ * `outcomes` is `jsonb` in Postgres and an unvalidated map in DynamoDB, so the
+ * column type guarantees nothing about the elements. `Array.isArray` checks
+ * the container and stops there — and the renderer calls `e.agents.join(...)`,
+ * which throws outright on an element missing that field.
+ *
+ * Only the fields the renderer actually dereferences are required. Anything
+ * stricter would reject rows that display perfectly well.
+ */
+export function isUsableOutcome(v: unknown): v is FindingOutcome {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.key === 'string'
+    && typeof o.file === 'string'
+    && typeof o.title === 'string'
+    && typeof o.line === 'number'
+    && Array.isArray(o.agents)
+    && (o.outcome === 'surfaced' || o.outcome === 'merged'
+        || o.outcome === 'dropped' || o.outcome === 'demoted');
+}
+
+/**
+ * Keep the usable rows and say how many there were originally.
+ *
+ * Malformed rows are dropped rather than failing the whole read — losing one
+ * corrupt row should not cost the reader the other ninety-nine. But a partial
+ * trail must never read as complete, so a caller that loses rows marks the
+ * trace `truncated` with the true total, reusing the affordance the UI already
+ * has for the size cap. Corruption and truncation mean the same thing to the
+ * reader: you are not seeing everything.
+ */
+export function usableOutcomes(raw: unknown[]): { outcomes: FindingOutcome[]; total: number } {
+  return { outcomes: raw.filter(isUsableOutcome), total: raw.length };
+}
+
 /** Retention for a persisted trace — a debugging artifact, not a system of record. */
 export const TRACE_TTL_DAYS = 30;
 

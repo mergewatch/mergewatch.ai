@@ -72,6 +72,8 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
         summaryText: (item.summaryText as string | undefined) ?? undefined,
         mergeScore: item.mergeScore as number | undefined,
         mergeScoreReason: (item.mergeScoreReason as string | undefined) ?? undefined,
+        // #472 Part B — the floor a finding's confidence was judged against.
+        minConfidence: (item.settingsUsed as any)?.minConfidence as number | undefined,
       }}
     />
   );
