@@ -341,11 +341,16 @@ export default function ReviewDrawer({
                 )}
               </DrawerSection>
 
-              {/* #486 — why every other finding is not above. */}
-              {review.status === "complete" && (
+              {/* #486 — keyed on `id`, which IS the canonical prNumberCommitSha the
+                  trace is stored under. Rebuilding it from prNumber+commitSha was
+                  lossy: commitSha is derived as `split("#")[1] ?? ""`, so a key with
+                  no '#' yields `repo:42#` — a lookup that finds nothing and renders
+                  "No decision trail was recorded", which would be a false statement
+                  rather than an absent trail. */}
+              {review.status === "complete" && review.repoFullName && review.id && (
                 <DrawerSection title="Decision trail" icon={AlertCircle}>
                   <FilterTrail
-                    reviewId={`${review.repoFullName}:${review.prNumber}#${review.commitSha}`}
+                    reviewId={`${review.repoFullName}:${review.id}`}
                   />
                 </DrawerSection>
               )}

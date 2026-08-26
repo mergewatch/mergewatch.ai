@@ -370,7 +370,7 @@ export default function ReviewDetail({ review }: { review: ReviewData }) {
       )}
 
       {/* #472 Part C — why every other finding is not above. */}
-      {review.status === "completed" && (
+      {review.status === "completed" && review.repoFullName && review.prNumberCommitSha && (
         <div className="mt-4">
           <FilterTrail reviewId={`${review.repoFullName}:${review.prNumberCommitSha}`} />
         </div>
