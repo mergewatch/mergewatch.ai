@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Sidenav from "./Sidenav";
 import {
   resolveOrg,
-  serializeOrgCookie,
+  writeOrgCookie,
   serializeClearedOrgCookie,
 } from "@/lib/org-selection";
 
@@ -71,7 +71,7 @@ export default function DashboardShell({
       document.cookie = serializeClearedOrgCookie();
     }
     if (githubUserId && resolved.installationId != null && resolved.source !== "cookie") {
-      document.cookie = serializeOrgCookie(githubUserId, resolved.installationId);
+      writeOrgCookie(githubUserId, resolved.installationId);
     }
   }, [githubUserId, resolved.installationId, resolved.source, resolved.staleCookie]);
 
@@ -80,8 +80,8 @@ export default function DashboardShell({
       // Write before navigating: the cookie is what carries the choice to
       // pages the param never reaches, and the push below only survives as
       // long as the param does.
-      if (githubUserId && typeof document !== "undefined") {
-        document.cookie = serializeOrgCookie(githubUserId, installationId);
+      if (githubUserId) {
+        writeOrgCookie(githubUserId, installationId);
       }
       const params = new URLSearchParams(searchParams.toString());
       params.set("org", String(installationId));

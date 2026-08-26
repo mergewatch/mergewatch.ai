@@ -59,17 +59,33 @@ export interface ResolvedOrg {
  * installations on every read. Script that could forge this cookie already has
  * the session, and the worst it can select is an org the victim can see anyway.
  *
- * `Secure` is likewise omitted so self-hosted deployments on plain HTTP keep
- * working; `SameSite=Lax` is the meaningful protection here.
+ * `Secure` is decided per call from the page's own protocol rather than from
+ * `NODE_ENV`: self-hosted deployments run a production build over plain HTTP,
+ * so keying it on the build mode would set an inert `Secure` cookie there and
+ * silently break the switcher. The protocol is the fact that actually matters.
  *
  * The user id is stored alongside the installation id so a cookie belonging
  * to a different account is inert by construction. Clearing on sign-out is
  * hygiene; this check is the guarantee — a missed clear, a shared browser, or
  * a cookie left by a previous account cannot select an org for someone else.
  */
-export function serializeOrgCookie(userId: string, installationId: number): string {
+export function serializeOrgCookie(
+  userId: string,
+  installationId: number,
+  opts: { secure?: boolean } = {},
+): string {
   const value = encodeURIComponent(`${userId}:${installationId}`);
-  return `${ORG_COOKIE}=${value}; Path=/; Max-Age=${MAX_AGE_SECONDS}; SameSite=Lax`;
+  const secure = opts.secure ? "; Secure" : "";
+  return `${ORG_COOKIE}=${value}; Path=/; Max-Age=${MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+}
+
+/**
+ * True when the page is served over HTTPS, so the caller can ask for `Secure`.
+ * Returns false anywhere `window` is absent — a server render never writes
+ * this cookie, so the conservative answer costs nothing there.
+ */
+export function isSecureContext(): boolean {
+  return typeof window !== "undefined" && window.location?.protocol === "https:";
 }
 
 /** Serialize the expiry form used on sign-out. */
@@ -135,8 +151,11 @@ export function resolveOrg(opts: {
   const cookiePresent = typeof cookieValue === "string" && cookieValue.length > 0;
   const staleCookie = cookiePresent && !cookieUsable;
 
+  // `has()` already rejects 0 and negatives (no installation carries such an
+  // id), but the bound is stated explicitly to match parseOrgCookie rather
+  // than leaving the two paths validating the same value differently.
   const paramId = orgParam == null || orgParam === "" ? NaN : Number(orgParam);
-  if (Number.isSafeInteger(paramId) && has(paramId)) {
+  if (Number.isSafeInteger(paramId) && paramId > 0 && has(paramId)) {
     return { installationId: paramId, source: "param", staleCookie };
   }
 
@@ -162,4 +181,10 @@ export function resolveOrg(opts: {
 export function clearOrgCookie(): void {
   if (typeof document === "undefined") return;
   document.cookie = serializeClearedOrgCookie();
+}
+
+/** Write the selection from the browser, with `Secure` when the page is HTTPS. */
+export function writeOrgCookie(userId: string, installationId: number): void {
+  if (typeof document === "undefined") return;
+  document.cookie = serializeOrgCookie(userId, installationId, { secure: isSecureContext() });
 }

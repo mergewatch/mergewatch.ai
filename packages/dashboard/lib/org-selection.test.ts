@@ -23,6 +23,20 @@ describe("serializeOrgCookie", () => {
     expect(c).toContain("Max-Age=");
   });
 
+  it("adds Secure only when asked", () => {
+    expect(serializeOrgCookie(USER, 222, { secure: true })).toContain("; Secure");
+    expect(serializeOrgCookie(USER, 222, { secure: false })).not.toContain("Secure");
+    // Default is the safe-for-plain-HTTP form: a self-hosted deployment runs a
+    // production build over HTTP, and an inert Secure cookie there would
+    // silently break the switcher.
+    expect(serializeOrgCookie(USER, 222)).not.toContain("Secure");
+  });
+
+  it("still round-trips with Secure set", () => {
+    const raw = serializeOrgCookie(USER, 222, { secure: true }).split(";")[0].slice(ORG_COOKIE.length + 1);
+    expect(parseOrgCookie(raw)).toEqual({ userId: USER, installationId: 222 });
+  });
+
   it("expires immediately when cleared", () => {
     expect(serializeClearedOrgCookie()).toContain("Max-Age=0");
   });
@@ -108,6 +122,11 @@ describe("resolveOrg", () => {
   it("ignores a non-numeric param", () => {
     expect(resolveOrg({ ...base, orgParam: "abc" }).source).toBe("default");
     expect(resolveOrg({ ...base, orgParam: "" }).source).toBe("default");
+  });
+
+  it("rejects a non-positive param outright", () => {
+    expect(resolveOrg({ ...base, orgParam: "0" }).source).toBe("default");
+    expect(resolveOrg({ ...base, orgParam: "-111" }).source).toBe("default");
   });
 
   it("reports no selection when the user has no installations", () => {
