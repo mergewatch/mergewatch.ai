@@ -23,6 +23,7 @@ import type {
   InstallationSettings,
   ReviewItem,
   OrgCustomAgent,
+  ReviewTraceItem,
 } from '@mergewatch/core';
 import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
 
@@ -168,6 +169,12 @@ export class DynamoDashboardReviewStore implements IDashboardReviewStore {
   constructor(
     private readonly client: DynamoDBDocumentClient,
     private readonly tableName: string,
+    /**
+     * #472 — the filter-trace table (#471). Optional here so a deployment
+     * provisioned before #471 still serves the rest of the dashboard;
+     * getReviewTrace reports "no trace" rather than throwing.
+     */
+    private readonly tracesTable?: string,
   ) {}
 
   async listReviews(
@@ -474,6 +481,24 @@ export class DynamoDashboardReviewStore implements IDashboardReviewStore {
     return (result.Item as ReviewItem) ?? null;
   }
 
+  async getReviewTrace(
+    repoFullName: string,
+    prNumberCommitSha: string,
+  ): Promise<ReviewTraceItem | null> {
+    if (!this.tracesTable) return null;
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tracesTable,
+        Key: { repoFullName, prNumberCommitSha },
+      }),
+    );
+    const item = result.Item as ReviewTraceItem | undefined;
+    // Same boundary check the trace store itself uses (#480 review): the
+    // consumer iterates `outcomes`, so a malformed row must not reach it.
+    if (!item || !Array.isArray(item.outcomes)) return null;
+    return item;
+  }
+
   async updateFeedback(
     repoFullName: string,
     prNumberCommitSha: string,
@@ -591,6 +616,13 @@ export interface DynamoDashboardStoreOptions {
    * unset the NPS route reports "ineligible" and never prompts.
    */
   satisfactionTable?: string;
+  /**
+   * #472 — the #471 filter-trace table. Unset on a deployment provisioned
+   * before #471; the trail panel then says no trace was recorded rather
+   * than rendering an empty trail, which would read as "nothing was
+   * filtered".
+   */
+  reviewTracesTable?: string;
 }
 
 export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions): IDashboardStore {
@@ -624,7 +656,7 @@ export function createDynamoDashboardStore(options: DynamoDashboardStoreOptions)
 
   return {
     installations: new DynamoDashboardInstallationStore(client, options.installationsTable),
-    reviews: new DynamoDashboardReviewStore(client, options.reviewsTable),
+    reviews: new DynamoDashboardReviewStore(client, options.reviewsTable, options.reviewTracesTable),
     ...(fpInsights ? { fpInsights } : {}),
     ...(satisfaction ? { satisfaction } : {}),
   };

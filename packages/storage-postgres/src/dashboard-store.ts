@@ -21,9 +21,10 @@ import type {
   ReviewItem,
   ReviewStatus,
   OrgCustomAgent,
+  ReviewTraceItem,
 } from '@mergewatch/core';
 import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
-import { installations, installationSettings, reviews } from './schema.js';
+import { installations, installationSettings, reviews, reviewTraces } from './schema.js';
 
 // ─── Helper: map a Drizzle row to ReviewItem ────────────────────────────────
 
@@ -215,6 +216,37 @@ class PostgresDashboardReviewStore implements IDashboardReviewStore {
 
     if (rows.length === 0) return null;
     return rowToReviewItem(rows[0]);
+  }
+
+  async getReviewTrace(
+    repoFullName: string,
+    prNumberCommitSha: string,
+  ): Promise<ReviewTraceItem | null> {
+    const rows = await this.db
+      .select()
+      .from(reviewTraces)
+      .where(
+        and(
+          eq(reviewTraces.repoFullName, repoFullName),
+          eq(reviewTraces.prNumberCommitSha, prNumberCommitSha),
+        ),
+      )
+      .limit(1);
+
+    const r = rows[0];
+    if (!r) return null;
+    // jsonb accepts any shape, so validate at the boundary — the consumer
+    // iterates `outcomes` and a non-array would crash it (#480 review).
+    if (!Array.isArray(r.outcomes)) return null;
+    return {
+      repoFullName: r.repoFullName,
+      prNumberCommitSha: r.prNumberCommitSha,
+      outcomes: r.outcomes as ReviewTraceItem['outcomes'],
+      ...(r.truncated === true ? { truncated: true } : {}),
+      ...(typeof r.totalOutcomes === 'number' ? { totalOutcomes: r.totalOutcomes } : {}),
+      createdAt: r.createdAt,
+      ...(r.expiresAt ? { ttl: Math.floor(r.expiresAt.getTime() / 1000) } : {}),
+    };
   }
 
   async updateFeedback(

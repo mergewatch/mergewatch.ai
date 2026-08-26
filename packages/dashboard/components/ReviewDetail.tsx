@@ -6,8 +6,11 @@ import {
   sortFindingsBySeverity,
   findingsSummaryLine,
   mergeScoreMeta,
+  confidenceVsFloor,
+  groundingSummary,
   type DetailFinding,
 } from "../lib/review-findings";
+import FilterTrail from "./FilterTrail";
 import {
   ArrowLeft,
   ExternalLink,
@@ -53,6 +56,8 @@ export interface ReviewData {
   summaryText?: string;
   mergeScore?: number;
   mergeScoreReason?: string;
+  /** #472 Part B — the confidence floor in force for this review. */
+  minConfidence?: number;
 }
 
 // Borrowed from ReviewDrawer so the two surfaces describe the same review the
@@ -68,7 +73,60 @@ function SeverityDot({ severity }: { severity?: string }) {
   return <span className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${s.dot}`} title={s.label} />;
 }
 
-function FindingsSection({ findings }: { findings: DetailFinding[] }) {
+/**
+ * #472 Part B — everything #469 puts in the PR comment, uncollapsed, plus the
+ * two elements deliberately cut from that surface as too jargon-heavy:
+ * confidence against the active floor, and the grounding result.
+ *
+ * Uncollapsed on purpose. The reader opened a review detail page to find out
+ * why a finding exists; making them click again to see the proof is the same
+ * mistake as hiding it in the comment.
+ */
+function EvidencePanel({
+  finding,
+  minConfidence,
+}: {
+  finding: DetailFinding;
+  minConfidence?: number;
+}) {
+  const e = finding.evidence;
+  const confidence = confidenceVsFloor(finding.confidence, minConfidence);
+  const grounding = groundingSummary(finding);
+  const agents = e?.agents ?? [];
+  if (!e?.code && !e?.reason && agents.length < 2 && !confidence) return null;
+
+  return (
+    <div className="mt-2 rounded border border-border-subtle bg-surface-subtle/40 px-3 py-2">
+      {e?.code && (
+        <pre className="overflow-x-auto rounded bg-surface-card px-2 py-1.5 text-[11px] leading-relaxed text-fg-secondary">
+          <code>{e.code}</code>
+        </pre>
+      )}
+      {e?.reason && <p className="mt-1.5 text-xs text-fg-secondary">{e.reason}</p>}
+      <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-fg-tertiary">
+        {confidence && (
+          <div className="flex gap-1">
+            <dt className="text-fg-faint">Confidence</dt>
+            <dd>{confidence}</dd>
+          </div>
+        )}
+        <div className="flex gap-1">
+          <dt className="text-fg-faint">Grounding</dt>
+          <dd>{grounding}</dd>
+        </div>
+        {/* Only on convergence — one agent's name restates the category. */}
+        {agents.length > 1 && (
+          <div className="flex gap-1">
+            <dt className="text-fg-faint">Agents</dt>
+            <dd>{agents.join(" + ")} agreed independently</dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function FindingsSection({ findings, minConfidence }: { findings: DetailFinding[]; minConfidence?: number }) {
   const sorted = sortFindingsBySeverity(findings);
   return (
     <div className="rounded-lg border border-border-default overflow-hidden">
@@ -114,6 +172,7 @@ function FindingsSection({ findings }: { findings: DetailFinding[] }) {
                   <span className="font-medium">Suggestion: </span>{f.suggestion}
                 </p>
               )}
+              <EvidencePanel finding={f} minConfidence={minConfidence} />
             </div>
           </div>
         ))}
@@ -423,7 +482,7 @@ export default function ReviewDetail({ review }: { review: ReviewData }) {
           )}
 
           {(review.findings?.length ?? 0) > 0
-            ? <FindingsSection findings={review.findings!} />
+            ? <FindingsSection findings={review.findings!} minConfidence={review.minConfidence} />
             : review.status === "completed" && (
               <div className="rounded-lg border border-border-default px-4 py-8 text-center text-sm text-fg-tertiary">
                 No findings were rendered for this review.
@@ -433,6 +492,13 @@ export default function ReviewDetail({ review }: { review: ReviewData }) {
                 </span>
               </div>
             )}
+        </div>
+      )}
+
+      {/* #472 Part C — why every other finding is not above. */}
+      {review.status === "completed" && (
+        <div className="mt-4">
+          <FilterTrail reviewId={`${review.repoFullName}:${review.prNumberCommitSha}`} />
         </div>
       )}
     </div>

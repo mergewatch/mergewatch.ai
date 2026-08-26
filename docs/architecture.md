@@ -143,6 +143,36 @@ both runtimes — a trace must never be able to fail a review.
 Self-hosted needs **no new environment variable**: the table comes from the
 Drizzle schema, so there is no table-name indirection to forget.
 
+### Dashboard trace reads (#472)
+
+`IDashboardReviewStore.getReviewTrace` is **required, not optional**, and that
+is deliberate. The dashboard is part of the self-hosted stack —
+`docker-compose.yml` runs it as its own service — so a Dynamo-only
+implementation would leave self-hosted users looking at an empty decision
+trail with no error. An empty trail reads as *"nothing was filtered"*, which is
+worse than the feature not existing. Requiring the method makes shipping one
+backend a compile error:
+
+```
+error TS2420: Class 'PostgresDashboardReviewStore' incorrectly implements
+  interface 'IDashboardReviewStore'.
+  Property 'getReviewTrace' is missing.
+```
+
+Traces are fetched **client-side**, from `/api/reviews/[id]/trace`, never in a
+server component. The Amplify SSR caveat makes server-side DynamoDB queries in
+page components unreliable on SaaS, and the same pattern is correct for
+self-hosted, so both use it. A separate route from `/api/reviews/[id]` keeps a
+review rendering without waiting on a ledger that can run to hundreds of rows.
+
+The dashboard declares its own copies of `FilterStage` and the merge-score
+labels rather than importing them from `@mergewatch/core`. Core's index pulls
+`context/safe-path`, which uses `node:fs/promises`, and importing it into a
+client component fails the webpack build with `UnhandledSchemeError`. Drift
+tests import core in Node — where it resolves fine — and assert the copies
+still agree, so divergence fails CI rather than shipping a dashboard that
+contradicts the PR comment.
+
 ### IGitHubAuthProvider
 
 ```typescript
