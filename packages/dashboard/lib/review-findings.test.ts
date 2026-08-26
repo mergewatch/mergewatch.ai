@@ -7,6 +7,7 @@ import {
   confidenceVsFloor,
   groundingSummary,
   reviewKey,
+  isCompleted,
 } from "./review-findings";
 
 const f = (severity: string, title: string) => ({ severity, title });
@@ -156,5 +157,23 @@ describe("reviewKey", () => {
 
   it("treats an empty string as missing, not as a key", () => {
     expect(reviewKey({ repoFullName: "o/r", id: "", prNumberCommitSha: "" })).toBeNull();
+  });
+});
+
+describe("isCompleted", () => {
+  it("accepts both spellings, because both reach the UI", () => {
+    // The store writes "complete"; the API normalises to "completed".
+    expect(isCompleted("complete")).toBe(true);
+    expect(isCompleted("completed")).toBe(true);
+  });
+
+  it("rejects in-flight and failed states", () => {
+    for (const s of ["pending", "in_progress", "failed", "skipped"]) {
+      expect(isCompleted(s)).toBe(false);
+    }
+  });
+
+  it("handles undefined", () => {
+    expect(isCompleted(undefined)).toBe(false);
   });
 });
