@@ -93,3 +93,43 @@ describe('malformed stored data (#480 review)', () => {
     expect(got).toBeNull();
   });
 });
+
+describe('the ledger survives the real marshaller (#471 prod bug)', () => {
+  // This test lives here, not in core: core has no AWS dependency by design
+  // (CLAUDE.md), and the marshaller is this package's concern. It is pinned by
+  // the thing that actually failed in production rather than by a proxy —
+  //
+  //   [filter-trace] failed to persist trace for mergewatch/mergewatch.ai
+  //   482#49641eb: Error: Pass options.removeUndefinedValues=true to remove
+  //   undefined values from map/array/set.
+  //
+  // The write is best-effort, so it failed silently and #471 shipped looking
+  // healthy while persisting almost nothing: only empty ledgers marshalled.
+  it('marshalls a sparse ledger without throwing', async () => {
+    const { marshall } = await import('@aws-sdk/util-dynamodb');
+    const { TraceRecorder, buildReviewTrace } = await import('@mergewatch/core');
+
+    const finding = (over: Record<string, unknown> = {}) => ({
+      file: 'a.ts', line: 1, severity: 'warning' as const, title: 't', ...over,
+    });
+
+    const t = new TraceRecorder();
+    t.enter(finding({ title: 'x' }), 'security');          // sparse: no confidence
+    t.enter(finding({ title: 'y', confidence: 80 }), 'bugs');
+    t.record(finding({ title: 'y', confidence: 80 }), 'dropped', 'confidence-floor', { reason: 'low' });
+    t.finalize([finding({ title: 'x' })]);
+
+    const trace = buildReviewTrace('o/r', '42#abc', t.outcomes(), new Date(0));
+    expect(() => marshall(trace)).not.toThrow();
+  });
+
+  it('rejects the pre-fix shape, so the regression is real', async () => {
+    const { marshall } = await import('@aws-sdk/util-dynamodb');
+    const preFix = {
+      key: 'k', file: 'a.ts', line: 1, severity: 'warning', confidence: undefined,
+      title: 't', agents: ['security'], outcome: 'dropped',
+      stage: undefined, reason: undefined, mergedInto: undefined,
+    };
+    expect(() => marshall({ outcomes: [preFix] })).toThrow(/removeUndefinedValues/);
+  });
+});

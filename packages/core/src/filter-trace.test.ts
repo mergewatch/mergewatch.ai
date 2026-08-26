@@ -270,3 +270,59 @@ describe('buildReviewTrace (#471)', () => {
     expect(t.truncated).toBeUndefined();
   });
 });
+
+describe('no undefined values in the ledger (#471 prod bug)', () => {
+  // DynamoDB's marshaller rejects undefined outright:
+  //   "Pass options.removeUndefinedValues=true to remove undefined values"
+  // Emitting them made every trace write fail for any review with a
+  // non-trivial ledger — silently, because the write is best-effort by design.
+  function assertNoUndefined(rows: object[]) {
+    for (const row of rows) {
+      for (const [k, v] of Object.entries(row)) {
+        expect(v, `${k} must be omitted, not undefined`).not.toBeUndefined();
+      }
+    }
+  }
+
+  it('omits stage, reason and mergedInto when absent', () => {
+    const t = new TraceRecorder();
+    t.enter(f({ confidence: undefined }), 'security');
+    t.finalize([f({ confidence: undefined })]);
+    const rows = t.outcomes();
+    expect('stage' in rows[0]).toBe(false);
+    expect('reason' in rows[0]).toBe(false);
+    expect('mergedInto' in rows[0]).toBe(false);
+    expect('confidence' in rows[0]).toBe(false);
+    assertNoUndefined(rows);
+  });
+
+  it('keeps them when present', () => {
+    const t = new TraceRecorder();
+    t.enter(f(), 'security');
+    t.record(f(), 'merged', 'w10-clustering', { reason: 'r', mergedInto: 'k' });
+    const [row] = t.outcomes();
+    expect(row.stage).toBe('w10-clustering');
+    expect(row.reason).toBe('r');
+    expect(row.mergedInto).toBe('k');
+    expect(row.confidence).toBe(90);
+  });
+
+  it('emits nothing undefined for an unadjudicated entry either', () => {
+    // The wiring-gap row is the one most likely to be sparse.
+    const t = new TraceRecorder();
+    t.enter(f({ confidence: undefined }), 'security');
+    assertNoUndefined(t.outcomes());
+  });
+
+  it('a full trace round-trips through JSON unchanged', () => {
+    // A cheap proxy for marshalling: JSON.stringify silently drops undefined,
+    // so a mismatch here means undefined was present.
+    const t = new TraceRecorder();
+    t.enter(f({ title: 'a', confidence: undefined }), 'security');
+    t.enter(f({ title: 'b' }), 'bugs');
+    t.record(f({ title: 'b' }), 'dropped', 'confidence-floor', { reason: 'low' });
+    t.finalize([f({ title: 'a', confidence: undefined })]);
+    const rows = t.outcomes();
+    expect(JSON.parse(JSON.stringify(rows))).toEqual(rows);
+  });
+});
