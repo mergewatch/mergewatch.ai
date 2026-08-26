@@ -21,6 +21,7 @@ import {
   selectOrgAgentsForReview, unionCustomAgents, blockingCriticalAgents, languagesFromFiles,
   findingMatchKeys,
   buildReviewTrace,
+  buildReviewDetailUrl,
 } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 // #416 — deployment stage, so review artifacts (comment marker, check-run
@@ -784,9 +785,11 @@ export async function processReviewJob(
       mergeScoreReason: result.mergeScoreReason,
       disputeDisclosure: result.disputeDisclosure,
       commentFooter: instSettings.commentHeader || undefined,
-      reviewDetailUrl: deps.dashboardBaseUrl
-        ? `${deps.dashboardBaseUrl}/dashboard/reviews/${encodeURIComponent(repoFullName)}/${prNumberCommitSha}`
-        : undefined,
+      // #486 — shared with the Lambda. This used to build a two-segment path
+      // with an unencoded '#', which 404'd against the one-segment [id] route
+      // and dropped the SHA into a browser fragment, so self-hosted's
+      // "View full details" never worked.
+      reviewDetailUrl: buildReviewDetailUrl(deps.dashboardBaseUrl, repoFullName, prNumberCommitSha),
       ux: config.ux,
       workDone,
       delta,

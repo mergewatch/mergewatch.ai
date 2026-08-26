@@ -64,6 +64,7 @@ import {
   findingMatchKeys,
   resolveReviewModelId,
   buildReviewTrace,
+  buildReviewDetailUrl,
 } from '@mergewatch/core';
 import type { RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import type {
@@ -879,7 +880,8 @@ export async function handler(
       categoryDisputeRates,
     }, { llm });
 
-    const reviewDetailUrl = `${DASHBOARD_BASE_URL}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;
+    // #486 — shared with the self-hosted server so the two cannot drift.
+    const reviewDetailUrl = buildReviewDetailUrl(DASHBOARD_BASE_URL, repoFullName, prNumberCommitSha);
 
     // Build work-done section from the FILTERED diff (#358) — the tallies
     // must describe what the agents actually reviewed. Raw PR totals counted
