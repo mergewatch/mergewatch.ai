@@ -84,7 +84,9 @@ describe("mergeScoreMeta", () => {
     // test runs in Node, where importing core is fine — so drift fails CI
     // instead of shipping a dashboard that contradicts the PR comment.
     const core = await import("@mergewatch/core");
-    for (const score of [1, 2, 3, 4, 5]) {
+    // Integers AND fractionals: the #481 review found the dashboard rounded
+    // while core did not, and an integer-only check could never see it.
+    for (const score of [1, 1.4, 2, 2.5, 3, 3.7, 4, 4.9, 5, 0, 99]) {
       expect(mergeScoreMeta(score)).toEqual(core.mergeScoreMeta(score));
     }
   });

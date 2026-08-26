@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -998,5 +998,29 @@ describe('cited-code fence safety (#477)', () => {
   it('indents every line of a multi-line citation', () => {
     const result = render('const a = 1;\nconst b = 2;\nconst c = 3;');
     expect(result).toContain('\n  const a = 1;\n  const b = 2;\n  const c = 3;\n');
+  });
+});
+
+describe('mergeScoreMeta — fractional scores (#481 review)', () => {
+  it('never returns an entry without a label', () => {
+    // The table is keyed 1-5. Before rounding, a fractional score missed it
+    // and renderMergeScore emitted `undefined **2.5/5 — undefined**`.
+    for (const score of [1, 1.4, 2.5, 3.2, 3.7, 4.9, 5]) {
+      const meta = mergeScoreMeta(score);
+      expect(meta.label).toBeTruthy();
+      expect(meta.emoji).toBeTruthy();
+      expect(Number.isInteger(meta.score)).toBe(true);
+    }
+  });
+
+  it('renders a fractional score as a whole verdict in the comment', () => {
+    const result = formatReviewComment(baseOptions({ mergeScore: 2.5, findings: [] }));
+    expect(result).not.toContain('undefined');
+    expect(result).toContain('3/5');
+  });
+
+  it('still clamps out of range', () => {
+    expect(mergeScoreMeta(0).score).toBe(1);
+    expect(mergeScoreMeta(99).score).toBe(5);
   });
 });

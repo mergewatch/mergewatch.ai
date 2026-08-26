@@ -230,7 +230,11 @@ const MERGE_SCORE_META: Record<number, { emoji: string; label: string }> = {
  * on GitHub and something else on the dashboard is worse than either alone.
  */
 export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
-  const clamped = Math.max(1, Math.min(5, score));
+  // Round before the lookup. MERGE_SCORE_META is keyed 1–5, so a fractional
+  // score — the orchestrator clamps but does not round, so a model returning
+  // 2.5 reaches here — missed the table entirely and produced
+  // `undefined **2.5/5 — undefined**` in the rendered comment.
+  const clamped = Math.max(1, Math.min(5, Math.round(score)));
   return { ...MERGE_SCORE_META[clamped], score: clamped };
 }
 
