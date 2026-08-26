@@ -6,6 +6,7 @@ import {
   demotedCount,
   isJudgementStage,
   STAGE_LABELS,
+  UNKNOWN_STAGE,
   type FindingOutcome,
   type FilterStage,
 } from "./filter-trail";
@@ -136,8 +137,13 @@ describe("stage list drift (#472)", () => {
     recorder.enter({ file: "a.ts", line: 1, severity: "warning", title: "t" }, "security");
     // Every key of STAGE_LABELS must be assignable to core's FilterStage; the
     // compile-time check is the `satisfies` below, exercised by tsc.
-    const stages = Object.keys(STAGE_LABELS) as FilterStage[];
+    // The sentinel is deliberately NOT one of core's stages — it marks a gap
+    // in the recorder, not a pipeline stage — so it is excluded here. Its
+    // presence in STAGE_LABELS is asserted separately.
+    const stages = (Object.keys(STAGE_LABELS) as string[])
+      .filter((s) => s !== UNKNOWN_STAGE) as FilterStage[];
     expect(stages).toHaveLength(12);
+    expect(Object.keys(STAGE_LABELS)).toContain(UNKNOWN_STAGE);
     for (const s of stages) {
       expect(() => recorder.record(
         { file: "a.ts", line: 1, severity: "warning", title: "t" }, "dropped", s,
@@ -152,5 +158,79 @@ describe("isJudgementStage", () => {
     expect(isJudgementStage("orchestrator")).toBe(true);
     expect(isJudgementStage("grounding")).toBe(true);
     expect(isJudgementStage("confidence-floor")).toBe(false);
+  });
+});
+
+describe("stageless outcomes (#482 review)", () => {
+  it("gives a stageless outcome its own bucket, not the orchestrator's", () => {
+    // #470's recorder emits stage: undefined when a finding reached no
+    // terminal stage, so a wiring gap stays visible. Folding it into a real
+    // stage would present that gap as that stage's judgement.
+    const groups = groupByStage([
+      o({ stage: undefined }),
+      o({ stage: "orchestrator" }),
+    ]);
+    const stages = groups.map((g) => g.stage);
+    expect(stages).toContain(UNKNOWN_STAGE);
+    expect(groups.find((g) => g.stage === "orchestrator")!.entries).toHaveLength(1);
+    expect(groups.find((g) => g.stage === UNKNOWN_STAGE)!.entries).toHaveLength(1);
+  });
+
+  it("sorts the unknown bucket last — it is a gap, not a decision", () => {
+    const groups = groupByStage([o({ stage: undefined }), o({ stage: "min-severity" })]);
+    expect(groups.at(-1)!.stage).toBe(UNKNOWN_STAGE);
+  });
+
+  it("labels it rather than rendering a blank heading", () => {
+    expect(STAGE_LABELS[UNKNOWN_STAGE]).toBe("Stage not recorded");
+  });
+
+  it("does not mark the unknown bucket as judgement-bearing", () => {
+    expect(isJudgementStage(UNKNOWN_STAGE)).toBe(false);
+  });
+
+  it("does not report a stageless drop as an unexplained orchestrator drop", () => {
+    // reasonText keys off stage; a stageless row must not borrow the
+    // orchestrator's "#473" explanation, which would be a false attribution.
+    expect(reasonText(o({ stage: undefined }))).toBe("no reason recorded");
+  });
+});
+
+describe("funnel invariants (#482 review)", () => {
+  it("never goes negative, even with demotions and merges", () => {
+    const f = buildFunnel([
+      o({ outcome: "surfaced" }),
+      o({ outcome: "demoted", stage: "grounding" }),
+      o({ outcome: "demoted", stage: "finding-verify" }),
+      o({ outcome: "merged", stage: "w10-clustering" }),
+      o({ outcome: "dropped", stage: "min-severity" }),
+    ]);
+    for (const s of f.steps) expect(s.remaining).toBeGreaterThanOrEqual(0);
+  });
+
+  it("ends at surfaced + demoted, because a demotion is not a removal", () => {
+    // The docstring used to claim it ended at `surfaced`, which was only true
+    // for reviews with no demotions.
+    const outcomes = [
+      o({ outcome: "surfaced" }),
+      o({ outcome: "surfaced" }),
+      o({ outcome: "demoted", stage: "grounding" }),
+      o({ outcome: "dropped", stage: "min-severity" }),
+    ];
+    const f = buildFunnel(outcomes);
+    expect(f.steps.at(-1)!.remaining).toBe(f.surfaced + demotedCount(outcomes));
+    expect(f.steps.at(-1)!.remaining).toBe(3);
+  });
+
+  it("removals never exceed raw minus surfaced minus demoted", () => {
+    const outcomes = [
+      o({ outcome: "surfaced" }),
+      o({ outcome: "demoted", stage: "grounding" }),
+      o({ outcome: "dropped", stage: "min-severity" }),
+      o({ outcome: "dropped", stage: "confidence-floor" }),
+    ];
+    const f = buildFunnel(outcomes);
+    const removed = f.steps.reduce((n, s) => n + s.removed, 0);
+    expect(removed).toBeLessThanOrEqual(f.raw - f.surfaced - demotedCount(outcomes));
   });
 });

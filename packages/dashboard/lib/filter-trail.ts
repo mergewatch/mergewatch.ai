@@ -22,6 +22,16 @@ export type FilterStage =
   | "custom-agent-dedup"
   | "triage-suppressed";
 
+/**
+ * Not a real pipeline stage. #470's recorder deliberately emits an outcome
+ * with NO stage when a finding reached no terminal stage, so a wiring gap is
+ * visible rather than quietly balanced away. Bucketing those into a real stage
+ * would destroy exactly that signal and label a gap as someone's decision.
+ */
+export const UNKNOWN_STAGE = "stage-not-recorded" as const;
+
+export type TrailStage = FilterStage | typeof UNKNOWN_STAGE;
+
 export type Outcome = "surfaced" | "merged" | "dropped" | "demoted";
 
 export interface FindingOutcome {
@@ -53,7 +63,7 @@ const JUDGEMENT_STAGES: readonly FilterStage[] = [
   "grounding",
 ];
 
-const STAGE_ORDER: readonly FilterStage[] = [
+const STAGE_ORDER: readonly TrailStage[] = [
   // Judgement-bearing, most consequential first.
   "finding-verify",
   "orchestrator",
@@ -69,9 +79,12 @@ const STAGE_ORDER: readonly FilterStage[] = [
   "fp-i-already-applied",
   "custom-agent-dedup",
   "triage-suppressed",
+  // Last: a gap in the recorder, not a filtering decision.
+  UNKNOWN_STAGE,
 ];
 
-export const STAGE_LABELS: Record<FilterStage, string> = {
+export const STAGE_LABELS: Record<TrailStage, string> = {
+  [UNKNOWN_STAGE]: "Stage not recorded",
   "finding-verify": "Verifier verdict",
   orchestrator: "Orchestrator",
   grounding: "Grounding",
@@ -86,12 +99,12 @@ export const STAGE_LABELS: Record<FilterStage, string> = {
   "triage-suppressed": "Suppressed by triage",
 };
 
-export function isJudgementStage(stage: FilterStage): boolean {
-  return JUDGEMENT_STAGES.includes(stage);
+export function isJudgementStage(stage: TrailStage): boolean {
+  return (JUDGEMENT_STAGES as readonly TrailStage[]).includes(stage);
 }
 
 export interface StageGroup {
-  stage: FilterStage;
+  stage: TrailStage;
   label: string;
   judgement: boolean;
   entries: FindingOutcome[];
@@ -105,12 +118,14 @@ export interface StageGroup {
  * competing list of findings.
  */
 export function groupByStage(outcomes: FindingOutcome[]): StageGroup[] {
-  const byStage = new Map<FilterStage, FindingOutcome[]>();
+  const byStage = new Map<TrailStage, FindingOutcome[]>();
   for (const o of outcomes) {
     if (o.outcome === "surfaced") continue;
     // An outcome with no stage is a wiring gap in the recorder, not a
-    // category — surface it rather than silently dropping the row.
-    const stage = (o.stage ?? "orchestrator") as FilterStage;
+    // decision. It gets its own bucket: folding it into a real stage would
+    // present a gap as that stage's judgement, which is a different lie from
+    // dropping the row and no better.
+    const stage: TrailStage = o.stage ?? UNKNOWN_STAGE;
     const list = byStage.get(stage) ?? [];
     list.push(o);
     byStage.set(stage, list);
@@ -147,9 +162,15 @@ export interface FunnelStep {
 /**
  * Raw findings → each stage's removals → surfaced.
  *
- * `remaining` counts down from the total, so the last step's `remaining`
- * equals the number of surfaced findings by construction rather than by a
- * separate count that could disagree with the list above it.
+ * `remaining` counts down from the total. Because demotions are not removals,
+ * the final `remaining` is `surfaced + demoted`, NOT `surfaced` — a demoted
+ * finding still renders above, as advisory. An earlier version of this comment
+ * claimed it equalled `surfaced`, which was only true for reviews with no
+ * demotions; the tests now pin the real relationship.
+ *
+ * `remaining` cannot go negative: every outcome lands in exactly one stage
+ * group, and removals exclude both surfaced and demoted, so the removals can
+ * never exceed `raw - surfaced - demoted`.
  */
 export function buildFunnel(outcomes: FindingOutcome[]): {
   raw: number;
