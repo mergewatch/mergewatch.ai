@@ -21,6 +21,8 @@
  * In-memory and core-only. #471 persists it; #472 renders it.
  */
 
+import type { ReviewTraceItem } from './types/db.js';
+
 /** The stages that can remove, merge, or demote a finding. */
 export type FilterStage =
   | 'fp-c-line-dedup'       // cross-agent same (file,line) merge
@@ -231,4 +233,52 @@ export class TraceRecorder {
   suppressedCount(): number {
     return this.outcomes().filter((o) => o.outcome !== 'surfaced').length;
   }
+}
+
+// ─── Persistence (#471) ────────────────────────────────────────────────────
+
+/**
+ * Cap on the outcomes retained per review.
+ *
+ * A #401-shaped runaway agent emitted ~1,430 near-empty findings from one
+ * response; writing an unbounded trace for that would be both expensive and
+ * useless. The cap exists so a malfunction cannot produce an unbounded record,
+ * and the truncation is always marked so the remainder never reads as the
+ * whole story.
+ */
+export const MAX_TRACE_OUTCOMES = 500;
+
+/** Retention for a persisted trace — a debugging artifact, not a system of record. */
+export const TRACE_TTL_DAYS = 30;
+
+/**
+ * Build the persisted trace for one review.
+ *
+ * When truncating, the non-surfaced outcomes are kept first. Surfaced findings
+ * are already visible in the PR comment, so the dropped, merged and demoted
+ * ones are the only thing the trace adds — keeping those is what makes a
+ * truncated trace still worth reading. Order within each group is preserved.
+ */
+export function buildReviewTrace(
+  repoFullName: string,
+  prNumberCommitSha: string,
+  outcomes: FindingOutcome[],
+  now: Date,
+): ReviewTraceItem {
+  const truncated = outcomes.length > MAX_TRACE_OUTCOMES;
+  const retained = truncated
+    ? [
+        ...outcomes.filter((o) => o.outcome !== 'surfaced'),
+        ...outcomes.filter((o) => o.outcome === 'surfaced'),
+      ].slice(0, MAX_TRACE_OUTCOMES)
+    : outcomes;
+
+  return {
+    repoFullName,
+    prNumberCommitSha,
+    outcomes: retained,
+    ...(truncated ? { truncated: true, totalOutcomes: outcomes.length } : {}),
+    createdAt: now.toISOString(),
+    ttl: Math.floor(now.getTime() / 1000) + TRACE_TTL_DAYS * 24 * 60 * 60,
+  };
 }

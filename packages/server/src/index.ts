@@ -14,6 +14,7 @@ import {
   PostgresSatisfactionStore,
   PostgresReviewCostStore,
   runMigrations,
+  PostgresReviewTraceStore,
 } from '@mergewatch/storage-postgres';
 import { EnvGitHubAuthProvider } from './github-auth-env.js';
 import { createLLMProvider } from './llm-factory.js';
@@ -71,6 +72,8 @@ async function main() {
   // Initialize providers
   const installationStore = new PostgresInstallationStore(db);
   const reviewStore = new PostgresReviewStore(db);
+  // #471 — filter outcome ledger, its own table (see ReviewTraceItem).
+  const reviewTraceStore = new PostgresReviewTraceStore(db);
   const dispositionStore = new PostgresFindingDispositionStore(db);
   const fpInsightStore = new PostgresFPInsightStore(db);
   const prLifecycleStore = new PostgresPRLifecycleStore(db);
@@ -133,6 +136,7 @@ async function main() {
     webhookSecret,
     installationStore,
     reviewStore,
+    reviewTraceStore,
     dispositionStore,
     fpInsightStore,
     prLifecycleStore,

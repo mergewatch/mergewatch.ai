@@ -117,6 +117,32 @@ Implementations:
 | `storage-dynamo` | `DynamoReviewStore` | DynamoDB. PK=`repoFullName`, SK=`prNumberCommitSha`. 90-day TTL. |
 | `storage-postgres` | `PostgresReviewStore` | Postgres. Composite PK `(repo_full_name, pr_number_commit_sha)`. |
 
+### IReviewTraceStore
+
+Persists the per-review filter outcome ledger (#470/#471) — why each finding was
+dropped, merged, or demoted. Read by the dashboard (#472) and a future audit
+export (#295).
+
+**It has its own table, and that is a correctness requirement rather than a
+preference.** `queryByPR` matches `begins_with(prNumberCommitSha, "42#")`, so a
+trace keyed `42#abc123#TRACE` beside the review would come back as if it were a
+review — and every call site passes a small `Limit`, so trace rows could evict
+real reviews from the previous-review lookup that feeds `previousFindings`, the
+delta and FP-B.
+
+| | SaaS | Self-hosted |
+|---|---|---|
+| store | `mergewatch-review-traces-{stage}` | `review_traces` |
+| retention | 30-day Dynamo TTL, **enabled** | `expires_at` column; **no** native TTL — operators prune |
+| size guard | 500 outcomes per review, truncation explicitly marked | same |
+
+Retention is deliberately shorter than a review's 90 days: a trace is a
+debugging and trust artifact, not a system of record. Writes are best-effort at
+both runtimes — a trace must never be able to fail a review.
+
+Self-hosted needs **no new environment variable**: the table comes from the
+Drizzle schema, so there is no table-name indirection to forget.
+
 ### IGitHubAuthProvider
 
 ```typescript

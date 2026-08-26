@@ -21,6 +21,7 @@ export type {
   FindingDispositionAttribution,
   ApiKeyRecord,
   McpSessionRecord,
+  IReviewTraceStore,
 } from './storage/types.js';
 export type { IGitHubAuthProvider } from './github/auth.js';
 export type {
@@ -318,7 +319,18 @@ export type {
   OrgCustomAgent,
   OrgAgentScope,
   OrgAgentEnforcement,
+  ReviewTraceItem,
 } from './types/db.js';
+
+// #470/#471 — the filter outcome ledger and its persisted form.
+export {
+  TraceRecorder,
+  outcomeKey,
+  buildReviewTrace,
+  MAX_TRACE_OUTCOMES,
+  TRACE_TTL_DAYS,
+} from './filter-trace.js';
+export type { FindingOutcome, FilterStage } from './filter-trace.js';
 
 export { resolveReviewModelId } from './config/model-resolution.js';
 export type { ModelResolutionInput, ModelSource, ResolvedModel } from './config/model-resolution.js';

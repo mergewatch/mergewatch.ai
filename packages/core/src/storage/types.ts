@@ -8,7 +8,7 @@
 
 import type {
   InstallationItem, InstallationSettings,
-  ReviewItem, ReviewStatus,
+  ReviewItem, ReviewStatus, ReviewTraceItem,
   FindingDispositionRecord,
   InstallationFPInsight,
   PRLifecycleRecord,
@@ -58,6 +58,19 @@ export interface IReviewStore {
     extra?: Partial<ReviewItem>,
   ): Promise<void>;
   queryByPR(repoFullName: string, prPrefix: string, limit?: number): Promise<ReviewItem[]>;
+}
+
+/**
+ * #471 — persistence for the filter outcome ledger.
+ *
+ * Separate from IReviewStore rather than bolted onto it: the backing table is
+ * separate by necessity (see ReviewTraceItem), the lifetime is different (a
+ * debugging artifact, not a system of record), and a runtime that cannot write
+ * traces must still be able to write reviews.
+ */
+export interface IReviewTraceStore {
+  put(trace: ReviewTraceItem): Promise<void>;
+  get(repoFullName: string, prNumberCommitSha: string): Promise<ReviewTraceItem | null>;
 }
 
 export interface ApiKeyRecord {

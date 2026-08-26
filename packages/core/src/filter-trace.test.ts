@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TraceRecorder, outcomeKey, type TraceableFinding } from './filter-trace.js';
+import { TraceRecorder, outcomeKey, type TraceableFinding, buildReviewTrace, MAX_TRACE_OUTCOMES, type FindingOutcome } from './filter-trace.js';
 
 function f(over: Partial<TraceableFinding> = {}): TraceableFinding {
   return {
@@ -210,5 +210,63 @@ describe('TraceRecorder — alias chain termination (#478 review)', () => {
     const rows = t.outcomes();
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe('One');
+  });
+});
+
+describe('buildReviewTrace (#471)', () => {
+  const NOW = new Date('2026-08-25T12:00:00.000Z');
+
+  function outcomes(n: number, outcome: 'surfaced' | 'dropped'): FindingOutcome[] {
+    return Array.from({ length: n }, (_, i) => ({
+      key: `src/a.ts::T::${outcome}-${i}`,
+      file: 'src/a.ts', line: i + 1, severity: 'warning' as const,
+      title: `${outcome}-${i}`, agents: ['security'], outcome,
+    }));
+  }
+
+  it('keys the trace exactly as the review — no suffix', () => {
+    // A suffix is what would collide: queryByPR matches begins_with("42#"), so
+    // `42#abc123#TRACE` on the reviews table is returned as a review.
+    const t = buildReviewTrace('o/r', '42#abc123', [], NOW);
+    expect(t.repoFullName).toBe('o/r');
+    expect(t.prNumberCommitSha).toBe('42#abc123');
+  });
+
+  it('sets a 30-day TTL', () => {
+    const t = buildReviewTrace('o/r', '42#abc', [], NOW);
+    expect(t.ttl).toBe(Math.floor(NOW.getTime() / 1000) + 30 * 24 * 60 * 60);
+  });
+
+  it('does not mark an under-cap trace as truncated', () => {
+    const t = buildReviewTrace('o/r', '42#abc', outcomes(10, 'dropped'), NOW);
+    expect(t.truncated).toBeUndefined();
+    expect(t.totalOutcomes).toBeUndefined();
+    expect(t.outcomes).toHaveLength(10);
+  });
+
+  it('caps the retained outcomes and says so', () => {
+    // #401's runaway emitted ~1,430 near-empty findings from one response.
+    const t = buildReviewTrace('o/r', '42#abc', outcomes(1_430, 'dropped'), NOW);
+    expect(t.outcomes).toHaveLength(MAX_TRACE_OUTCOMES);
+    expect(t.truncated).toBe(true);
+    expect(t.totalOutcomes).toBe(1_430);
+  });
+
+  it('keeps the explanatory outcomes when truncating', () => {
+    // Surfaced findings are already visible in the PR comment; the dropped and
+    // merged ones are the only thing the trace adds, so those are what a
+    // truncated trace must retain to still be worth reading.
+    const mixed = [...outcomes(400, 'surfaced'), ...outcomes(400, 'dropped')];
+    const t = buildReviewTrace('o/r', '42#abc', mixed, NOW);
+    expect(t.outcomes).toHaveLength(MAX_TRACE_OUTCOMES);
+    expect(t.outcomes.filter((o) => o.outcome === 'dropped')).toHaveLength(400);
+    expect(t.truncated).toBe(true);
+    expect(t.totalOutcomes).toBe(800);
+  });
+
+  it('handles an empty ledger', () => {
+    const t = buildReviewTrace('o/r', '42#abc', [], NOW);
+    expect(t.outcomes).toEqual([]);
+    expect(t.truncated).toBeUndefined();
   });
 });

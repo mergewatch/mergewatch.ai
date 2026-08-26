@@ -67,6 +67,34 @@ export const reviews = pgTable('reviews', {
   prIdx: index('reviews_pr_idx').on(t.repoFullName),
 }));
 
+/**
+ * #471 — one review's filter outcome ledger.
+ *
+ * A separate table, mirroring the Dynamo side and for the same reason: the
+ * review key space must not be shared. `queryByPR` matches on a `42#` prefix,
+ * so a suffixed key would be returned as if it were a review and could evict
+ * real reviews from the previous-review lookup.
+ *
+ * `expiresAt` mirrors the Dynamo TTL, but Postgres has no native TTL — nothing
+ * prunes this automatically. Self-hosted operators can delete on it; the
+ * column exists so that is a one-liner rather than a date computation over
+ * `created_at`.
+ */
+export const reviewTraces = pgTable('review_traces', {
+  repoFullName: text('repo_full_name').notNull(),
+  prNumberCommitSha: text('pr_number_commit_sha').notNull(),
+  outcomes: jsonb('outcomes').notNull().default([]),
+  /** True when `outcomes` holds fewer rows than the review produced. */
+  truncated: boolean('truncated').notNull().default(false),
+  /** Pre-truncation count; null unless truncated. */
+  totalOutcomes: integer('total_outcomes'),
+  createdAt: text('created_at').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.repoFullName, t.prNumberCommitSha] }),
+  expiresIdx: index('review_traces_expires_idx').on(t.expiresAt),
+}));
+
 export const apiKeys = pgTable('api_keys', {
   keyHash: text('key_hash').primaryKey(),
   installationId: text('installation_id').notNull(),

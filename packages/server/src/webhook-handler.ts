@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig,
+  IReviewTraceStore,
+} from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, IReviewJobQueue } from '@mergewatch/core';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
@@ -40,6 +42,12 @@ export interface WebhookDeps {
    * in-process call.
    */
   reviewQueue?: IReviewJobQueue;
+  /**
+   * #471 — optional filter-trace store. Best-effort by design: when unset,
+   * traces are simply not written and the review is unaffected. A trace is a
+   * debugging artifact, so it must never be able to fail a review.
+   */
+  reviewTraceStore?: IReviewTraceStore;
   /** FB-A — optional disposition store. Best-effort: when unset, writes are
    *  no-ops and the review pipeline runs unchanged. */
   dispositionStore?: IFindingDispositionStore;
