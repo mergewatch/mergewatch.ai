@@ -22,6 +22,17 @@ export const ORG_COOKIE = "mw_org";
 /** One year. The user-scoping check below is what bounds validity, not this. */
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
+/**
+ * Scoped to the dashboard, the only place that reads it — `Path=/` sent it to
+ * every route including `/api/*`, which no handler needs.
+ *
+ * Used by BOTH the set and the clear on purpose. A browser matches a deletion
+ * on name + path, so a clear written at a different path silently does nothing
+ * and the cookie survives sign-out. Keeping the two on one constant is what
+ * stops them drifting; the test below asserts it.
+ */
+const COOKIE_PATH = "/dashboard";
+
 export interface OrgCookie {
   /** GitHub user id that made the selection. */
   userId: string;
@@ -76,7 +87,7 @@ export function serializeOrgCookie(
 ): string {
   const value = encodeURIComponent(`${userId}:${installationId}`);
   const secure = opts.secure ? "; Secure" : "";
-  return `${ORG_COOKIE}=${value}; Path=/; Max-Age=${MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+  return `${ORG_COOKIE}=${value}; Path=${COOKIE_PATH}; Max-Age=${MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
 }
 
 /**
@@ -90,7 +101,7 @@ export function isSecureContext(): boolean {
 
 /** Serialize the expiry form used on sign-out. */
 export function serializeClearedOrgCookie(): string {
-  return `${ORG_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+  return `${ORG_COOKIE}=; Path=${COOKIE_PATH}; Max-Age=0; SameSite=Lax`;
 }
 
 /**

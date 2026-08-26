@@ -16,11 +16,18 @@ describe("serializeOrgCookie", () => {
     expect(parseOrgCookie(raw)).toEqual({ userId: USER, installationId: 222 });
   });
 
-  it("scopes to the path and uses Lax so a top-level navigation still carries it", () => {
+  it("scopes to /dashboard and uses Lax so a top-level navigation still carries it", () => {
     const c = serializeOrgCookie(USER, 222);
-    expect(c).toContain("Path=/");
+    expect(c).toContain("Path=/dashboard");
     expect(c).toContain("SameSite=Lax");
     expect(c).toContain("Max-Age=");
+  });
+
+  it("clears at the SAME path it sets — a mismatch would silently never delete", () => {
+    const setPath = /Path=([^;]+)/.exec(serializeOrgCookie(USER, 222))?.[1];
+    const clearPath = /Path=([^;]+)/.exec(serializeClearedOrgCookie())?.[1];
+    expect(setPath).toBe("/dashboard");
+    expect(clearPath).toBe(setPath);
   });
 
   it("adds Secure only when asked", () => {
