@@ -66,6 +66,12 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
         completedAt: item.completedAt ?? undefined,
         commentId: item.commentId as number | undefined,
         settingsUsed: item.settingsUsed as any,
+        // #472 Part A — these were fetched and then dropped, which is why
+        // every review detail page rendered no result at all.
+        findings: (item.findings as any) ?? [],
+        summaryText: (item.summaryText as string | undefined) ?? undefined,
+        mergeScore: item.mergeScore as number | undefined,
+        mergeScoreReason: (item.mergeScoreReason as string | undefined) ?? undefined,
       }}
     />
   );
