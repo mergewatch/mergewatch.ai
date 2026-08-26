@@ -4119,3 +4119,97 @@ describe('cross-agent convergence across the orchestrator boundary (#477)', () =
     expect(result.findings[0].evidence?.agents).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ledger identity across fingerprinting (#484)
+// ---------------------------------------------------------------------------
+
+describe('ledger survives fingerprinting (#484)', () => {
+  const allAgents = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+  const empty = JSON.stringify({ findings: [] });
+  const summaryResponse = JSON.stringify({ summary: 'Refactor.' });
+  const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+
+  // The whole point: #470's self-consistency test ran WITHOUT file contents, so
+  // withCodeFingerprints was a no-op and no key ever changed. The invariant
+  // held in the test for exactly the reason it failed in production.
+  function octokitWithFile(contents: string) {
+    return {
+      repos: {
+        getContent: vi.fn(async () => ({
+          data: { type: 'file', content: Buffer.from(contents, 'utf-8').toString('base64') },
+        })),
+      },
+    } as any;
+  }
+
+  const FILE = ['const a = 1;', 'const b = 2;', 'query(`${id}`);', 'const d = 4;'].join('\n');
+
+  async function run() {
+    const finding = {
+      file: 'foo.ts', line: 3, severity: 'warning' as const, category: 'bug',
+      title: 'Unescaped interpolation in query', description: 'd', suggestion: 's',
+    };
+    const llm = createMockLLM([
+      JSON.stringify({ findings: [finding] }), empty, empty, empty, empty, empty,
+      summaryResponse, diagramResponse,
+      JSON.stringify({ findings: [finding], mergeScore: 3, mergeScoreReason: 'One warning.' }),
+    ]);
+    return runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext,
+        modelId: 'heavy-model', lightModelId: 'light-model',
+        maxFindings: 25, enabledAgents: allAgents,
+        groundingFetch: {
+          octokit: octokitWithFile(FILE), owner: 'o', repo: 'r', ref: 'sha',
+          maxContextKB: 256, maxRounds: 1,
+        },
+      },
+      { llm },
+    );
+  }
+
+  it('assigns a fingerprint — otherwise this test proves nothing', async () => {
+    const result = await run();
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].fingerprint).toBeTruthy();
+  });
+
+  it('records ONE terminal outcome for a finding that gains a fingerprint', async () => {
+    const result = await run();
+    expect(result.filterOutcomes).toHaveLength(1);
+    expect(result.filterOutcomes[0].outcome).toBe('surfaced');
+  });
+
+  it('leaves no stageless ghost beside the surfaced finding', async () => {
+    // The production symptom: dropped[T] + surfaced[F] for one finding.
+    const result = await run();
+    const ghosts = result.filterOutcomes.filter(
+      (o) => o.outcome !== 'surfaced' && !o.stage,
+    );
+    expect(ghosts).toEqual([]);
+  });
+
+  it('does not inflate suppressedCount with the ghost', async () => {
+    // suppressedCount is derived as "everything that did not surface", so a
+    // ghost row silently overstates what was filtered — #401's failure mode
+    // returning through a different door.
+    const result = await run();
+    expect(result.suppressedCount).toBe(0);
+  });
+
+  it('keeps the raising agent, rather than re-attributing to the orchestrator', async () => {
+    // The auto-registered replacement row was credited to 'orchestrator',
+    // losing the only record of which agent actually raised the finding.
+    const result = await run();
+    // Assert the SURFACED row specifically. Indexing [0] passed even without
+    // the fix, because the abandoned original happens to sort first — a test
+    // that passes for the wrong reason is worse than no test.
+    const surfaced = result.filterOutcomes.filter((o) => o.outcome === 'surfaced');
+    expect(surfaced).toHaveLength(1);
+    expect(surfaced[0].agents).toEqual(['security']);
+  });
+});
