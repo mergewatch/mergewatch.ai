@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { fetchUserInstallations, TokenExpiredError } from "@/lib/github-repos";
+import { resolveActiveInstallation } from "@/lib/server-org";
 import BillingClient from "./BillingClient";
 
 interface BillingPageProps {
@@ -35,9 +36,11 @@ export default async function BillingPage({ searchParams }: BillingPageProps) {
   if (installations.length === 0) redirect("/onboarding");
 
   const orgParam = typeof params.org === "string" ? params.org : undefined;
-  const activeInstallation = orgParam
-    ? installations.find((i) => String(i.id) === orgParam) ?? installations[0]
-    : installations[0];
+  const activeInstallation = await resolveActiveInstallation({
+    installations,
+    orgParam,
+    githubUserId: (session as any).githubUserId as string | undefined,
+  });
 
   const setupComplete = params.setup === "complete";
 

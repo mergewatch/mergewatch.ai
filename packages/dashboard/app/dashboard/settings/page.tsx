@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { fetchUserInstallations, checkInstallationAdmin, TokenExpiredError } from "@/lib/github-repos";
+import { resolveActiveInstallation } from "@/lib/server-org";
 import SettingsForm from "@/components/SettingsForm";
 
 interface SettingsPageProps {
@@ -30,9 +31,11 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   if (installations.length === 0) redirect("/onboarding");
 
   const orgParam = typeof params.org === "string" ? params.org : undefined;
-  const activeInstallation = orgParam
-    ? installations.find((i) => String(i.id) === orgParam) ?? installations[0]
-    : installations[0];
+  const activeInstallation = await resolveActiveInstallation({
+    installations,
+    orgParam,
+    githubUserId: (session as any).githubUserId as string | undefined,
+  });
 
   const isAdmin = await checkInstallationAdmin(accessToken, activeInstallation);
 

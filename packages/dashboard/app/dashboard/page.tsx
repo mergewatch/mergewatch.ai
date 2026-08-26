@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
+import { resolveActiveInstallation } from "@/lib/server-org";
 import {
   fetchUserInstallations,
   fetchAccessibleRepoNames,
@@ -48,9 +49,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   // Determine active installation from ?org= param or default to first
   const orgParam = typeof params.org === "string" ? params.org : undefined;
-  const activeInstallation = orgParam
-    ? installations.find((i) => String(i.id) === orgParam) ?? installations[0]
-    : installations[0];
+  const activeInstallation = await resolveActiveInstallation({
+    installations,
+    orgParam,
+    githubUserId: (session as any).githubUserId as string | undefined,
+  });
 
   const installationId = String(activeInstallation.id);
 
