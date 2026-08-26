@@ -3191,6 +3191,24 @@ export async function runReviewPipeline(
     orchestratorResult.findings,
     groundingContext,
   );
+
+  // #484 — adding a fingerprint CHANGES a finding's outcomeKey, from the title
+  // form to the fingerprint form. The ledger keys on that, so without an alias
+  // the entry is lost mid-pipeline: finalize registers a fresh row and the
+  // original is left unadjudicated, which double-counts the finding and
+  // inflates the suppressedCount derived from it.
+  //
+  // Same rename problem FP-C and W10 already alias for, arriving by a
+  // different route — this one renames a SURVIVOR without touching its title.
+  const withTracedFingerprints = <T extends OrchestratedFinding>(findings: T[]): T[] => {
+    const out = withCodeFingerprints(findings, groundingFileContents);
+    for (let i = 0; i < findings.length; i++) {
+      const before = outcomeKey(findings[i]);
+      const after = outcomeKey(out[i]);
+      if (before !== after) trace.alias(before, after);
+    }
+    return out;
+  };
   // Keep each grounded result paired with the finding it came from. Counting
   // from the FILTERED array against the original by index is wrong the moment
   // anything is dropped — the indices shift — and it is wrong precisely in the
@@ -3265,7 +3283,7 @@ export async function runReviewPipeline(
     'line-proximity',
     (f) => `line ${f.line} is more than ${CHANGED_LINE_TOLERANCE} lines from any change in this PR`,
   );
-  const onChangedLines = withCodeFingerprints(nearChange, groundingFileContents);
+  const onChangedLines = withTracedFingerprints(nearChange);
 
   // #385 — re-enter the custom/org-agent findings (partitioned out before
   // fp-c above). Deterministic dedup only: one entry per (agent, file, line),
@@ -3305,7 +3323,7 @@ export async function runReviewPipeline(
   const preTriageFindings = withEvidenceCode(
     [
       ...onChangedLines,
-      ...withCodeFingerprints(customFindings, groundingFileContents),
+      ...withTracedFingerprints(customFindings),
     ],
     groundingFileContents,
     convergence,
