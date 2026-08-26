@@ -70,6 +70,14 @@ export default function DashboardShell({
     if (resolved.staleCookie) {
       document.cookie = serializeClearedOrgCookie();
     }
+    // `!== "cookie"` rather than `=== "param"`: it must also fire for
+    // `"default"`, or a first-time visitor's org is never persisted and the
+    // original bug returns for anyone who has not used the switcher yet.
+    // A param that beats a valid, different cookie is already covered here —
+    // source is "param", so the write runs and overwrites it. The one path
+    // that skips the write is a session with no githubUserId, and that same
+    // condition makes the cookie unusable in resolveOrg, so it is cleared
+    // above instead of being left to disagree with the URL.
     if (githubUserId && resolved.installationId != null && resolved.source !== "cookie") {
       writeOrgCookie(githubUserId, resolved.installationId);
     }

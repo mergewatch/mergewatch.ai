@@ -134,6 +134,14 @@ describe("resolveOrg", () => {
     expect(r).toEqual({ installationId: null, source: "none", staleCookie: false });
   });
 
+  it("does NOT flag a valid cookie as stale when a param outranks it", () => {
+    // The param wins and DashboardShell overwrites the cookie (source is
+    // "param", which its write condition covers). Flagging this stale would
+    // clear a perfectly good cookie on every deep-link visit.
+    const r = resolveOrg({ ...base, orgParam: "333", cookieValue: `${USER}:222` });
+    expect(r).toEqual({ installationId: 333, source: "param", staleCookie: false });
+  });
+
   it("still reports a stale cookie when a valid param wins — the caller must drop it", () => {
     // DashboardShell clears on this flag alone; it must not be suppressed just
     // because the param resolved the org.
