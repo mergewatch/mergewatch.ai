@@ -63,7 +63,11 @@ export default function DashboardShell({
   // switch the reader's session to the org it names.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (resolved.staleCookie && resolved.source !== "param") {
+    // Cleared unconditionally, then re-written below when there is something
+    // to write. Guarding this on `source !== "param"` relied on the write
+    // always following, but its own guard can fail (a session with no
+    // githubUserId), and the stale cookie then survived indefinitely.
+    if (resolved.staleCookie) {
       document.cookie = serializeClearedOrgCookie();
     }
     if (githubUserId && resolved.installationId != null && resolved.source !== "cookie") {

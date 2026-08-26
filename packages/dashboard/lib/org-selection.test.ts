@@ -115,6 +115,15 @@ describe("resolveOrg", () => {
     expect(r).toEqual({ installationId: null, source: "none", staleCookie: false });
   });
 
+  it("still reports a stale cookie when a valid param wins — the caller must drop it", () => {
+    // DashboardShell clears on this flag alone; it must not be suppressed just
+    // because the param resolved the org.
+    const r = resolveOrg({ ...base, orgParam: "333", cookieValue: "4242:222" });
+    expect(r.source).toBe("param");
+    expect(r.installationId).toBe(333);
+    expect(r.staleCookie).toBe(true);
+  });
+
   it("keeps a valid cookie usable even when a stale param is present", () => {
     const r = resolveOrg({ ...base, orgParam: "0", cookieValue: `${USER}:333` });
     expect(r.installationId).toBe(333);

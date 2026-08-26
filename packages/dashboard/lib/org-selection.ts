@@ -47,6 +47,21 @@ export interface ResolvedOrg {
 /**
  * Serialize the selection with its owning user.
  *
+ * Deliberately NOT `HttpOnly`: the client sets this via `document.cookie`, and
+ * JavaScript cannot write an `HttpOnly` cookie — the assignment fails silently,
+ * so adding the flag here would break the write path with no error anywhere.
+ * Making it `HttpOnly` means moving the write to a route handler, i.e. a
+ * network round-trip on a UI toggle.
+ *
+ * The trade is small because the value is not a secret and is not trusted: it
+ * holds a user id and an installation id, both already visible in the UI, and
+ * `resolveOrg` re-validates it against the session user and that account's
+ * installations on every read. Script that could forge this cookie already has
+ * the session, and the worst it can select is an org the victim can see anyway.
+ *
+ * `Secure` is likewise omitted so self-hosted deployments on plain HTTP keep
+ * working; `SameSite=Lax` is the meaningful protection here.
+ *
  * The user id is stored alongside the installation id so a cookie belonging
  * to a different account is inert by construction. Clearing on sign-out is
  * hygiene; this check is the guarantee — a missed clear, a shared browser, or
