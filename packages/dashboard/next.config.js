@@ -124,6 +124,13 @@ const nextConfig = {
     GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
     DYNAMODB_TABLE_INSTALLATIONS: process.env.DYNAMODB_TABLE_INSTALLATIONS,
     DYNAMODB_TABLE_REVIEWS: process.env.DYNAMODB_TABLE_REVIEWS,
+    // #471/#472 — the filter-trace table. Set in both Amplify apps, but an env
+    // var absent from THIS block does not exist at runtime, and the read path
+    // degrades silently: `DynamoDashboardReviewStore.getReviewTrace` returns
+    // null when the table name is unset, which the trail panel renders as
+    // "No decision trail was recorded for this review" — identical to a review
+    // that legitimately has none. Same failure shape as #315 below.
+    DYNAMODB_TABLE_REVIEW_TRACES: process.env.DYNAMODB_TABLE_REVIEW_TRACES,
     // FB-F..FB-J — optional; routes degrade to a zero-state when unset.
     DYNAMODB_TABLE_FP_INSIGHTS: process.env.DYNAMODB_TABLE_FP_INSIGHTS,
     // #195 Phase 5 — optional; NPS route reports ineligible when unset.
