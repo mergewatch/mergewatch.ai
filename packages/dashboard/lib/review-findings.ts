@@ -171,3 +171,17 @@ export function reviewKey(review: {
   if (!review.repoFullName || !key) return null;
   return `${review.repoFullName}:${key}`;
 }
+
+/**
+ * Has this review finished?
+ *
+ * The store writes `"complete"`; the API normalises it to `"completed"` on the
+ * way out (`route.ts:78`). Both spellings therefore exist depending on where
+ * you read from, and hardcoding either one is a coin flip — the drawer guarded
+ * on `"complete"` against an API that sends `"completed"`, so its decision
+ * trail never rendered at all. The section simply vanished, which looks
+ * identical to a review having nothing to show.
+ */
+export function isCompleted(status: string | undefined): boolean {
+  return status === "complete" || status === "completed";
+}

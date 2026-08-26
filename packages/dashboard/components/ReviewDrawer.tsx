@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { FindingsSection } from "./FindingEvidence";
-import { reviewKey } from "../lib/review-findings";
+import { reviewKey, isCompleted } from "../lib/review-findings";
 import FilterTrail from "./FilterTrail";
 import type { DetailFinding } from "../lib/review-findings";
 
@@ -353,7 +353,7 @@ export default function ReviewDrawer({
                   no '#' yields `repo:42#` — a lookup that finds nothing and renders
                   "No decision trail was recorded", which would be a false statement
                   rather than an absent trail. */}
-              {review.status === "complete" && reviewKey(review) && (
+              {isCompleted(review.status) && reviewKey(review) && (
                 <DrawerSection title="Decision trail" icon={AlertCircle}>
                   <FilterTrail
                     reviewId={reviewKey(review)!}

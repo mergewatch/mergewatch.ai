@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import RelativeTime from "./RelativeTime";
-import { mergeScoreMeta, type DetailFinding } from "../lib/review-findings";
+import { mergeScoreMeta, isCompleted, type DetailFinding } from "../lib/review-findings";
 import { FindingsSection } from "./FindingEvidence";
 import FilterTrail from "./FilterTrail";
 import {
@@ -370,7 +370,7 @@ export default function ReviewDetail({ review }: { review: ReviewData }) {
       )}
 
       {/* #472 Part C — why every other finding is not above. */}
-      {review.status === "completed" && review.repoFullName && review.prNumberCommitSha && (
+      {isCompleted(review.status) && review.repoFullName && review.prNumberCommitSha && (
         <div className="mt-4">
           <FilterTrail reviewId={`${review.repoFullName}:${review.prNumberCommitSha}`} />
         </div>
