@@ -121,6 +121,30 @@ For re-runs on the same fixture, you can amend + force-push (cheap) instead of c
 
 ---
 
+## One suite at a time (#506)
+
+`mergewatch/fixtures` is a **single shared mutable resource**, not a workspace per run. `scripts/reset-env.sh` closes every open `fixture/*` PR in it and deletes the branch, and it is not scoped to the run that called it — a runner cannot tell its own fixture branches from anyone else's. Two suites in flight therefore tear down each other's PRs.
+
+The victim does not fail loudly. It waits in `await-reviews.mjs` for check runs on PRs that no longer exist, and reports a timeout with no hint that something else caused it. `await-reviews.mjs` now checks whether its own PRs are still open and names teardown when they are not, but the cheaper fix is not to overlap in the first place.
+
+**In CI this is handled.** Every job that checks out the fixtures repo lives in `mergewatch.ai` and holds the `e2e-fixtures` concurrency group with `cancel-in-progress: false`, so the second one queues:
+
+| workflow | job | when |
+|---|---|---|
+| `deploy.yml` | `e2e-gate` | every merge to `main` — impacted subset |
+| `release-gate.yml` | `suite` | cutting a release — full graded set |
+
+A single group only works because both live in the same repository; GitHub concurrency groups do not span repos. That is why the fixtures repo has no suite workflow of its own any more. If you add another job that drives fixtures, put it here and put it in that group — `packages/lambda/src/fixtures-lock.test.ts` fails the build otherwise.
+
+**Locally it is not.** Nothing stops a local `run-suite.sh` from colliding with a gate run that is already in flight. Before starting one, check:
+
+```bash
+gh run list --repo mergewatch/mergewatch.ai --workflow=deploy.yml --status in_progress
+gh pr list --repo mergewatch/fixtures --state open   # non-empty means a run is live
+```
+
+---
+
 ## Full regression checklist
 
 Run these in order — they cover all current behaviors. ~30 minutes end-to-end.

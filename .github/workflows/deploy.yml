@@ -304,9 +304,24 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy-dev
     if: vars.E2E_GATE_ENABLED == 'true' && github.event.inputs.skip_e2e_gate != 'true'
-    # Globally serialized, and not per-environment like the deploy jobs. The
-    # suite opens real PRs in a SHARED repo and reset-env.sh closes every open
-    # PR there — two concurrent gates would tear down each other's run.
+    # This group protects a RESOURCE, not this workflow (#506).
+    #
+    # The resource is the `mergewatch/fixtures` repo. Every suite run opens real
+    # PRs there and tears down with reset-env.sh, which closes every open
+    # `fixture/*` PR — it is not scoped to the run that calls it, and it cannot
+    # be: a runner has no way to tell its own fixture branches from another
+    # run's. So ANY two jobs driving that repo at once destroy each other, not
+    # just two gates.
+    #
+    # `e2e-fixtures` is therefore shared with `release-gate.yml`'s suite job,
+    # and is deliberately global rather than per-environment like the deploy
+    # jobs above. It was originally scoped per-workflow, which left the release
+    # suite serialising against itself in a different repo under a different
+    # name — two locks, one resource, no protection. Anything added later that
+    # checks out that repo belongs in this group too; `fixtures-lock.test.ts`
+    # enforces it.
+    #
+    # Never held across a human wait: see release-gate.yml's `verify`.
     concurrency:
       group: e2e-fixtures
       cancel-in-progress: false
