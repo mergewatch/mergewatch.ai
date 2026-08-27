@@ -201,19 +201,32 @@ describe('release gate — the release step cannot strand a tag', () => {
     expect(computeFence('a ````` b').out).toBe('``````');
   });
 
-  it('builds the notes BEFORE pushing the tag', () => {
-    // Ordering is the actual fix. Anything that can fail belongs on the near
-    // side of the irreversible push — a failure after it leaves a tag with no
+  it('does everything that can fail before the irreversible push', () => {
+    // Ordering IS the fix, so assert the whole sequence rather than pairs.
+    // Pairwise checks leave gaps: "guard before `git tag -a`" and "guard before
+    // `git push origin`" are different invariants, and only the second one is
+    // the one that matters — a failure after the push leaves a tag with no
     // release, which the suite's "refuse to re-cut an existing tag" guard then
     // blocks from being retried.
     const run: string = step().run;
-    expect(run.indexOf('/tmp/notes.md')).toBeLessThan(run.indexOf('git push origin'));
-    expect(run.indexOf('git tag -a')).toBeGreaterThan(run.indexOf('/tmp/notes.md'));
-  });
-
-  it('refuses to tag when the notes came out empty', () => {
-    const run: string = step().run;
-    expect(run).toMatch(/test -s \/tmp\/notes\.md/);
-    expect(run.indexOf('test -s /tmp/notes.md')).toBeLessThan(run.indexOf('git tag -a'));
+    const sequence = [
+      'refusing to tag',        // HEAD == graded SHA
+      '} > /tmp/notes.md',      // notes written
+      'test -s /tmp/notes.md',  // notes non-empty
+      'git tag -a',             // local tag
+      'git push origin',        // <- irreversible from here
+      'gh release create',
+    ];
+    const seen = sequence.map((marker) => {
+      const at = run.indexOf(marker);
+      expect(at, `step no longer contains ${marker}`).toBeGreaterThan(-1);
+      return { marker, at };
+    });
+    for (let i = 1; i < seen.length; i++) {
+      expect(
+        seen[i].at,
+        `'${seen[i].marker}' must come after '${seen[i - 1].marker}'`,
+      ).toBeGreaterThan(seen[i - 1].at);
+    }
   });
 });
