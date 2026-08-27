@@ -1,8 +1,14 @@
 # Release Gate (#505).
 #
 # Cuts a release ONLY after the graded fixture suite passes and a human has
-# verified the manual set. Nothing reaches a `v*` tag — and therefore nothing
-# reaches docker-publish, which fires on `release: published` — without both.
+# verified the manual set. Nothing reaches a `v*` tag without both — and since
+# #513, nothing reaches GHCR without a tag either.
+#
+# That second half used to be asserted here and was false: docker-publish also
+# fired on every qualifying push to main, so `latest` tracked main with no gate
+# at all, while the gate's own release published nothing (GITHUB_TOKEN
+# suppresses the `release: published` event). Images now ship only from the
+# `release` job below, which dispatches docker-publish explicitly and waits.
 #
 # This replaces the previous ordering, where `fixtures/release-suite.yml`
 # triggered ON `push: tags: v*`. That validated a release that already existed:
@@ -328,8 +334,42 @@ jobs:
           # HEAD, which is only correct as long as nothing moved it.
           git tag -a "$VERSION" -m "$VERSION" "$SHA"
           git push origin "$VERSION"
-          # Publishing the release is what triggers docker-publish.
           gh release create "$VERSION" \
             --title "$VERSION" \
             --target "$SHA" \
             --notes-file /tmp/notes.md
+
+      - name: Publish the images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          # Publishing the release does NOT trigger docker-publish, however much
+          # it looks like it should: GitHub suppresses workflow triggers for
+          # events created with the default GITHUB_TOKEN, to stop workflows
+          # recursing. v0.6.0 shipped a tag and a GitHub release with no images
+          # because of exactly this, and nothing reported it (#513).
+          #
+          # An explicit dispatch is an API call, not an event, so the
+          # suppression does not apply.
+          gh workflow run docker-publish.yml --ref "$VERSION"
+
+          # And then WAIT. Fire-and-forget would mean a release whose images
+          # failed to build still reports success — the same shape of hole this
+          # whole gate exists to close.
+          echo "waiting for docker-publish on $VERSION"
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            RUN_ID="$(gh run list --workflow=docker-publish.yml --branch "$VERSION" \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "$RUN_ID" ] && break
+          done
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::docker-publish never started for $VERSION — the release exists without images"
+            exit 1
+          fi
+          echo "docker-publish run: $RUN_ID"
+          gh run watch "$RUN_ID" --exit-status --interval 20
+          echo "images published for $VERSION"
