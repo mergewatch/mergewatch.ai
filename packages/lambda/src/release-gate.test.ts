@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
 
 /**
@@ -150,5 +151,69 @@ describe('release gate — shell hygiene', () => {
         }
       }
     }
+  });
+});
+
+describe('release gate — the release step cannot strand a tag', () => {
+  const step = () => wf.jobs.release.steps.find((s: any) => s.name === 'Tag and release');
+
+  /**
+   * The real fence computation, lifted out of the workflow and run under the
+   * same shell Actions uses (`bash -e`, plus the block's own `pipefail`).
+   *
+   * Asserting on the text would not have caught this: the line looked correct.
+   * It has to actually run.
+   */
+  function computeFence(graded: string): { status: number; out: string } {
+    const lines: string[] = step().run.split('\n');
+    const start = lines.findIndex((l) => l.trim().startsWith('longest='));
+    const end = lines.findIndex((l) => l.trim().startsWith('fence='));
+    expect(start, 'longest= assignment not found — this test is anchored on it').toBeGreaterThan(-1);
+    expect(end, 'fence= assignment not found').toBeGreaterThan(start);
+
+    const snippet = [
+      'set -uo pipefail',
+      ...lines.slice(start, end + 1),
+      'printf "%s" "$fence"',
+    ].join('\n');
+
+    const r = spawnSync('bash', ['-e', '-c', snippet], {
+      encoding: 'utf8',
+      env: { ...process.env, GRADED: graded },
+    });
+    return { status: r.status ?? -1, out: r.stdout };
+  }
+
+  it('sizes the fence when the summary has NO backticks', () => {
+    // v0.6.0 died here. `grep -o` exits 1 when it matches nothing, pipefail
+    // propagates it, and `bash -e` killed the step — after the tag was pushed.
+    // A backtick-free summary is the normal case, so the guard aborted every
+    // release except the rare one it was written for.
+    const r = computeFence('22 passed · 0 failed · 0 ungraded · 0 skipped · 0 errored');
+    expect(r.status).toBe(0);
+    expect(r.out).toBe('```');
+  });
+
+  it('still grows the fence when the summary DOES contain backticks', () => {
+    // The behaviour the guard exists for: a fixture name or reason carrying a
+    // fence would otherwise break out and mangle every note after it.
+    expect(computeFence('a ``` b').out).toBe('````');
+    expect(computeFence('a ````` b').out).toBe('``````');
+  });
+
+  it('builds the notes BEFORE pushing the tag', () => {
+    // Ordering is the actual fix. Anything that can fail belongs on the near
+    // side of the irreversible push — a failure after it leaves a tag with no
+    // release, which the suite's "refuse to re-cut an existing tag" guard then
+    // blocks from being retried.
+    const run: string = step().run;
+    expect(run.indexOf('/tmp/notes.md')).toBeLessThan(run.indexOf('git push origin'));
+    expect(run.indexOf('git tag -a')).toBeGreaterThan(run.indexOf('/tmp/notes.md'));
+  });
+
+  it('refuses to tag when the notes came out empty', () => {
+    const run: string = step().run;
+    expect(run).toMatch(/test -s \/tmp\/notes\.md/);
+    expect(run.indexOf('test -s /tmp/notes.md')).toBeLessThan(run.indexOf('git tag -a'));
   });
 });
