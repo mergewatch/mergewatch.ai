@@ -316,12 +316,21 @@ gh release create v0.2.0 --generate-notes
 
 Images are published to `ghcr.io/mergewatch/mergewatch` and `ghcr.io/mergewatch/mergewatch-dashboard`:
 
+Every tag comes from a **released** version. Nothing is published from `main`.
+
 | Tag | When |
 |-----|------|
 | `0.2.0` | On GitHub Release for `v0.2.0` |
 | `0.2` | On GitHub Release for `v0.2.x` (tracks latest patch) |
-| `latest` | On every push to `main` |
-| `abc1234` | On every push to `main` (commit SHA) |
+| `latest` | The most recent release |
+| `abc1234` | The released commit's SHA |
+
+> **`latest` changed meaning after `v0.6.0`.** It used to be built on every push to
+> `main`, so it could carry code that had not been through the release gate —
+> no graded fixture suite, no manual verification, no approval. It now tracks
+> the most recent release, like the version tags. If you were relying on `latest`
+> to follow `main`, build from source instead; pinning an exact version in
+> `docker-compose.yml` (as the shipped file does) is unaffected.
 
 ### Upgrading self-hosted
 
