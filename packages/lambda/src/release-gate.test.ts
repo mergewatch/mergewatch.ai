@@ -99,3 +99,56 @@ describe('release gate — input handling', () => {
     expect(JSON.stringify(wf.jobs.suite.steps)).toMatch(/already exists/);
   });
 });
+
+describe('release gate — the tag must point at the commit that was graded (#507 review)', () => {
+  it('pins the candidate to a SHA in the suite job', () => {
+    expect(wf.jobs.suite.outputs.sha).toBeTruthy();
+    const pin = wf.jobs.suite.steps.find((s: any) => s.id === 'pin');
+    expect(pin).toBeTruthy();
+    expect(pin.run).toMatch(/git rev-parse HEAD/);
+  });
+
+  it('pins BEFORE running the suite, so the SHA is the one that was graded', () => {
+    const names = wf.jobs.suite.steps.map((s: any) => s.name);
+    expect(names.indexOf('Pin the candidate to a SHA'))
+      .toBeLessThan(names.indexOf('Run the suite'));
+  });
+
+  it('checks out the pinned SHA downstream, never the mutable input ref', () => {
+    // candidate_ref defaults to `main`. Re-resolving it after an approval
+    // window that can run for hours would tag whatever landed since — the
+    // exact failure this gate exists to prevent, inside the gate.
+    for (const job of ['verify', 'release']) {
+      const co = wf.jobs[job].steps.find((s: any) => s.uses?.startsWith('actions/checkout'));
+      expect(co.with.ref, `${job} must check out the graded SHA`)
+        .toBe('${{ needs.suite.outputs.sha }}');
+    }
+  });
+
+  it('tags the SHA explicitly rather than whatever HEAD happens to be', () => {
+    const step = wf.jobs.release.steps.find((s: any) => s.name === 'Tag and release');
+    expect(step.run).toMatch(/git tag -a "\$VERSION" -m "\$VERSION" "\$SHA"/);
+    expect(step.run).toMatch(/--target "\$SHA"/);
+  });
+
+  it('refuses to tag if HEAD is not the graded commit', () => {
+    // Tagging is irreversible, so verify rather than assume the checkout held.
+    const step = wf.jobs.release.steps.find((s: any) => s.name === 'Tag and release');
+    expect(step.run).toMatch(/refusing to tag/);
+  });
+});
+
+describe('release gate — shell hygiene', () => {
+  it('uses set -uo pipefail in every run block that sets shell options', () => {
+    // The Grade step used `set -o pipefail` alone, so an unset $MW_STAGE would
+    // have passed an empty --stage rather than failing.
+    for (const job of Object.values<any>(wf.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (typeof step.run === 'string' && step.run.includes('set -')) {
+          expect(step.run, `${step.name} should use set -uo pipefail`)
+            .toMatch(/set -uo pipefail/);
+        }
+      }
+    }
+  });
+});
