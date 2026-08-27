@@ -1,0 +1,318 @@
+# Release gate (#505).
+#
+# Cuts a release ONLY after the graded fixture suite passes and a human has
+# verified the manual set. Nothing reaches a `v*` tag — and therefore nothing
+# reaches docker-publish, which fires on `release: published` — without both.
+#
+# This replaces the previous ordering, where `fixtures/release-suite.yml`
+# triggered ON `push: tags: v*`. That validated a release that already existed:
+# if the suite failed, the tag and the published images were already out.
+#
+# Phases, and why they are separate jobs:
+#
+#   suite    runs and grades the automated set. Holds the `e2e-fixtures`
+#            concurrency group, the SAME group the deploy gate uses, so a
+#            release run and a merge's gate can never drive the shared fixtures
+#            repo at once (#506). Tears down in always(), BEFORE any human waits.
+#
+#   verify   pauses for a person to work through the manual fixtures. Holds NO
+#            lock — deliberately. A job parked on a human approval while holding
+#            `e2e-fixtures` would queue every merge's gate behind it, which is
+#            #428 exactly: one run sat ~9.5 hours and GitHub cancelled the next.
+#            Manual fixtures need a human to APPLY and drive them (reply in a
+#            thread, add a reaction, assert Dynamo/dashboard state), not to
+#            inspect a PR left lying around — so nothing needs to stay open.
+#
+#   release  creates the annotated tag and the GitHub release. Only reachable
+#            through an approved `verify`.
+name: Release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to cut, e.g. v1.4.0'
+        required: true
+        type: string
+      candidate_ref:
+        description: 'Commit or branch to release (default: main)'
+        required: false
+        default: 'main'
+        type: string
+      dry_run:
+        description: 'Run and grade, then stop — no approval, no tag'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  suite:
+    name: Graded suite
+    runs-on: ubuntu-latest
+    # The same group the deploy gate uses. Different groups was #506: both
+    # workflows drive one shared fixtures repo, and reset-env.sh closes every
+    # open PR there, so an overlap tears down the other run's fixtures.
+    concurrency:
+      group: e2e-fixtures
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.FIXTURES_TOKEN }}
+      MW_STAGE: dev
+    outputs:
+      graded: ${{ steps.grade.outputs.summary }}
+      # The exact commit that was graded. Everything downstream pins to THIS,
+      # never to the input ref: `candidate_ref` defaults to `main`, which is
+      # mutable, and the approval window can be hours long. Re-resolving it
+      # afterwards would tag whatever landed since — releasing a commit the
+      # suite never saw, which is the precise failure this gate exists to stop.
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Validate the version
+        env:
+          # Never interpolate workflow inputs directly into a run block.
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.candidate_ref }}
+        run: |
+          set -uo pipefail
+          case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::version must look like v1.2.3 (got '$VERSION')"; exit 1 ;;
+          esac
+          echo "candidate: $REF"
+          echo "version:   $VERSION"
+
+      - name: Checkout candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate_ref }}
+          fetch-depth: 0
+
+      - name: Pin the candidate to a SHA
+        id: pin
+        run: |
+          set -uo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "graded commit: $SHA"
+
+      - name: Refuse to re-cut an existing tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists — pick a new version"
+            exit 1
+          fi
+          echo "$VERSION is free"
+
+      - name: Checkout fixtures
+        uses: actions/checkout@v6
+        with:
+          repository: mergewatch/fixtures
+          token: ${{ secrets.FIXTURES_TOKEN }}
+          path: fixtures-repo
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure git identity for the fixture commits
+        working-directory: fixtures-repo
+        run: |
+          git config user.name  "mergewatch-release-gate"
+          git config user.email "release-gate@mergewatch.ai"
+
+      - name: Resolve the selection
+        id: select
+        working-directory: fixtures-repo
+        run: |
+          set -uo pipefail
+          # The FULL graded set — not the impact-selected subset the deploy gate
+          # uses. A release is the one moment the whole contract matters.
+          #
+          # --graded is not optional: an ungraded fixture opens a PR, spends
+          # real budget, and cannot fail. Counting those toward a release
+          # headline is the coverage illusion (fixtures#1076 tracks grading them,
+          # which raises this number honestly).
+          rc=0
+          scripts/select-fixtures.sh --tag correctness --automated --graded \
+            > /tmp/sel.txt 2>/tmp/explain.txt || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::fixture selection failed (rc=$rc)"; cat /tmp/explain.txt; exit 1
+          fi
+          COUNT=$(grep -c . /tmp/sel.txt || true)
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::selection is empty — a release gate that runs nothing is not a gate"
+            exit 1
+          fi
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Selected $COUNT graded fixture(s)."; cat /tmp/sel.txt
+
+      - name: Reset the fixtures environment
+        working-directory: fixtures-repo
+        run: scripts/reset-env.sh
+
+      - name: Run the suite
+        working-directory: fixtures-repo
+        env:
+          SLEEP: 45
+        run: xargs scripts/run-suite.sh < /tmp/sel.txt
+
+      - name: Restore the tooling checkout
+        working-directory: fixtures-repo
+        run: |
+          # run-suite leaves the repo on the last fixture branch, and reset-env
+          # moves local main to the e2e-baseline tag — which predates the
+          # tooling and every expect.json. Without this restore the grader would
+          # find no expectations, mark everything UNGRADED, and exit 0: a green
+          # release gate that verified nothing.
+          git fetch --quiet origin main
+          git checkout -f --detach origin/main
+          test -f scripts/grade-run.mjs     || { echo "::error::grade-run.mjs missing after restore"; exit 1; }
+          test -f scripts/await-reviews.mjs || { echo "::error::await-reviews.mjs missing after restore"; exit 1; }
+          n=$(ls fixtures/*/expect.json 2>/dev/null | wc -l)
+          [ "$n" -gt 0 ] || { echo "::error::no expect.json — every fixture would grade UNGRADED and pass"; exit 1; }
+          echo "restored $n expect.json file(s)"
+
+      - name: Wait for every review to complete
+        working-directory: fixtures-repo
+        run: scripts/await-reviews.mjs --stage "$MW_STAGE" --timeout 900
+
+      - name: Grade
+        id: grade
+        working-directory: fixtures-repo
+        run: |
+          set -uo pipefail
+          scripts/grade-run.mjs --stage "$MW_STAGE" | tee /tmp/grade.txt
+          {
+            echo 'summary<<EOF'
+            grep -E 'passed ·|NOT VERIFIED' /tmp/grade.txt || true
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        working-directory: fixtures-repo
+        run: |
+          {
+            echo "## Graded suite"
+            echo
+            echo '```'
+            cat /tmp/grade.txt 2>/dev/null || echo "(grading did not run)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down
+        if: always()
+        working-directory: fixtures-repo
+        run: |
+          # Before any human waits, not after. The manual fixtures are applied
+          # by hand locally, so nothing needs to stay open — and leaving the
+          # fixtures repo dirty is the fastest way to make the next run's
+          # failures look like regressions.
+          scripts/reset-env.sh || echo "::warning::teardown failed — check for stale fixture branches"
+
+  verify:
+    name: Manual verification
+    needs: suite
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    # Required reviewers live on this environment. No concurrency group: this
+    # job exists to wait for a person, and waiting while holding the fixtures
+    # lock would block every merge's E2E gate.
+    environment: release-approval
+    steps:
+      - name: Checkout the graded commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.suite.outputs.sha }}
+
+      - name: Render the manual checklist
+        env:
+          VERSION: ${{ inputs.version }}
+          GRADED: ${{ needs.suite.outputs.graded }}
+        run: |
+          {
+            echo "# Release $VERSION — manual verification"
+            echo
+            echo "## Automated result"
+            echo '```'
+            echo "$GRADED"
+            echo '```'
+            echo
+            echo "## What still needs a human"
+            echo
+            echo "These fixtures cannot run unattended. Apply each locally and check it"
+            echo "against its card in \`e2e/RUNBOOK.md\`:"
+            echo
+            echo '```bash'
+            echo "cd path/to/fixtures"
+            echo "scripts/select-fixtures.sh --tag correctness --manual   # the list"
+            echo "scripts/apply-fixture.sh <name>                          # opens its PR + prints the hint"
+            echo '```'
+            echo
+            echo "Approving this job asserts that you did so. Rejecting cuts no tag."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Cut the release
+    needs: [suite, verify]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the graded commit
+        uses: actions/checkout@v6
+        with:
+          # The pinned SHA, not the input ref — see suite.outputs.sha.
+          ref: ${{ needs.suite.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.candidate_ref }}
+          SHA: ${{ needs.suite.outputs.sha }}
+          ACTOR: ${{ github.actor }}
+          GRADED: ${{ needs.suite.outputs.graded }}
+        run: |
+          set -uo pipefail
+          # Belt and braces: the checkout above already pinned us to the graded
+          # SHA, but tagging is irreversible, so verify rather than assume.
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "$SHA" ]; then
+            echo "::error::checked out $HEAD_SHA but the graded commit was $SHA — refusing to tag"
+            exit 1
+          fi
+          git config user.name  "mergewatch-release-gate"
+          git config user.email "release-gate@mergewatch.ai"
+          # Tag the SHA explicitly. `git tag <name>` with no commit-ish tags
+          # HEAD, which is only correct as long as nothing moved it.
+          git tag -a "$VERSION" -m "$VERSION" "$SHA"
+          git push origin "$VERSION"
+          # Build the notes in a file: embedding a fenced block inline would
+          # put unindented lines inside this YAML scalar.
+          #
+          # The fence is sized to the content. The grade summary is generated by
+          # grade-run.mjs and would not normally contain backticks, but a fixture
+          # name or reason that did would break out of a fixed ``` fence and
+          # mangle every release note after it.
+          longest=$(printf '%s' "$GRADED" | grep -oE '`+' | awk '{ if (length($0) > m) m = length($0) } END { print m+0 }')
+          fence=$(printf '%*s' "$(( longest < 3 ? 3 : longest + 1 ))" '' | tr ' ' '`')
+          {
+            printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
+            printf 'Graded fixture suite:\n\n'
+            printf '%s\n%s\n%s\n\n' "$fence" "$GRADED" "$fence"
+            printf 'Manual fixtures verified and approved by @%s.\n' "$ACTOR"
+          } > /tmp/notes.md
+          # Publishing the release is what triggers docker-publish.
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --target "$SHA" \
+            --notes-file /tmp/notes.md
