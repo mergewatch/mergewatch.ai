@@ -25,7 +25,7 @@ import type {
   OrgCustomAgent,
   ReviewTraceItem,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, usableOutcomes } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, usableOutcomes, TraceStorageNotConfiguredError } from '@mergewatch/core';
 
 // ─── Installation store ─────────────────────────────────────────────────────
 
@@ -171,8 +171,13 @@ export class DynamoDashboardReviewStore implements IDashboardReviewStore {
     private readonly tableName: string,
     /**
      * #472 — the filter-trace table (#471). Optional here so a deployment
-     * provisioned before #471 still serves the rest of the dashboard;
-     * getReviewTrace reports "no trace" rather than throwing.
+     * provisioned before #471 still serves the rest of the dashboard.
+     *
+     * #494 — when it is unset, getReviewTrace THROWS rather than reporting
+     * "no trace". Reporting no trace was a lie the reader could not detect:
+     * it is the same answer a review with nothing filtered produces, so a
+     * misconfiguration read as a clean result. Everything else on the
+     * dashboard still works; only the trail fails, and it fails visibly.
      */
     private readonly tracesTable?: string,
   ) {}
@@ -485,7 +490,16 @@ export class DynamoDashboardReviewStore implements IDashboardReviewStore {
     repoFullName: string,
     prNumberCommitSha: string,
   ): Promise<ReviewTraceItem | null> {
-    if (!this.tracesTable) return null;
+    if (!this.tracesTable) {
+      // Logged as well as thrown: the throw reaches the reader as "could not
+      // be loaded", but an operator needs to find the cause without reading
+      // the source. This is the signal that was missing for the whole of #494.
+      console.error(
+        '[trace] no trace table configured — the decision trail cannot be served. ' +
+        'Set DYNAMODB_TABLE_REVIEW_TRACES and declare it in the next.config.js env block.',
+      );
+      throw new TraceStorageNotConfiguredError();
+    }
     const result = await this.client.send(
       new GetCommand({
         TableName: this.tracesTable,

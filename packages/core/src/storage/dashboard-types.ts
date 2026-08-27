@@ -15,6 +15,34 @@ import type { InstallationItem, InstallationSettings, ReviewItem, InstallationFP
   ReviewTraceItem,
 } from '../types/db.js';
 
+/**
+ * #494 — trace storage is not configured for this deployment.
+ *
+ * Thrown rather than returning `null` because the two are not the same answer:
+ * `null` means "this review has no trail", and a reader shown that when the
+ * dashboard could not look is being told something false. The trail panel
+ * already renders the distinction — a failed fetch says "could not be loaded",
+ * a null says "none was recorded" — so the only thing missing was a store that
+ * stopped conflating them.
+ *
+ * Found in production: a review whose trace existed in DynamoDB the whole time
+ * displayed "No decision trail was recorded" because the table name never
+ * reached the runtime (#497). Nothing in any log said otherwise.
+ *
+ * SaaS only in practice. The Postgres implementation queries its table
+ * directly, so a missing table already throws — there is no name to forget.
+ */
+export class TraceStorageNotConfiguredError extends Error {
+  constructor() {
+    super(
+      'Review trace storage is not configured — no trace table name was provided. ' +
+      'On Amplify, check that DYNAMODB_TABLE_REVIEW_TRACES is set AND declared in ' +
+      'the next.config.js env block; a var absent from that block does not exist at runtime.',
+    );
+    this.name = 'TraceStorageNotConfiguredError';
+  }
+}
+
 // ─── Paginated result wrapper ───────────────────────────────────────────────
 
 export interface PaginatedResult<T> {
@@ -85,6 +113,8 @@ export interface IDashboardReviewStore {
     repoFullName: string,
     prNumberCommitSha: string,
   ): Promise<ReviewTraceItem | null>;
+  // #494 — `null` means "this review has no trail". An implementation that
+  // cannot look at all must throw TraceStorageNotConfiguredError instead.
 
   /** Set or clear feedback on a review. */
   updateFeedback(

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { DynamoDashboardReviewStore, REVIEWS_BY_CREATED_AT_INDEX } from './dashboard-store.js';
+import { TraceStorageNotConfiguredError } from '@mergewatch/core';
 
 /** Build a review item; createdAt is the field under test everywhere here. */
 function review(repoFullName: string, prNumber: number, createdAt: string, over: Record<string, unknown> = {}) {
@@ -265,5 +266,67 @@ describe('DynamoDashboardReviewStore.listReviews — legacy fallback', () => {
     const { items } = await reviews.listReviews(['octo/repo'], 10, 'not-base64-json');
     expect(items).toHaveLength(1);
     expect(gsiQueries(client)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #494 — an unconfigured trace table must not read as "no trail"
+// ---------------------------------------------------------------------------
+
+describe('DynamoDashboardReviewStore.getReviewTrace — trace storage configuration', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('throws when no trace table is configured — never returns null', async () => {
+    const send = vi.fn();
+    // Third constructor arg omitted: the deployment has no trace table name.
+    const store = new DynamoDashboardReviewStore({ send } as any, 'test-reviews');
+
+    await expect(store.getReviewTrace('o/r', '1#abc')).rejects.toThrow(
+      TraceStorageNotConfiguredError,
+    );
+    // The distinction that matters: it must fail before querying, and it must
+    // not quietly answer "no trace" the way it did through the whole of #494.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('logs the cause so an operator can find it without reading the source', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new DynamoDashboardReviewStore({ send: vi.fn() } as any, 'test-reviews');
+
+    await store.getReviewTrace('o/r', '1#abc').catch(() => {});
+
+    expect(errSpy).toHaveBeenCalled();
+    expect(String(errSpy.mock.calls[0][0])).toContain('DYNAMODB_TABLE_REVIEW_TRACES');
+  });
+
+  it('returns null — not an error — when configured and the trace is genuinely absent', async () => {
+    // The case the throw must stay distinguishable from.
+    const send = vi.fn(async () => ({ Item: undefined }));
+    const store = new DynamoDashboardReviewStore({ send } as any, 'test-reviews', 'test-traces');
+
+    await expect(store.getReviewTrace('o/r', '1#abc')).resolves.toBeNull();
+    expect(send).toHaveBeenCalled();
+  });
+
+  it('returns the trace when configured and present', async () => {
+    const send = vi.fn(async () => ({
+      Item: { repoFullName: 'o/r', prNumberCommitSha: '1#abc', outcomes: [] },
+    }));
+    const store = new DynamoDashboardReviewStore({ send } as any, 'test-reviews', 'test-traces');
+
+    const trace = await store.getReviewTrace('o/r', '1#abc');
+    expect(trace).toMatchObject({ repoFullName: 'o/r', outcomes: [] });
+  });
+
+  it('an empty-string table name counts as unconfigured, not as a table named ""', async () => {
+    const send = vi.fn();
+    const store = new DynamoDashboardReviewStore({ send } as any, 'test-reviews', '');
+
+    await expect(store.getReviewTrace('o/r', '1#abc')).rejects.toThrow(
+      TraceStorageNotConfiguredError,
+    );
+    expect(send).not.toHaveBeenCalled();
   });
 });

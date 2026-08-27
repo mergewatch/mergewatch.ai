@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { canAccessRepo, TokenExpiredError } from "@/lib/access-control";
+import { TraceStorageNotConfiguredError } from "@mergewatch/core";
 
 /** Parse the [id] param into repoFullName + prNumberCommitSha. */
 function parseReviewId(id: string): { repoFullName: string; prNumberCommitSha: string } | null {
@@ -28,6 +29,10 @@ function parseReviewId(id: string): { repoFullName: string; prNumberCommitSha: s
  *
  * `{ trace: null }` is a legitimate answer, not an error: reviews from before
  * #471 have no ledger, and a trace write is best-effort by design.
+ *
+ * #494 — "the store cannot look" is NOT that answer. An unconfigured trace
+ * table now throws, so it surfaces as a 500 the panel renders as "could not be
+ * loaded" instead of borrowing the reassuring "none was recorded".
  */
 export async function GET(
   req: NextRequest,
@@ -75,6 +80,16 @@ export async function GET(
     const trace = await store.reviews.getReviewTrace(repoFullName, prNumberCommitSha);
     return NextResponse.json({ trace });
   } catch (err) {
+    // #494 — separated from the generic branch so the operator log names a
+    // deployment problem as one, instead of burying it in a stack trace that
+    // looks like a transient DynamoDB fault.
+    if (err instanceof TraceStorageNotConfiguredError) {
+      console.error("[trace] %s", err.message);
+      return NextResponse.json(
+        { error: "Trace storage is not configured" },
+        { status: 500 },
+      );
+    }
     console.error(
       "[trace] getReviewTrace failed for %s %s:",
       repoFullName,
