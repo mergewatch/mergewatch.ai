@@ -1185,22 +1185,60 @@ describe('withdrawn finding threads are closed (#526)', () => {
     expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
   });
 
-  it('one stuck thread does not abandon the rest', async () => {
-    const t2 = { ...thread(), id: 'T2', comments: { nodes: [{ databaseId: 31, body: bodyFor('Second finding'), author: { login: ours } }] } };
-    const replies: unknown[] = [];
-    const mutations: string[] = [];
-    let first = true;
+  it('the note never claims an outcome the resolve has not delivered', async () => {
+    // If the reply lands and the resolve throws, the thread stays OPEN. A note
+    // saying "resolving" would be a comment claiming a state that does not
+    // exist, on the thread it is wrong about.
+    const replies: Array<Record<string, unknown>> = [];
     const octokit = {
-      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
-        if (q.includes('resolveReviewThread')) { mutations.push(String(vars.threadId)); return {}; }
-        return { repository: { pullRequest: { reviewThreads: { nodes: [thread(), t2] } } } };
+      graphql: vi.fn(async (q: string) => {
+        if (q.includes('resolveReviewThread')) throw new Error('resolve failed');
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread()] } } } };
       }),
       pulls: {
-        createReplyForReviewComment: vi.fn(async (a: unknown) => {
-          if (first) { first = false; throw new Error('rate limited'); }
+        createReplyForReviewComment: vi.fn(async (a: Record<string, unknown>) => {
           replies.push(a); return { data: { id: 1 } };
         }),
       },
+    } as unknown as Octokit;
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(replies).toHaveLength(1);
+    const body = String(replies[0].body);
+    expect(body).toMatch(/no longer raising this finding/);
+    expect(body).not.toMatch(/resolving|resolved/i);
+  });
+
+  it('still resolves when the courtesy note fails to post', async () => {
+    // The note is a courtesy; resolving is the point.
+    const mutations: string[] = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
+        if (q.includes('resolveReviewThread')) { mutations.push(String(vars.threadId)); return {}; }
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread()] } } } };
+      }),
+      pulls: { createReplyForReviewComment: vi.fn(async () => { throw new Error('reply failed'); }) },
+    } as unknown as Octokit;
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
+    expect(mutations).toEqual(['T1']);
+  });
+
+  it('one stuck thread does not abandon the rest', async () => {
+    // A thread whose RESOLVE fails must not stop the next one. (A failed
+    // courtesy note no longer aborts a thread at all — see the test above.)
+    const t2 = { ...thread(), id: 'T2', comments: { nodes: [{ databaseId: 31, body: bodyFor('Second finding'), author: { login: ours } }] } };
+    const mutations: string[] = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
+        if (q.includes('resolveReviewThread')) {
+          if (String(vars.threadId) === 'T1') throw new Error('stuck');
+          mutations.push(String(vars.threadId));
+          return {};
+        }
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread(), t2] } } } };
+      }),
+      pulls: { createReplyForReviewComment: vi.fn(async () => ({ data: { id: 1 } })) },
     } as unknown as Octokit;
 
     expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);

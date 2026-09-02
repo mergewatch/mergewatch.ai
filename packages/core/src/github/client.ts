@@ -1274,17 +1274,34 @@ export async function resolveWithdrawnFindingThreads(
     const key = withdrawnThreadKey(thread.path, title);
     if (activeKeys.has(key)) continue;
 
+    // The note must be true whether or not the resolve below succeeds. An
+    // earlier draft said "— resolving", which becomes a lie the instant
+    // resolveReviewThread throws: an OPEN thread carrying a comment claiming
+    // it was closed. Stating only what is already true removes that state by
+    // construction, rather than relying on the two calls both landing.
+    let noted = false;
     try {
       await replyToReviewComment(
         octokit, owner, repo, prNumber, root.databaseId,
-        'This finding is no longer raised on the latest commit — resolving. '
-          + 'Reopen the thread if you think that is wrong.',
+        'MergeWatch is no longer raising this finding on the latest commit.',
       );
+      noted = true;
+    } catch (err) {
+      // The note is a courtesy; resolving is the point. Carry on without it.
+      console.warn('Failed to note withdrawal on thread %s (%s/%s#%d):', thread.id, owner, repo, prNumber, err);
+    }
+
+    try {
       await resolveReviewThread(octokit, thread.id);
       resolved++;
     } catch (err) {
+      // Separate catch, and it says whether the note landed — "both failed"
+      // and "note posted, thread still open" need different follow-up.
       // One stuck thread must not abandon the rest.
-      console.warn('Failed to resolve withdrawn thread %s on %s/%s#%d:', thread.id, owner, repo, prNumber, err);
+      console.warn(
+        'Failed to resolve withdrawn thread %s (%s/%s#%d) — note %s:',
+        thread.id, owner, repo, prNumber, noted ? 'was posted' : 'was not posted', err,
+      );
     }
   }
   return resolved;
