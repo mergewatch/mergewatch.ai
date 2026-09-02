@@ -1026,6 +1026,107 @@ describe('check run summary size guard (#468)', () => {
   });
 });
 
+describe('check runs update rather than accumulate (#526)', () => {
+  /** An octokit whose `listForRef` returns `runs` and records create/update calls. */
+  function stub(runs: Array<{ id: number }>, listThrows = false) {
+    const created: Array<Record<string, unknown>> = [];
+    const updated: Array<Record<string, unknown>> = [];
+    const octokit = {
+      checks: {
+        listForRef: vi.fn(async (args: Record<string, unknown>) => {
+          if (listThrows) throw new Error('boom');
+          return { data: { check_runs: runs }, args };
+        }),
+        create: vi.fn(async (a: Record<string, unknown>) => { created.push(a); return { data: {} }; }),
+        update: vi.fn(async (a: Record<string, unknown>) => { updated.push(a); return { data: {} }; }),
+      },
+    } as unknown as Octokit;
+    return { octokit, created, updated };
+  }
+
+  const completed = {
+    status: 'completed' as const,
+    conclusion: 'success' as const,
+    title: 'ok',
+    summary: 'done',
+  };
+
+  it('updates the existing run instead of creating a second one', async () => {
+    // The reported symptom: a later clean review added a green run BESIDE the
+    // red one, so the PR never looked resolved.
+    const { octokit, created, updated } = stub([{ id: 4242 }]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', completed);
+
+    expect(created).toHaveLength(0);
+    expect(updated).toHaveLength(1);
+    expect(updated[0].check_run_id).toBe(4242);
+    expect(updated[0].conclusion).toBe('success');
+  });
+
+  it('creates when no run exists for this sha', async () => {
+    const { octokit, created, updated } = stub([]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', completed);
+
+    expect(updated).toHaveLength(0);
+    expect(created).toHaveLength(1);
+    expect(created[0].head_sha).toBe('sha');
+  });
+
+  it('falls back to create when the lookup fails — never worse than before', async () => {
+    // A transient list failure must not skip the write. Routing it to the
+    // outer catch would make this optimisation strictly worse than not
+    // having it.
+    const { octokit, created } = stub([], true);
+    await createCheckRun(octokit, 'o', 'r', 'sha', completed);
+
+    expect(created).toHaveLength(1);
+  });
+
+  it('the in_progress -> completed pair touches ONE run, not two', async () => {
+    // Every caller follows this pair. Before #526 it left a run stuck at
+    // in_progress on every PR, forever.
+    let runs: Array<{ id: number }> = [];
+    const created: Array<Record<string, unknown>> = [];
+    const updated: Array<Record<string, unknown>> = [];
+    const octokit = {
+      checks: {
+        listForRef: vi.fn(async () => ({ data: { check_runs: runs } })),
+        create: vi.fn(async (a: Record<string, unknown>) => {
+          created.push(a); runs = [{ id: 7 }]; return { data: {} };
+        }),
+        update: vi.fn(async (a: Record<string, unknown>) => { updated.push(a); return { data: {} }; }),
+      },
+    } as unknown as Octokit;
+
+    await createCheckRun(octokit, 'o', 'r', 'sha', {
+      status: 'in_progress', title: 'Review in progress', summary: 'working',
+    });
+    await createCheckRun(octokit, 'o', 'r', 'sha', completed);
+
+    expect(created).toHaveLength(1);
+    expect(updated).toHaveLength(1);
+    expect(updated[0].check_run_id).toBe(7);
+    expect(updated[0].status).toBe('completed');
+  });
+
+  it('scopes the lookup by stage name so dev and prod do not collide', async () => {
+    const { octokit } = stub([{ id: 1 }]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', completed, 'dev');
+
+    const list = (octokit.checks.listForRef as unknown as { mock: { calls: any[][] } }).mock.calls[0][0];
+    expect(list.check_name).toContain('dev');
+    expect(list.filter).toBe('latest');
+  });
+
+  it('still clamps an oversized summary on the update path', async () => {
+    const { octokit, updated } = stub([{ id: 9 }]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', { ...completed, summary: 's'.repeat(70_000) });
+
+    const output = updated[0].output as { summary: string };
+    expect(output.summary.length).toBeLessThanOrEqual(65_535);
+  });
+});
+
 describe('inline comment body size guard (#468)', () => {
   const changedFiles = ['src/app.ts'];
 
