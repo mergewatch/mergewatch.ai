@@ -10,6 +10,7 @@ import {
   MAX_INLINE_RESOLVED_KEYS,
   REJECT_CATEGORIES,
   MAX_BOT_REPLIES,
+  REJECT_SCOPE_NOTE,
 } from './inline-reply.js';
 import { buildInlineComments } from '../github/client.js';
 import { findingMatchKeys } from '../review-delta.js';
@@ -828,6 +829,11 @@ describe('handleInlineReply', () => {
     expect(editArg.body).toContain('already-handled');
     expect(editArg.body).toContain('Marked **rejected**');
     expect(editArg.body).toContain('<!-- mergewatch-rejected -->');
+    // #528 — the footer must describe the suppression the system actually
+    // performs. It is per-PR and keyed on the cited code line's fingerprint,
+    // so "similar code" and "unless conditions change" both overpromised.
+    expect(editArg.body).toContain(REJECT_SCOPE_NOTE);
+    expect(editArg.body).not.toMatch(/similar code|unless conditions change/i);
     expect(result.botCommentId).toBe(100);
     // Does NOT auto-resolve the thread (orthogonal verbs).
     expect(calls.graphql).not.toHaveBeenCalled();

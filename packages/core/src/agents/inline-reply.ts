@@ -252,6 +252,30 @@ export interface InlineReplyResult {
  * the worst case is a future review re-raises the same concern, which
  * is no worse than pre-FP-F behavior.
  */
+/**
+ * What rejecting a finding actually buys you (#528).
+ *
+ * The old wording — "won't re-raise on similar code unless conditions change" —
+ * promised far more than the system delivers, in two ways:
+ *
+ *  - **Scope.** `disputedKeys` are computed from THIS PR's triage and inline
+ *    replies, so the suppression is per-PR. On a different PR the identical
+ *    finding comes back at full strength.
+ *  - **"Similar code".** The key is `file::F::<fingerprint>`, and the
+ *    fingerprint is the cited code line. Edit that line and the key changes,
+ *    so the suppression stops applying — the opposite of "similar code".
+ *
+ * Cross-review learning does exist (FP-J L1) but is much weaker than the
+ * sentence implied: gated on 5+ surfacings, per CATEGORY rather than per
+ * finding, and it softens the verdict tier rather than suppressing anything.
+ *
+ * The footer is the only feedback a developer gets for rejecting something. If
+ * they reject the same finding on three PRs and it keeps returning, the
+ * product looks like it ignored them — because the message said it had
+ * learned. Overpromising here costs trust faster than saying nothing.
+ */
+export const REJECT_SCOPE_NOTE = "won't re-raise on this PR while the code is unchanged";
+
 function deriveResolvedFindingKeys(root: ReviewThreadComment): string[] {
   if (!root.path) return [];
   const title = extractInlineCommentTitle(root.body);
@@ -549,8 +573,8 @@ export async function handleInlineReply(
       // timeline / W6). The footer names the persisted category AND, when
       // coerced, explains the fallback so the user sees what happened.
       const footer = rejectIntent.coerced
-        ? `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`other\`) — your reply didn't match a known reject category. Recognised: \`already-handled\`, \`out-of-scope\`, \`wrong-target\`, \`style-disagreement\`, \`other\`. Won't re-raise on similar code unless conditions change.`
-        : `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`${rejectIntent.category}\`) — won't re-raise on similar code unless conditions change.`;
+        ? `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`other\`) — your reply didn't match a known reject category. Recognised: \`already-handled\`, \`out-of-scope\`, \`wrong-target\`, \`style-disagreement\`, \`other\`. ${REJECT_SCOPE_NOTE[0].toUpperCase()}${REJECT_SCOPE_NOTE.slice(1)}.`
+        : `\n\n${REJECT_FOOTER_SENTINEL}\n---\n> ✅ Marked **rejected** (\`${rejectIntent.category}\`) — ${REJECT_SCOPE_NOTE}.`;
       await editInlineReviewComment(deps.octokit, ctx.owner, ctx.repo, root.id, `${root.body}${footer}`);
       return {
         action: 'rejected',
