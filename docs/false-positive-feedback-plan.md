@@ -191,7 +191,9 @@ The bot's inline-comment ID is already linked to a finding via `ReviewItem.findi
 - **Categories:** closed set — `already-handled`, `out-of-scope`, `wrong-target`, `style-disagreement`, `other`. Free-text after the category is optional and persisted as `text`.
 - **Unrecognised category fallback:** silently coerce to `other`, with the original token preserved as the leading word of `text`. Example: `/mergewatch reject typo-cat foo` persists as `{ category: 'other', text: 'typo-cat foo' }`. Preserves the signal even when the reviewer types something unexpected; the dashboard surfaces these as `other`-category rejections for triage.
 
-The bot posts a confirming reply (`Got it — recording as <category>. This pattern won't be re-raised on similar code unless conditions change.`) and increments `disputeCount` + appends to `rejectReasons[]`.
+The bot confirms by appending a footer to the finding comment (a reply would be auto-wrapped into a standalone COMMENTED review, #190) and increments `disputeCount` + appends to `rejectReasons[]`.
+
+> **Corrected (#528).** This originally read *"won't be re-raised on similar code unless conditions change"*, and the shipped footer said the same. It promised more than the system delivers: suppression is scoped to **this PR** (`disputedKeys` come from the PR's own triage and inline replies), and the key embeds the cited code line as a fingerprint — so editing that line ends the suppression, which is the opposite of *"similar code"*. The footer now says `won't re-raise on this PR while the code is unchanged`. Making the original sentence true is per-key cross-PR suppression, which is tracked in #503 and is a much bigger change than making it honest.
 
 **Code targets:** `packages/core/src/agents/inline-reply.ts` (new parser + handler branch), `packages/core/src/agents/prompts.ts` (confirmation reply template), `packages/server/src/review-processor.ts` + `packages/lambda/src/handlers/review-agent.ts` (write through).
 **E2E target:** [E2E-40](./../e2e/RUNBOOK.md#e2e-40-fb-d--mergewatch-reject-slash-command-target).
