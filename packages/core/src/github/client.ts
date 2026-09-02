@@ -432,26 +432,61 @@ export async function createCheckRun(
   },
   stage?: Stage,
 ): Promise<void> {
+  const name = checkRunName(stage);
+  const body = {
+    status: params.status,
+    ...(params.conclusion && { conclusion: params.conclusion }),
+    ...(params.detailsUrl && { details_url: params.detailsUrl }),
+    output: {
+      title: params.title,
+      // The catch below is deliberately non-fatal, so an oversized summary
+      // fails invisibly today — the check run simply never appears.
+      // Truncating before the call is the only way this stays visible.
+      summary: clampField(params.summary, MAX_CHECK_SUMMARY),
+    },
+  };
+
   try {
-    await octokit.checks.create({
-      owner,
-      repo,
-      head_sha: headSha,
-      name: checkRunName(stage),
-      status: params.status,
-      ...(params.conclusion && { conclusion: params.conclusion }),
-      ...(params.detailsUrl && { details_url: params.detailsUrl }),
-      output: {
-        title: params.title,
-        // The catch below is deliberately non-fatal, so an oversized summary
-        // fails invisibly today — the check run simply never appears.
-        // Truncating before the call is the only way this stays visible.
-        summary: clampField(params.summary, MAX_CHECK_SUMMARY),
-      },
-    });
+    // #526 — UPDATE the run for this (sha, name) if one exists.
+    //
+    // This function's contract has always said "create or update", and every
+    // caller follows the documented `in_progress` → `completed` pair. But it
+    // only ever called `checks.create`, and `create` never replaces: it adds.
+    // So every review left a second run behind, stuck at `in_progress`
+    // forever, and a re-review added another pair. A user reported the visible
+    // half — a PR that never returns to a clean state after findings are
+    // withdrawn, because the green run sits *beside* the red one rather than
+    // replacing it.
+    //
+    // `filter: 'latest'` returns the most recent run per name, which is the
+    // one we own for this SHA. Stage-scoped names keep dev and prod separate.
+    //
+    // The lookup has its OWN catch: a failure here must fall through to
+    // `create`, which is exactly today's behaviour. Letting it reach the outer
+    // catch would skip the write entirely and make a transient list failure
+    // strictly worse than not having this optimisation at all.
+    let target: { id: number } | undefined;
+    try {
+      const existing = await octokit.checks.listForRef({
+        owner,
+        repo,
+        ref: headSha,
+        check_name: name,
+        filter: 'latest',
+      });
+      target = existing.data.check_runs[0];
+    } catch (lookupErr) {
+      console.warn('Check-run lookup failed for %s/%s@%s — creating instead:', owner, repo, headSha, lookupErr);
+    }
+
+    if (target) {
+      await octokit.checks.update({ owner, repo, check_run_id: target.id, name, ...body });
+      return;
+    }
+    await octokit.checks.create({ owner, repo, head_sha: headSha, name, ...body });
   } catch (err) {
     // Non-critical — don't fail the review if the check run fails.
-    console.warn('Failed to create check run for %s/%s@%s:', owner, repo, headSha, err);
+    console.warn('Failed to write check run for %s/%s@%s:', owner, repo, headSha, err);
   }
 }
 
