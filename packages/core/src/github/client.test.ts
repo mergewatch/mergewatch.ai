@@ -1248,7 +1248,7 @@ describe('withdrawn finding threads are closed (#526)', () => {
 });
 
 describe('a stale review is superseded, not published (#527)', () => {
-  function stub(headSha, { throws = false } = {}) {
+  function stub(headSha: string | undefined, { throws = false } = {}) {
     return {
       pulls: {
         get: vi.fn(async () => {
