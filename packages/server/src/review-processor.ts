@@ -2,6 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
+  resolveWithdrawnFindingThreads, withdrawnThreadKey,
   formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
@@ -883,6 +884,18 @@ export async function processReviewJob(
         : null;
       await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
+      // #526 — close our own inline threads for findings this review no longer
+      // raises. Without it a withdrawn critical leaves its comment open
+      // forever, so the PR keeps showing blocking feedback the review itself
+      // has already dropped. Never throws; returns 0 when it cannot act.
+      const activeThreadKeys = new Set(
+        (result.findings as Array<{ file: string; title: string }>)
+          .map((f) => withdrawnThreadKey(f.file, f.title)),
+      );
+      const closed = await resolveWithdrawnFindingThreads(
+        octokit, owner, repo, prNumber, activeThreadKeys, selfLogin, STAGE,
+      );
+      if (closed > 0) console.log(`[review] resolved ${closed} withdrawn finding thread(s)`);
     } catch (err) {
       console.warn('PR review submission failed — issue comment has the full review:', err);
     }
