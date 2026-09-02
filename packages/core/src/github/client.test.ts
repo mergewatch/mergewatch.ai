@@ -9,6 +9,7 @@ import {
   postReviewComment,
   updateReviewComment,
   createCheckRun,
+  isStillPRHead,
   resolveWithdrawnFindingThreads,
   withdrawnThreadKey,
   enforceCommentBodyLimit,
@@ -1243,6 +1244,47 @@ describe('withdrawn finding threads are closed (#526)', () => {
 
     expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
     expect(mutations).toEqual(['T2']);
+  });
+});
+
+describe('a stale review is superseded, not published (#527)', () => {
+  function stub(headSha, { throws = false } = {}) {
+    return {
+      pulls: {
+        get: vi.fn(async () => {
+          if (throws) throw new Error('boom');
+          return { data: { head: headSha === undefined ? {} : { sha: headSha } } };
+        }),
+      },
+    } as unknown as Octokit;
+  }
+
+  it('is still head when the sha matches', async () => {
+    expect(await isStillPRHead(stub('abc123'), 'o', 'r', 7, 'abc123')).toBe(true);
+  });
+
+  it('is NOT still head when a newer push landed', async () => {
+    // The reported symptom: a review of commit A finishing after a review of
+    // commit B, and overwriting the fresher verdict.
+    expect(await isStillPRHead(stub('newer99'), 'o', 'r', 7, 'abc123')).toBe(false);
+  });
+
+  it('publishes anyway when the API call fails', async () => {
+    // Fail-open on purpose. A possibly-stale verdict is recoverable — the
+    // newer review overwrites it moments later. Discarding the result on a
+    // transient error loses work and leaves the PR with nothing at all.
+    expect(await isStillPRHead(stub('x', { throws: true }), 'o', 'r', 7, 'abc123')).toBe(true);
+  });
+
+  it('publishes anyway when the payload has no head sha', async () => {
+    // Same reasoning: an unreadable answer is not evidence that it moved.
+    expect(await isStillPRHead(stub(undefined), 'o', 'r', 7, 'abc123')).toBe(true);
+  });
+
+  it('compares exactly — a prefix is not a match', async () => {
+    // Short vs full SHA would otherwise read as "moved" and discard every
+    // review, or as "same" and discard none.
+    expect(await isStillPRHead(stub('abc123def456'), 'o', 'r', 7, 'abc123')).toBe(false);
   });
 });
 

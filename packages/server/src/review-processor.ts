@@ -2,7 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
-  resolveWithdrawnFindingThreads, withdrawnThreadKey,
+  resolveWithdrawnFindingThreads, withdrawnThreadKey, isStillPRHead,
   formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
@@ -817,6 +817,25 @@ export async function processReviewJob(
     const orgBlocked = orgBlockedBy.length > 0;
     if (orgBlocked) {
       console.log('[org-agents] blocking gate fired for %s#%d via: %s', repoFullName, prNumber, orgBlockedBy.join(', '));
+    }
+
+    // #527 — is this verdict still about the current code?
+    //
+    // Nothing cancels an in-flight review when a newer push arrives: the
+    // claim is keyed by SHA, so a new push is a new key and two reviews run
+    // concurrently. Whichever finishes LAST wins the comment, which is not
+    // necessarily the newer one — so a review of an older commit can overwrite
+    // a fresher verdict, and the PR then shows findings about code that is no
+    // longer there. It also re-blocks a PR the newer run had just cleared.
+    //
+    // Checked once, here, before ANY artifact is written — comment, inline
+    // comments, review event and check run all sit below this line. The newer
+    // review is already running and will publish its own.
+    if (!(await isStillPRHead(octokit, owner, repo, prNumber, headSha))) {
+      console.log(
+        `[supersede] ${repoFullName}#${prNumber}: head moved since ${headSha} — discarding this review, a newer one is in flight`,
+      );
+      return;
     }
 
     // ── Step A: Upsert issue comment (full review — primary artifact) ──────
