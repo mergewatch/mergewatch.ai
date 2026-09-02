@@ -120,6 +120,7 @@ export {
   findExistingBotComment,
   getCommentReactions,
   createCheckRun,
+  isStillPRHead,
   resolveWithdrawnFindingThreads,
   withdrawnThreadKey,
   MERGEWATCH_CHECK_RUN_NAME,

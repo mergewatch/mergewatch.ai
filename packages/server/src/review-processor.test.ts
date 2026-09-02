@@ -15,6 +15,8 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     addPRReaction: vi.fn().mockResolvedValue(12345),
     removePRReaction: vi.fn().mockResolvedValue(undefined),
     createCheckRun: vi.fn().mockResolvedValue(undefined),
+    // #527 — default to "still the head" so every existing test publishes as before.
+    isStillPRHead: vi.fn().mockResolvedValue(true),
     shouldSkipPR: vi.fn().mockReturnValue(null),
     shouldSkipByRules: vi.fn().mockReturnValue(null),
     fetchRepoConfig: vi.fn().mockResolvedValue(null),
@@ -55,7 +57,7 @@ import {
   runReviewPipeline, postReplyComment, fetchRepoConfig, handleInlineReply,
   addPRReaction, removePRReaction, submitPRReview, mergeScoreToReviewEvent,
   fetchTriageComments, computeDisputedKeys,
-  postReviewComment, updateReviewComment, findExistingBotComment,
+  postReviewComment, updateReviewComment, findExistingBotComment, isStillPRHead,
 } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
@@ -134,6 +136,56 @@ const basePipelineResult = {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('processReviewJob — superseded by a newer push (#527)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  /** Check runs written with a terminal conclusion — the ones a user sees as a verdict. */
+  const completedChecks = () =>
+    (createCheckRun as any).mock.calls.filter((c: any[]) => c[4]?.status === 'completed');
+
+  it('publishes NOTHING when the head moved during the review', async () => {
+    // A review of commit A finishing after a review of commit B would
+    // otherwise overwrite the fresher verdict, and re-block a PR the newer
+    // run had just cleared.
+    (isStillPRHead as any).mockResolvedValue(false);
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(postReviewComment).not.toHaveBeenCalled();
+    expect(updateReviewComment).not.toHaveBeenCalled();
+    expect(submitPRReview).not.toHaveBeenCalled();
+    // The in-progress check run is written before the guard and is expected;
+    // the terminal one is a verdict and must not appear.
+    expect(completedChecks()).toHaveLength(0);
+  });
+
+  it('publishes normally when the head is unchanged', async () => {
+    // Back-compat: the guard must not change the ordinary single-push path.
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(postReviewComment).toHaveBeenCalled();
+    expect(submitPRReview).toHaveBeenCalled();
+    expect(completedChecks().length).toBeGreaterThan(0);
+  });
+
+  it('checks the head against the sha it actually reviewed', async () => {
+    // Comparing against anything else would either never fire or always fire.
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(isStillPRHead).toHaveBeenCalledWith(
+      mockOctokit, 'test', 'repo', 1, basePRContext.headSha,
+    );
+  });
+});
 
 describe('processReviewJob — check runs', () => {
   beforeEach(() => {

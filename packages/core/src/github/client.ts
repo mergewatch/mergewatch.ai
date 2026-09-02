@@ -162,6 +162,39 @@ export async function getPRDiff(
 }
 
 /**
+ * Is `sha` still this PR's head commit? (#527)
+ *
+ * A review takes tens of seconds and nothing cancels it when a newer push
+ * arrives — the in-flight claim is keyed by SHA, so a new push is a new key and
+ * two reviews run concurrently. Whichever finishes last wins the comment,
+ * which is not necessarily the newer one. The PR then shows a verdict computed
+ * against code that is no longer there.
+ *
+ * Returns **true when it cannot tell**. A transient API failure must not
+ * discard a completed review: publishing a possibly-stale verdict is
+ * recoverable — the newer review overwrites it moments later — whereas
+ * throwing the result away loses work the user is waiting for and leaves the
+ * PR with nothing at all.
+ */
+export async function isStillPRHead(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  sha: string,
+): Promise<boolean> {
+  try {
+    const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
+    const head = data.head?.sha;
+    if (!head) return true;
+    return head === sha;
+  } catch (err) {
+    console.warn('Head-SHA check failed for %s/%s#%d — publishing anyway:', owner, repo, prNumber, err);
+    return true;
+  }
+}
+
+/**
  * Fetch high-level context about a pull request: title, description,
  * base/head branches, and the list of changed file paths.
  *
