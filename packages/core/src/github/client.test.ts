@@ -1146,6 +1146,40 @@ describe('withdrawn finding threads are closed (#526)', () => {
     expect(withdrawnThreadKey('src/app.ts', '  SQL Injection In The Query Builder  ')).toBe(KEY);
   });
 
+  it('leaves a thread alone when its comment list is truncated', async () => {
+    // >100 comments means the "ours alone" check answers a question about the
+    // first page, not the thread. A human reply at position 101 would be
+    // invisible and the thread resolved out from under them.
+    const t = thread();
+    (t.comments as Record<string, unknown>).pageInfo = { hasNextPage: true };
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('still resolves when the comment list is explicitly NOT truncated', async () => {
+    const t = thread();
+    (t.comments as Record<string, unknown>).pageInfo = { hasNextPage: false };
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
+    expect(mutations).toEqual(['T1']);
+  });
+
+  it('leaves a thread alone when the title cannot be parsed', async () => {
+    // An empty title yields a key in no active set, which reads as
+    // "withdrawn" — resolving a thread we failed to identify. This is the
+    // exact mistake the original fixture made by accident.
+    const t = thread({
+      comments: { nodes: [{ databaseId: 40, body: `${bodyFor('x').split('**')[0]}### 🔴 wrong format`, author: { login: ours } }] },
+    });
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
   it('survives a lookup failure without throwing', async () => {
     const octokit = { graphql: vi.fn(async () => { throw new Error('boom'); }) } as unknown as Octokit;
     expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);

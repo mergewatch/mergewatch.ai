@@ -1190,11 +1190,13 @@ export async function resolveWithdrawnFindingThreads(
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
           reviewThreads(first: 100) {
+            pageInfo { hasNextPage }
             nodes {
               id
               isResolved
               path
               comments(first: 100) {
+                pageInfo { hasNextPage }
                 nodes { databaseId body author { login } }
               }
             }
@@ -1207,14 +1209,31 @@ export async function resolveWithdrawnFindingThreads(
     id: string;
     isResolved: boolean;
     path: string | null;
-    comments: { nodes: Array<{ databaseId: number; body: string; author: { login: string } | null }> };
+    comments: {
+      pageInfo?: { hasNextPage: boolean };
+      nodes: Array<{ databaseId: number; body: string; author: { login: string } | null }>;
+    };
   };
-  type Resp = { repository: { pullRequest: { reviewThreads: { nodes: Thread[] } } } };
+  type Resp = {
+    repository: {
+      pullRequest: { reviewThreads: { pageInfo?: { hasNextPage: boolean }; nodes: Thread[] } };
+    };
+  };
 
   let threads: Thread[];
   try {
     const data = await octokit.graphql<Resp>(query, { owner, repo, number: prNumber });
-    threads = data.repository.pullRequest.reviewThreads.nodes;
+    const conn = data.repository.pullRequest.reviewThreads;
+    threads = conn.nodes;
+    if (conn.pageInfo?.hasNextPage) {
+      // Under-resolve, so not a safety problem — we simply see fewer threads
+      // than exist. Worth saying out loud so "why is that one still open" has
+      // an answer.
+      console.warn(
+        `[review] %s/%s#%d has more than 100 review threads — only the first page was considered`,
+        owner, repo, prNumber,
+      );
+    }
   } catch (err) {
     console.warn('Withdrawn-thread lookup failed for %s/%s#%d:', owner, repo, prNumber, err);
     return 0;
@@ -1224,16 +1243,35 @@ export async function resolveWithdrawnFindingThreads(
   for (const thread of threads) {
     if (thread.isResolved || !thread.path) continue;
 
-    const comments = thread.comments.nodes;
-    const root = comments[0];
+    const nodes = thread.comments.nodes;
+    const comments = { pageInfoTruncated: thread.comments.pageInfo?.hasNextPage === true };
+    const root = nodes[0];
     if (!root) continue;
 
     // Ours, and ours alone.
     if (normalizeLogin(root.author?.login) !== want) continue;
     if (!root.body.includes(marker)) continue;
-    if (comments.some((c) => normalizeLogin(c.author?.login) !== want)) continue;
 
-    const key = withdrawnThreadKey(thread.path, extractInlineCommentTitle(root.body));
+    // A truncated comment list means the "ours alone" check below is answering
+    // a question about the first 100 comments, not the thread. A human reply
+    // at position 101 would be invisible and the thread would be resolved out
+    // from under them. Cannot prove it is ours, so leave it.
+    if (comments.pageInfoTruncated) {
+      console.warn(
+        `[review] thread %s on %s/%s#%d has >100 comments — leaving it alone`,
+        thread.id, owner, repo, prNumber,
+      );
+      continue;
+    }
+    if (nodes.some((c) => normalizeLogin(c.author?.login) !== want)) continue;
+
+    // An unparseable title yields an empty key, which is in no active set and
+    // therefore reads as "withdrawn" — resolving a thread we failed to
+    // identify. Same rule as everywhere else here: no identity, no action.
+    const title = extractInlineCommentTitle(root.body);
+    if (!title.trim()) continue;
+
+    const key = withdrawnThreadKey(thread.path, title);
     if (activeKeys.has(key)) continue;
 
     try {
