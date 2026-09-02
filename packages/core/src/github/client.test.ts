@@ -9,6 +9,8 @@ import {
   postReviewComment,
   updateReviewComment,
   createCheckRun,
+  resolveWithdrawnFindingThreads,
+  withdrawnThreadKey,
   enforceCommentBodyLimit,
   MAX_COMMENT_BODY,
   parseRepoConfigYaml,
@@ -1023,6 +1025,224 @@ describe('check run summary size guard (#468)', () => {
     // summary fails invisibly — truncating is what keeps the check visible.
     expect(output.summary.length).toBeLessThanOrEqual(65_535);
     expect(output.summary.endsWith('…')).toBe(true);
+  });
+});
+
+describe('withdrawn finding threads are closed (#526)', () => {
+  const ours = 'mergewatch[bot]';
+  const TITLE = 'SQL injection in the query builder';
+
+  /**
+   * Build the comment body with the REAL emitter rather than a hand-written
+   * string. A hand-rolled fixture passed while using `### 🔴 title`, which
+   * `extractInlineCommentTitle` does not match (it wants `**🔴 title**`) — so
+   * the test asserted against a format the product never produces.
+   */
+  function bodyFor(title: string): string {
+    const [c] = buildInlineComments(
+      [{ file: 'src/app.ts', line: 10, severity: 'critical' as const, title, description: 'd', suggestion: '' }],
+      ['src/app.ts'],
+    );
+    return c.body;
+  }
+
+  function thread(over: Record<string, unknown> = {}) {
+    return {
+      id: 'T1',
+      isResolved: false,
+      path: 'src/app.ts',
+      comments: {
+        nodes: [{ databaseId: 11, body: bodyFor(TITLE), author: { login: ours } }],
+      },
+      ...over,
+    };
+  }
+
+  function stub(threads: unknown[]) {
+    const replies: unknown[] = [];
+    const mutations: string[] = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
+        if (q.includes('resolveReviewThread')) { mutations.push(String(vars.threadId)); return {}; }
+        return { repository: { pullRequest: { reviewThreads: { nodes: threads } } } };
+      }),
+      pulls: {
+        createReplyForReviewComment: vi.fn(async (a: unknown) => { replies.push(a); return { data: { id: 1 } }; }),
+      },
+    } as unknown as Octokit;
+    return { octokit, replies, mutations };
+  }
+
+  const KEY = withdrawnThreadKey('src/app.ts', TITLE);
+
+  it('the fixture body is one the extractor actually understands', () => {
+    // Guards the guard: if this is empty, every assertion below passes
+    // vacuously because nothing ever matches an active key.
+    expect(extractInlineCommentTitle(bodyFor(TITLE))).toBe(TITLE);
+  });
+
+  it('resolves a thread whose finding is no longer raised', async () => {
+    const { octokit, replies, mutations } = stub([thread()]);
+    const n = await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours);
+
+    expect(n).toBe(1);
+    expect(mutations).toEqual(['T1']);
+    expect(replies).toHaveLength(1);
+  });
+
+  it('leaves a thread alone while its finding is still raised', async () => {
+    const { octokit, mutations } = stub([thread()]);
+    const n = await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set([KEY]), ours);
+
+    expect(n).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('never closes a thread a human has replied in', async () => {
+    // The one that matters. Leaving a stale thread open is a nuisance;
+    // closing someone's live conversation is not.
+    const t = thread();
+    t.comments.nodes.push({ databaseId: 12, body: 'I disagree, here is why', author: { login: 'a-developer' } });
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('never closes a thread started by someone else', async () => {
+    const t = thread({ comments: { nodes: [{ databaseId: 20, body: 'a human review note', author: { login: 'a-developer' } }] } });
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('ignores a comment of ours that is not an inline finding', async () => {
+    // No marker — not something this pipeline posted as a finding.
+    const t = thread({ comments: { nodes: [{ databaseId: 21, body: 'just a note, no marker', author: { login: ours } }] } });
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('skips threads already resolved', async () => {
+    const { octokit, replies } = stub([thread({ isResolved: true })]);
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(replies).toEqual([]);
+  });
+
+  it('does nothing when our identity is unknown', async () => {
+    // Same guard as dismissStaleReviews (#418): without identity we cannot
+    // tell our threads from anyone else's, so we touch none.
+    const { octokit, mutations } = stub([thread()]);
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), null)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('matches on path + title, not line — a shifted thread still matches', async () => {
+    // GitHub moves a thread's line as the PR changes. A line-sensitive key
+    // would silently stop matching after a push and resolve a live finding.
+    expect(withdrawnThreadKey('src/app.ts', '  SQL Injection In The Query Builder  ')).toBe(KEY);
+  });
+
+  it('leaves a thread alone when its comment list is truncated', async () => {
+    // >100 comments means the "ours alone" check answers a question about the
+    // first page, not the thread. A human reply at position 101 would be
+    // invisible and the thread resolved out from under them.
+    const t = thread();
+    (t.comments as Record<string, unknown>).pageInfo = { hasNextPage: true };
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('still resolves when the comment list is explicitly NOT truncated', async () => {
+    const t = thread();
+    (t.comments as Record<string, unknown>).pageInfo = { hasNextPage: false };
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
+    expect(mutations).toEqual(['T1']);
+  });
+
+  it('leaves a thread alone when the title cannot be parsed', async () => {
+    // An empty title yields a key in no active set, which reads as
+    // "withdrawn" — resolving a thread we failed to identify. This is the
+    // exact mistake the original fixture made by accident.
+    const t = thread({
+      comments: { nodes: [{ databaseId: 40, body: `${bodyFor('x').split('**')[0]}### 🔴 wrong format`, author: { login: ours } }] },
+    });
+    const { octokit, mutations } = stub([t]);
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(mutations).toEqual([]);
+  });
+
+  it('survives a lookup failure without throwing', async () => {
+    const octokit = { graphql: vi.fn(async () => { throw new Error('boom'); }) } as unknown as Octokit;
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+  });
+
+  it('the note never claims an outcome the resolve has not delivered', async () => {
+    // If the reply lands and the resolve throws, the thread stays OPEN. A note
+    // saying "resolving" would be a comment claiming a state that does not
+    // exist, on the thread it is wrong about.
+    const replies: Array<Record<string, unknown>> = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string) => {
+        if (q.includes('resolveReviewThread')) throw new Error('resolve failed');
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread()] } } } };
+      }),
+      pulls: {
+        createReplyForReviewComment: vi.fn(async (a: Record<string, unknown>) => {
+          replies.push(a); return { data: { id: 1 } };
+        }),
+      },
+    } as unknown as Octokit;
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(0);
+    expect(replies).toHaveLength(1);
+    const body = String(replies[0].body);
+    expect(body).toMatch(/no longer raising this finding/);
+    expect(body).not.toMatch(/resolving|resolved/i);
+  });
+
+  it('still resolves when the courtesy note fails to post', async () => {
+    // The note is a courtesy; resolving is the point.
+    const mutations: string[] = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
+        if (q.includes('resolveReviewThread')) { mutations.push(String(vars.threadId)); return {}; }
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread()] } } } };
+      }),
+      pulls: { createReplyForReviewComment: vi.fn(async () => { throw new Error('reply failed'); }) },
+    } as unknown as Octokit;
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
+    expect(mutations).toEqual(['T1']);
+  });
+
+  it('one stuck thread does not abandon the rest', async () => {
+    // A thread whose RESOLVE fails must not stop the next one. (A failed
+    // courtesy note no longer aborts a thread at all — see the test above.)
+    const t2 = { ...thread(), id: 'T2', comments: { nodes: [{ databaseId: 31, body: bodyFor('Second finding'), author: { login: ours } }] } };
+    const mutations: string[] = [];
+    const octokit = {
+      graphql: vi.fn(async (q: string, vars: Record<string, unknown>) => {
+        if (q.includes('resolveReviewThread')) {
+          if (String(vars.threadId) === 'T1') throw new Error('stuck');
+          mutations.push(String(vars.threadId));
+          return {};
+        }
+        return { repository: { pullRequest: { reviewThreads: { nodes: [thread(), t2] } } } };
+      }),
+      pulls: { createReplyForReviewComment: vi.fn(async () => ({ data: { id: 1 } })) },
+    } as unknown as Octokit;
+
+    expect(await resolveWithdrawnFindingThreads(octokit, 'o', 'r', 7, new Set(), ours)).toBe(1);
+    expect(mutations).toEqual(['T2']);
   });
 });
 

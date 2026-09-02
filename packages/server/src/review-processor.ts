@@ -2,6 +2,7 @@ import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthPro
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
+  resolveWithdrawnFindingThreads, withdrawnThreadKey,
   formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
   loadCategoryDisputeRates,
   filterDiff,
@@ -883,6 +884,25 @@ export async function processReviewJob(
         : null;
       await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
+      // #526 — close our own inline threads for findings this review no longer
+      // raises. Without it a withdrawn critical leaves its comment open
+      // forever, so the PR keeps showing blocking feedback the review itself
+      // has already dropped. Never throws; returns 0 when it cannot act.
+      // Only findings with a usable file AND title contribute a key. An
+      // undefined field would yield `undefined::…`, which matches no real
+      // thread — so the live thread would look withdrawn and be resolved.
+      // Dropping the malformed entry keeps its thread OPEN, which is the safe
+      // direction to be wrong in.
+      const activeThreadKeys = new Set(
+        (result.findings as Array<{ file?: unknown; title?: unknown }>)
+          .filter((f) => typeof f.file === 'string' && f.file.length > 0
+            && typeof f.title === 'string' && f.title.trim().length > 0)
+          .map((f) => withdrawnThreadKey(f.file as string, f.title as string)),
+      );
+      const closed = await resolveWithdrawnFindingThreads(
+        octokit, owner, repo, prNumber, activeThreadKeys, selfLogin, STAGE,
+      );
+      if (closed > 0) console.log(`[review] resolved ${closed} withdrawn finding thread(s)`);
     } catch (err) {
       console.warn('PR review submission failed — issue comment has the full review:', err);
     }

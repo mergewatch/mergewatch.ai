@@ -1135,6 +1135,178 @@ export async function findReviewThreadIdForComment(
   return null;
 }
 
+/**
+ * Close our own inline threads whose finding is no longer being raised (#526).
+ *
+ * A withdrawn finding used to leave its inline comment open forever. Nothing
+ * deleted, minimised or resolved it — `resolveReviewThread` fired only when a
+ * human replied `/resolve`. Worse, a re-review deliberately skips re-posting a
+ * finding it still holds, so the original comment is the ONLY artifact: the PR
+ * kept showing unresolved blocking feedback for something the review no longer
+ * said.
+ *
+ * `activeKeys` is what the current review still raises, keyed by
+ * {@link withdrawnThreadKey}. Anything of ours not in that set is withdrawn.
+ *
+ * Three deliberate restrictions, all in the under-resolve direction — leaving a
+ * thread open is a nuisance, closing someone's live conversation is not:
+ *
+ *  1. **Only threads where every comment is ours.** One reply from anyone else
+ *     and we leave it alone; a human is using it.
+ *  2. **Only when we can prove identity.** No `selfLogin`, no resolving — the
+ *     same guard `dismissStaleReviews` uses, for the same reason (#418).
+ *  3. **Matched on path + title, never line.** GitHub shifts a thread's line as
+ *     the PR moves, so a line-sensitive key would silently stop matching after
+ *     a push. If a title genuinely recurs twice in one file, the still-raised
+ *     one keeps BOTH open, which is the safe way to be wrong.
+ *
+ * Returns the number of threads resolved. Never throws — a failure here must
+ * not fail a review that has otherwise succeeded.
+ */
+export function withdrawnThreadKey(path: string, title: string): string {
+  return `${path}::${title.trim().toLowerCase()}`;
+}
+
+export async function resolveWithdrawnFindingThreads(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  activeKeys: Set<string>,
+  selfLogin: string | null,
+  stage?: Stage,
+): Promise<number> {
+  if (!selfLogin) {
+    console.warn(
+      `[review] skipping withdrawn-thread cleanup for ${owner}/${repo}#${prNumber} — own App login unknown`,
+    );
+    return 0;
+  }
+  const want = normalizeLogin(selfLogin);
+  const marker = inlineMarker(stage);
+
+  const query = `
+    query WithdrawnThreads($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            pageInfo { hasNextPage }
+            nodes {
+              id
+              isResolved
+              path
+              comments(first: 100) {
+                pageInfo { hasNextPage }
+                nodes { databaseId body author { login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  type Thread = {
+    id: string;
+    isResolved: boolean;
+    path: string | null;
+    comments: {
+      pageInfo?: { hasNextPage: boolean };
+      nodes: Array<{ databaseId: number; body: string; author: { login: string } | null }>;
+    };
+  };
+  type Resp = {
+    repository: {
+      pullRequest: { reviewThreads: { pageInfo?: { hasNextPage: boolean }; nodes: Thread[] } };
+    };
+  };
+
+  let threads: Thread[];
+  try {
+    const data = await octokit.graphql<Resp>(query, { owner, repo, number: prNumber });
+    const conn = data.repository.pullRequest.reviewThreads;
+    threads = conn.nodes;
+    if (conn.pageInfo?.hasNextPage) {
+      // Under-resolve, so not a safety problem — we simply see fewer threads
+      // than exist. Worth saying out loud so "why is that one still open" has
+      // an answer.
+      console.warn(
+        `[review] %s/%s#%d has more than 100 review threads — only the first page was considered`,
+        owner, repo, prNumber,
+      );
+    }
+  } catch (err) {
+    console.warn('Withdrawn-thread lookup failed for %s/%s#%d:', owner, repo, prNumber, err);
+    return 0;
+  }
+
+  let resolved = 0;
+  for (const thread of threads) {
+    if (thread.isResolved || !thread.path) continue;
+
+    const nodes = thread.comments.nodes;
+    const comments = { pageInfoTruncated: thread.comments.pageInfo?.hasNextPage === true };
+    const root = nodes[0];
+    if (!root) continue;
+
+    // Ours, and ours alone.
+    if (normalizeLogin(root.author?.login) !== want) continue;
+    if (!root.body.includes(marker)) continue;
+
+    // A truncated comment list means the "ours alone" check below is answering
+    // a question about the first 100 comments, not the thread. A human reply
+    // at position 101 would be invisible and the thread would be resolved out
+    // from under them. Cannot prove it is ours, so leave it.
+    if (comments.pageInfoTruncated) {
+      console.warn(
+        `[review] thread %s on %s/%s#%d has >100 comments — leaving it alone`,
+        thread.id, owner, repo, prNumber,
+      );
+      continue;
+    }
+    if (nodes.some((c) => normalizeLogin(c.author?.login) !== want)) continue;
+
+    // An unparseable title yields an empty key, which is in no active set and
+    // therefore reads as "withdrawn" — resolving a thread we failed to
+    // identify. Same rule as everywhere else here: no identity, no action.
+    const title = extractInlineCommentTitle(root.body);
+    if (!title.trim()) continue;
+
+    const key = withdrawnThreadKey(thread.path, title);
+    if (activeKeys.has(key)) continue;
+
+    // The note must be true whether or not the resolve below succeeds. An
+    // earlier draft said "— resolving", which becomes a lie the instant
+    // resolveReviewThread throws: an OPEN thread carrying a comment claiming
+    // it was closed. Stating only what is already true removes that state by
+    // construction, rather than relying on the two calls both landing.
+    let noted = false;
+    try {
+      await replyToReviewComment(
+        octokit, owner, repo, prNumber, root.databaseId,
+        'MergeWatch is no longer raising this finding on the latest commit.',
+      );
+      noted = true;
+    } catch (err) {
+      // The note is a courtesy; resolving is the point. Carry on without it.
+      console.warn('Failed to note withdrawal on thread %s (%s/%s#%d):', thread.id, owner, repo, prNumber, err);
+    }
+
+    try {
+      await resolveReviewThread(octokit, thread.id);
+      resolved++;
+    } catch (err) {
+      // Separate catch, and it says whether the note landed — "both failed"
+      // and "note posted, thread still open" need different follow-up.
+      // One stuck thread must not abandon the rest.
+      console.warn(
+        'Failed to resolve withdrawn thread %s (%s/%s#%d) — note %s:',
+        thread.id, owner, repo, prNumber, noted ? 'was posted' : 'was not posted', err,
+      );
+    }
+  }
+  return resolved;
+}
+
 // ---------------------------------------------------------------------------
 // Repository config (.mergewatch.yml)
 // ---------------------------------------------------------------------------
