@@ -3340,13 +3340,84 @@ export async function runReviewPipeline(
       customFindings.length === 1 ? '' : 's',
     );
   }
+
+  // #510 — verify the custom findings that can BLOCK a merge.
+  //
+  // #385 routes custom findings around every model layer because they are
+  // user-legislated policy and a model should not overrule them. That holds.
+  // But the same bypass removes the only layer that asks whether the claim is
+  // TRUE of the code, and a blocking agent acts on that claim: a `no-todo`
+  // agent reported "a new TODO comment has been added" three times against
+  // files containing no TODO, FIXME, HACK or XXX. The quotes were real; the
+  // characterization was not. With `enforcement: blocking` those would have
+  // failed the check and requested changes on a diff containing no TODO.
+  //
+  // Scoped three ways so #385's guarantee survives:
+  //   • Only BLOCKING agents. An advisory finding that is wrong is noise; a
+  //     blocking one that is wrong stops a merge. Cost and risk both follow
+  //     the consequence.
+  //   • DEMOTE, never drop. A refuted finding still renders under "Unverified
+  //     concerns" and is excluded from the blocking count (FP-L / W7), so the
+  //     user's policy never silently disappears — which is what fixtures#515
+  //     was, and what #385 was written to prevent.
+  //   • Nothing else comes back. FP-A, the orchestrator's anti-pedantry pass
+  //     and the line-proximity geometry stay bypassed for every custom
+  //     finding, blocking or not.
+  const blockingAgentNames = new Set(
+    enabledCustomAgents.filter((a) => a.enforcement === 'blocking').map((a) => a.name),
+  );
+  let verifiedCustomFindings = customFindings;
+  if (blockingAgentNames.size > 0) {
+    const blocking = customFindings.filter((f) => blockingAgentNames.has(f.category));
+    const rest = customFindings.filter((f) => !blockingAgentNames.has(f.category));
+    if (blocking.length > 0) {
+      console.log(
+        '[org-agents] verifying %d finding%s from blocking agent%s (#510)',
+        blocking.length, blocking.length === 1 ? '' : 's', blockingAgentNames.size === 1 ? '' : 's',
+      );
+      // The shared grounding fetch above is keyed off the ORCHESTRATOR's
+      // findings, and custom findings bypass the orchestrator (#385). So none
+      // of their files are in that map, and verifyFindings skips a finding
+      // whose content it does not have — silently, by design, since a skip is
+      // not a refutation. Verification would have been a no-op on every
+      // blocking finding: the log would say "verifying 1", nothing would come
+      // back changed, and it would look like the verifier had agreed.
+      // Fetched separately, and only for blocking findings, so the read cost
+      // follows the same consequence rule as the verification itself.
+      const blockingFileContents = {
+        ...groundingFileContents,
+        ...(await fetchFindingFileContents(blocking, groundingContext)),
+      };
+      const verified = await verifyFindings(
+        blocking,
+        blockingFileContents,
+        lightModelId,
+        llm,
+        previousFindings,
+        trace,
+      );
+      // verifyFindings demotes rather than deletes (#459), but a custom
+      // finding must never be lost even if that changes: re-attach anything
+      // the verifier did not return, marked unverified.
+      const returnedKeys = new Set(verified.map((f) => outcomeKey(f)));
+      const missing = blocking
+        .filter((f) => !returnedKeys.has(outcomeKey(f)))
+        .map((f) => ({ ...f, verification: 'unverified' as const }));
+      for (const f of missing) {
+        trace.record(f, 'demoted', 'finding-verify', {
+          reason: 'the verifier did not return this blocking custom finding — kept as unverified rather than lost',
+        });
+      }
+      verifiedCustomFindings = [...verified, ...missing, ...rest];
+    }
+  }
   // #469 — attach cited code once, after builtin and custom findings are
   // combined, so a single call covers both paths rather than two that can
   // drift apart.
   const preTriageFindings = withEvidenceCode(
     [
       ...onChangedLines,
-      ...withTracedFingerprints(customFindings),
+      ...withTracedFingerprints(verifiedCustomFindings),
     ],
     groundingFileContents,
     convergence,

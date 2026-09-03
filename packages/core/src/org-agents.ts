@@ -136,7 +136,18 @@ export function selectOrgAgentsForReview(
 
 /** Map an org agent onto the pipeline's per-repo `CustomAgentDef` shape. */
 export function toCustomAgentDef(a: OrgCustomAgent): CustomAgentDef {
-  return { name: a.name, prompt: a.prompt, severityDefault: a.severityDefault, enabled: true };
+  // #510 — enforcement travels with the agent. It used to be dropped here, so
+  // the pipeline could not tell a blocking agent from an advisory one and had
+  // to verify all custom findings or none. `blockingCriticalAgents` below
+  // still runs in the runtimes for the gate itself; this is the same fact,
+  // carried to where the findings are produced.
+  return {
+    name: a.name,
+    prompt: a.prompt,
+    severityDefault: a.severityDefault,
+    enabled: true,
+    enforcement: a.enforcement,
+  };
 }
 
 /**
