@@ -973,6 +973,50 @@ describe('runOrchestratorAgent', () => {
     expect(llm.calls).toHaveLength(2);
   });
 
+  // #540 — the guards above defend PARSEABILITY. `findings: parsed.findings ?? []`
+  // rejects only null/undefined, so a parseable response carrying the WRONG TYPE
+  // for `findings` passed the `as` cast and crashed five stages later inside
+  // recordDrops as `se.map is not a function` — losing the whole review: no
+  // comment, no findings, just a red check saying nothing useful.
+  const TAGGED = [{ category: 'bug' as const, findings: [{ file: 'x.ts', line: 1, severity: 'critical' as const, confidence: 90, title: 'Real bug', description: '', suggestion: '' }] }];
+  const GOOD = JSON.stringify({
+    findings: [{ file: 'x.ts', line: 1, severity: 'critical', confidence: 90, category: 'bug', title: 'Real bug', description: '', suggestion: '' }],
+    mergeScore: 2, mergeScoreReason: 'Real bug.',
+  });
+
+  it.each([
+    ['an object', '{"findings": {"0": {"file": "x.ts"}}, "mergeScore": 2}'],
+    ['a string',  '{"findings": "none found", "mergeScore": 5}'],
+    ['a number',  '{"findings": 0, "mergeScore": 5}'],
+    ['null',      '{"findings": null, "mergeScore": 5}'],
+  ])('#540 — `findings` as %s is treated as unparseable and retried, not passed through', async (_label, bad) => {
+    const llm = createMockLLM([bad, GOOD]);
+    const result = await runOrchestratorAgent(TAGGED, 'model-1', 25, llm);
+    expect(llm.calls).toHaveLength(2);
+    expect(Array.isArray(result.findings)).toBe(true);
+    expect(result.findings).toHaveLength(1);
+  });
+
+  it('#540 — a wrong-shaped response twice throws, and never yields a silent all-clear', async () => {
+    // The critical half. Coercing a bad shape to [] would produce "no findings
+    // → 5/5" on a PR the agents flagged as critical — the exact silent approval
+    // #382 and fixtures#465 exist to prevent. Failing loudly is the contract.
+    const bad = '{"findings": {"0": {"file": "x.ts"}}, "mergeScore": 5}';
+    const llm = createMockLLM([bad, bad]);
+    await expect(runOrchestratorAgent(TAGGED, 'model-1', 25, llm))
+      .rejects.toThrow(/could not be parsed after retry/);
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it('#540 — a non-numeric mergeScore does not become NaN', async () => {
+    // mergeScore rides the same cast; a string survives Math.max/Math.min as
+    // NaN and renders as a broken badge instead of failing.
+    const llm = createMockLLM([JSON.stringify({ findings: [], mergeScore: 'high', mergeScoreReason: '' })]);
+    const result = await runOrchestratorAgent(TAGGED, 'model-1', 25, llm);
+    expect(Number.isFinite(result.mergeScore)).toBe(true);
+    expect(result.mergeScore).toBe(3);
+  });
+
   it('injects previous findings into the prompt and still calls the LLM when there are no new agent findings', async () => {
     const orchestratorResponse = JSON.stringify({
       findings: [
