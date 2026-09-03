@@ -91,7 +91,12 @@ describe("mergeScoreMeta", () => {
     // Integers AND fractionals: the #481 review found the dashboard rounded
     // while core did not, and an integer-only check could never see it.
     for (const score of [1, 1.4, 2, 2.5, 3, 3.7, 4, 4.9, 5, 0, 99]) {
-      expect(mergeScoreMeta(score)).toEqual(core.mergeScoreMeta(score));
+      // #516 — BOTH branches. Score 5 now has two labels, and testing only the
+      // default would leave the info-only wording unguarded — which is exactly
+      // how ReviewDrawer's third copy drifted unnoticed.
+      for (const hasNotes of [false, true]) {
+        expect(mergeScoreMeta(score, hasNotes)).toEqual(core.mergeScoreMeta(score, hasNotes));
+      }
     }
   });
 });

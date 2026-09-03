@@ -142,8 +142,16 @@ const MERGE_SCORE_LABELS: Record<number, { emoji: string; label: string }> = {
   1: { emoji: "🔴", label: "Do not merge" },
 };
 
-export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
+export function mergeScoreMeta(
+  score: number,
+  /** #516 — see core. Only score 5 varies: findings present means the review
+   * has notes, and "No issues found" would contradict them. */
+  hasNotes = false,
+): { emoji: string; label: string; score: number } {
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
+  if (clamped === 5 && hasNotes) {
+    return { ...MERGE_SCORE_LABELS[5], label: "No action items in the diff", score: 5 };
+  }
   return { ...MERGE_SCORE_LABELS[clamped], score: clamped };
 }
 

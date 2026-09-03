@@ -2643,14 +2643,18 @@ export function reconcileMergeScore(input: {
     if (filteredFindings.length === 0 && orchestratorRaised > 0) {
       return {
         mergeScore: 5,
-        mergeScoreReason: `No issues surfaced — ${orchestratorRaised} finding${orchestratorRaised === 1 ? ' was' : 's were'} raised and filtered out before rendering. Nothing was left to act on; the decision trail shows why each was dropped.`,
+        mergeScoreReason: `${orchestratorRaised} finding${orchestratorRaised === 1 ? ' was' : 's were'} raised and filtered out before rendering. Nothing was left to act on; the decision trail shows why each was dropped.`,
       };
     }
+    // #516 — no reason on the genuinely clean path. The label already says
+    // "No issues found in the diff" and the stats bar above it already gives
+    // files and lines, so a reason here only restates one of them. The
+    // formatter omits an empty reason, so this renders as label + scope note.
     return {
       mergeScore: 5,
       mergeScoreReason: filteredFindings.length === 0
-        ? 'No issues found on changed lines.'
-        : 'No action items — only informational notes.',
+        ? ''
+        : 'Only informational notes.',
     };
   }
   if (isPureSecurityImprovement) {

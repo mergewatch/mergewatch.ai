@@ -100,9 +100,9 @@ const scoreColors: Record<number, { color: string; bg: string }> = {
   1: { color: "text-primer-red", bg: "bg-primer-red/10" },
 };
 
-function MergeScoreBadge({ score, reason }: { score: number; reason?: string }) {
+function MergeScoreBadge({ score, reason, hasNotes }: { score: number; reason?: string; hasNotes: boolean }) {
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
-  const s = { ...(scoreColors[clamped] ?? scoreColors[3]), label: mergeScoreMeta(score).label };
+  const s = { ...(scoreColors[clamped] ?? scoreColors[3]), label: mergeScoreMeta(score, hasNotes).label };
   return (
     <div className={`mx-5 mt-4 rounded-lg border border-border-default ${s.bg} px-4 py-3`}>
       <div className="flex items-center justify-between">
@@ -247,7 +247,13 @@ export default function ReviewDrawer({
           ) : review ? (
             <>
               {review.mergeScore != null && (
-                <MergeScoreBadge score={review.mergeScore} reason={review.mergeScoreReason} />
+                <MergeScoreBadge
+                  score={review.mergeScore}
+                  reason={review.mergeScoreReason}
+                  // #516 — same input the PR comment uses: a rendered finding,
+                  // or a reason explaining what happened to the ones there were.
+                  hasNotes={(review.findings?.length ?? 0) > 0 || Boolean(review.mergeScoreReason)}
+                />
               )}
               <DrawerSection title="Overview" icon={FileText} defaultOpen>
                 <div className="space-y-3">

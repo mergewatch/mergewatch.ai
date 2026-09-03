@@ -119,6 +119,19 @@ describe('formatReviewComment', () => {
     expect(result).not.toContain('Safe to merge');
   });
 
+  it('5/5 with info findings does not claim none were found', () => {
+    // #516 — "No issues found in the diff" contradicted the info notes
+    // rendered directly below it. Only score 5 varies; the other labels are
+    // statements about the review's opinion and were already accurate.
+    const info: Finding = { severity: 'info', title: 'A note', description: 'd', file: 'a.ts', line: 1, category: 'style', suggestion: '' };
+    const withInfo = formatReviewComment(baseOptions({ mergeScore: 5, findings: [info] }));
+    expect(withInfo).toContain('No action items in the diff');
+    expect(withInfo).not.toContain('No issues found in the diff');
+
+    const clean = formatReviewComment(baseOptions({ mergeScore: 5, findings: [] }));
+    expect(clean).toContain('No issues found in the diff');
+  });
+
   it('states the review scope on clean verdicts, and not on blocking ones', () => {
     // The note exists because a green verdict beside a failing CI check invites
     // exactly the wrong inference. On 1-3 the verdict already says stop, so the

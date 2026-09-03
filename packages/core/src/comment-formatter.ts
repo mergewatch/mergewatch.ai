@@ -270,12 +270,24 @@ export function buildReviewDetailUrl(
  * Two copies of this table would drift, and a review that reads "Needs fixes"
  * on GitHub and something else on the dashboard is worse than either alone.
  */
-export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
+export function mergeScoreMeta(
+  score: number,
+  /**
+   * #516 — does this review have anything to report? A 5/5 fires both for a
+   * review that found nothing and for one whose findings are all
+   * informational, and "No issues found in the diff" contradicts the notes
+   * rendered directly below it in the second case. Only score 5 varies.
+   */
+  hasNotes = false,
+): { emoji: string; label: string; score: number } {
   // Round before the lookup. MERGE_SCORE_META is keyed 1–5, so a fractional
   // score — the orchestrator clamps but does not round, so a model returning
   // 2.5 reaches here — missed the table entirely and produced
   // `undefined **2.5/5 — undefined**` in the rendered comment.
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
+  if (clamped === 5 && hasNotes) {
+    return { ...MERGE_SCORE_META[5], label: 'No action items in the diff', score: 5 };
+  }
   return { ...MERGE_SCORE_META[clamped], score: clamped };
 }
 
@@ -295,8 +307,8 @@ export const REVIEW_SCOPE_NOTE =
   'Reviewed the diff only — MergeWatch does not build, run tests, or read other checks.';
 
 /** Render the merge score as a prominent badge line. */
-function renderMergeScore(score: number): string {
-  const { emoji, label, score: clamped } = mergeScoreMeta(score);
+function renderMergeScore(score: number, hasNotes: boolean): string {
+  const { emoji, label, score: clamped } = mergeScoreMeta(score, hasNotes);
   return `${emoji} **${clamped}/5 — ${label}**`;
 }
 
@@ -645,7 +657,10 @@ export function formatReviewComment(options: FormatOptions): string {
   // 4. Merge readiness score — highly visible
   if (mergeScore != null) {
     const score = section('score', KEEP);
-    const scoreDisplay = renderMergeScore(mergeScore);
+    // Anything to report — a rendered finding, or a reason explaining what
+    // happened to the ones there were.
+    const hasNotes = findings.length > 0 || Boolean(mergeScoreReason);
+    const scoreDisplay = renderMergeScore(mergeScore, hasNotes);
     const reasonSuffix = mergeScoreReason ? ` \u2014 ${mergeScoreReason}` : '';
     score.push(`> ${scoreDisplay}${reasonSuffix}`);
     // FP-J L3 \u2014 dispute-rate disclosure renders as a quieter sub-line so the
@@ -661,7 +676,7 @@ export function formatReviewComment(options: FormatOptions): string {
     // has to infer the scope; catalog-service#103 shows the inference goes the
     // wrong way. Restricted to 4-5 because a 1-3 verdict already tells the
     // reader to stop, so the note would be noise on every blocked PR.
-    if (mergeScoreMeta(mergeScore).score >= 4) {
+    if (mergeScoreMeta(mergeScore, hasNotes).score >= 4) {
       score.push(`> <sub>${REVIEW_SCOPE_NOTE}</sub>`);
     }
     score.push('');
