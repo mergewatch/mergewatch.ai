@@ -1387,13 +1387,39 @@ export async function runOrchestratorAgent(
   // the invocation once; if the retry is also unparseable, throw so the
   // review fails loudly (failure check run) instead of approving blind.
   type OrchestratorRaw = { findings: OrchestratedFinding[]; mergeScore?: number; mergeScoreReason?: string };
+
+  // #540 — the guards below defend PARSEABILITY. They did not defend SHAPE, and
+  // `findings: parsed.findings ?? []` only rejects null/undefined: a response of
+  // `{"findings": {...}}` is present, parses, and satisfies the `as` cast, which
+  // asserts an array nobody checked. The TypeError then surfaced five stages
+  // later inside recordDrops as `se.map is not a function`, losing the entire
+  // review — no comment, no findings, just a red check.
+  //
+  // Returning null for a bad shape routes it into the SAME retry-then-throw
+  // ladder as an unparseable one, which is the already-correct behaviour. It
+  // must never coerce to `[]`: a silent empty finding set is the 7-findings-to-
+  // 5/5 silent approval that #382 and fixtures#465 exist to prevent. A crash is
+  // bad; a false all-clear is worse.
+  const asOrchestratorRaw = (value: unknown): OrchestratorRaw | null => {
+    if (!value || typeof value !== 'object') return null;
+    const findings = (value as { findings?: unknown }).findings;
+    if (!Array.isArray(findings)) {
+      console.warn(
+        '[orchestrator] `findings` is %s, not an array — treating as unparseable (#540)',
+        findings === undefined ? 'absent' : typeof findings,
+      );
+      return null;
+    }
+    return value as OrchestratorRaw;
+  };
+
   let parsed: OrchestratorRaw | null = null;
   // #390 — prefer schema-constrained output: the orchestrator is the single
   // point where a parse failure used to cost EVERY finding at once. Silent
   // fallback on unsupported providers; throttles rethrow (review parks).
   if (llm.invokeStructured) {
     try {
-      parsed = (await llm.invokeStructured(modelId, prompt, ORCHESTRATOR_SCHEMA)).object as OrchestratorRaw;
+      parsed = asOrchestratorRaw((await llm.invokeStructured(modelId, prompt, ORCHESTRATOR_SCHEMA)).object);
     } catch (err) {
       if (isThrottleError(err)) throw err;
       if (!(err instanceof StructuredOutputUnsupportedError)) {
@@ -1403,22 +1429,27 @@ export async function runOrchestratorAgent(
   }
   if (!parsed) {
     const raw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
-    parsed = tryParseJson<OrchestratorRaw>(raw, 'findings');
+    parsed = asOrchestratorRaw(tryParseJson<unknown>(raw, 'findings'));
   }
   if (!parsed) {
-    console.warn('[orchestrator] unparseable response — retrying once');
+    console.warn('[orchestrator] unparseable or wrong-shaped response — retrying once');
     const retryRaw = normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
-    parsed = tryParseJson<OrchestratorRaw>(retryRaw, 'findings');
+    parsed = asOrchestratorRaw(tryParseJson<unknown>(retryRaw, 'findings'));
     if (!parsed) {
-      console.error('[orchestrator] unparseable response after retry:', retryRaw.trim().slice(0, 200));
+      console.error('[orchestrator] unusable response after retry:', retryRaw.trim().slice(0, 200));
       throw new Error(
         'Orchestrator response could not be parsed after retry — failing the review instead of approving with all findings dropped (#382)',
       );
     }
   }
+  // `mergeScore` rides the same cast. A non-numeric value survives
+  // Math.max/Math.min as NaN, which renders as a broken badge rather than
+  // failing, so it is normalised here rather than clamped blind.
+  const rawScore = parsed.mergeScore;
+  const mergeScore = typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : 3;
   return {
-    findings: parsed.findings ?? [],
-    mergeScore: Math.max(1, Math.min(5, parsed.mergeScore ?? 3)),
+    findings: parsed.findings,
+    mergeScore: Math.max(1, Math.min(5, mergeScore)),
     mergeScoreReason: parsed.mergeScoreReason ?? '',
   };
 }
