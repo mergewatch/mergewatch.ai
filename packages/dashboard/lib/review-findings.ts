@@ -135,15 +135,23 @@ export function findingsSummaryLine(findings: Array<{ severity?: string }>): str
  * dashboard whose verdict disagrees with the PR comment.
  */
 const MERGE_SCORE_LABELS: Record<number, { emoji: string; label: string }> = {
-  5: { emoji: "🟢", label: "Safe to merge" },
+  5: { emoji: "🟢", label: "No issues found in the diff" },
   4: { emoji: "🟢", label: "Generally safe" },
   3: { emoji: "🟡", label: "Review recommended" },
   2: { emoji: "🟠", label: "Needs fixes" },
   1: { emoji: "🔴", label: "Do not merge" },
 };
 
-export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
+export function mergeScoreMeta(
+  score: number,
+  /** #516 — see core. Only score 5 varies: findings present means the review
+   * has notes, and "No issues found" would contradict them. */
+  hasNotes = false,
+): { emoji: string; label: string; score: number } {
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
+  if (clamped === 5 && hasNotes) {
+    return { ...MERGE_SCORE_LABELS[5], label: "No action items in the diff", score: 5 };
+  }
   return { ...MERGE_SCORE_LABELS[clamped], score: clamped };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, buildReviewDetailUrl, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, buildReviewDetailUrl, REVIEW_SCOPE_NOTE, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,10 +108,53 @@ describe('formatReviewComment', () => {
   });
 
   // Merge score rendering
-  it('renders merge score badge with score 5 as green safe-to-merge', () => {
+  it('renders merge score badge with score 5 scoped to the diff', () => {
+    // #516 — the label used to read "Safe to merge", a claim about the PR that
+    // this review has no basis for: it reads the diff and never builds, tests,
+    // or looks at another check. catalog-service#103 got that green label on a
+    // PR that did not compile.
     const result = formatReviewComment(baseOptions({ mergeScore: 5 }));
     expect(result).toContain('5/5');
-    expect(result).toContain('Safe to merge');
+    expect(result).toContain('No issues found in the diff');
+    expect(result).not.toContain('Safe to merge');
+  });
+
+  it('5/5 with info findings does not claim none were found', () => {
+    // #516 — "No issues found in the diff" contradicted the info notes
+    // rendered directly below it. Only score 5 varies; the other labels are
+    // statements about the review's opinion and were already accurate.
+    const info: Finding = { severity: 'info', title: 'A note', description: 'd', file: 'a.ts', line: 1, category: 'style', suggestion: '' };
+    const withInfo = formatReviewComment(baseOptions({ mergeScore: 5, findings: [info] }));
+    expect(withInfo).toContain('No action items in the diff');
+    expect(withInfo).not.toContain('No issues found in the diff');
+
+    const clean = formatReviewComment(baseOptions({ mergeScore: 5, findings: [] }));
+    expect(clean).toContain('No issues found in the diff');
+  });
+
+  it('states the review scope on clean verdicts, and not on blocking ones', () => {
+    // The note exists because a green verdict beside a failing CI check invites
+    // exactly the wrong inference. On 1-3 the verdict already says stop, so the
+    // note would be noise on every blocked PR.
+    for (const score of [5, 4]) {
+      expect(formatReviewComment(baseOptions({ mergeScore: score }))).toContain(REVIEW_SCOPE_NOTE);
+    }
+    for (const score of [3, 2, 1]) {
+      expect(formatReviewComment(baseOptions({ mergeScore: score }))).not.toContain(REVIEW_SCOPE_NOTE);
+    }
+  });
+
+  it('the check title distinguishes nothing-found from everything-filtered', () => {
+    // #516 — a review that raised six findings and filtered all six read
+    // "No issues found" in the Checks tab, identically to one that found none.
+    // #510 is a confirmed case of that filtering dropping a real finding.
+    expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0 }))
+      .toBe('5/5 — No issues found');
+    expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0, suppressedCount: 6 }))
+      .toBe('5/5 — No issues surfaced (6 filtered)');
+    // Back-compat: callers that do not pass the count get exactly today's text.
+    expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0, suppressedCount: 0 }))
+      .toBe('5/5 — No issues found');
   });
 
   it('renders merge score badge with score 1 as do-not-merge', () => {

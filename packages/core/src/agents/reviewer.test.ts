@@ -1154,7 +1154,12 @@ describe('runReviewPipeline', () => {
 
     expect(result.findings).toEqual([]);
     expect(result.mergeScore).toBe(5);
-    expect(result.mergeScoreReason).toContain('No issues');
+    // #516 — this used to assert the reason contained "No issues", which is
+    // the misleading wording this scenario produces: a finding WAS raised and
+    // then line-filtered. The score reconciliation is still the thing under
+    // test; the reason now names what happened instead of denying it.
+    expect(result.mergeScoreReason).toContain('1 finding was raised and filtered out');
+    expect(result.mergeScoreReason).not.toContain('No issues');
   });
 
   // #385 — W10 clustering runs BEFORE the FP-A confidence floor.
@@ -3172,7 +3177,57 @@ describe('reconcileMergeScore', () => {
       });
 
       expect(r.mergeScore).toBe(5);
-      expect(r.mergeScoreReason).toBe('No issues found on changed lines.');
+      // #516 — no reason on the clean path: the label carries it, and the
+      // formatter omits an empty reason rather than restating the label.
+      expect(r.mergeScoreReason).toBe('');
+    });
+
+    it('#516 — findings raised and all filtered do not read as "no issues found"', () => {
+      // The quieter half of #385. Nothing blocking, so the advisory clamp does
+      // not fire — but four findings were raised and every one was discarded
+      // downstream. "No issues found" and "we dropped everything we found"
+      // rendered identically, and #510 is a confirmed case of that machinery
+      // dropping a legitimate finding.
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 5,
+        orchestratorReason: 'Looks fine.',
+        orchestratorCriticalsCount: 0,
+        orchestratorWarningsCount: 4,
+      });
+
+      // Score stays 5 — nothing survived scrutiny, which is a real outcome.
+      expect(r.mergeScore).toBe(5);
+      expect(r.mergeScoreReason).toContain('4 findings were raised and filtered out');
+      expect(r.mergeScoreReason).not.toContain('No issues found');
+    });
+
+    it('#516 — singular reads correctly for one filtered finding', () => {
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 5,
+        orchestratorReason: 'Looks fine.',
+        orchestratorCriticalsCount: 0,
+        orchestratorWarningsCount: 1,
+      });
+      expect(r.mergeScoreReason).toContain('1 finding was raised');
+    });
+
+    it('#516 — a caller that omits the counts reads as clean, not as filtered', () => {
+      // Both counts are optional and pre-date this change. Absent means "we do
+      // not know what the orchestrator raised" — which must fall to the clean
+      // path, not to a filtered-out claim we cannot substantiate.
+      const r = reconcileMergeScore({
+        filteredFindings: [],
+        previousFindings: undefined,
+        orchestratorScore: 5,
+        orchestratorReason: 'No issues found on changed lines.',
+      });
+      expect(r.mergeScore).toBe(5);
+      expect(r.mergeScoreReason).toBe('');
+      expect(r.mergeScoreReason).not.toContain('filtered');
     });
 
     it('does NOT fire when even one Critical survives post-filter (the surviving one still blocks)', () => {

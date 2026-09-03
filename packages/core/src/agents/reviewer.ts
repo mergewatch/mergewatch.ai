@@ -2627,11 +2627,34 @@ export function reconcileMergeScore(input: {
   }
 
   if (noActionItems) {
+    // #516 — "No issues found" and "everything we found was filtered out"
+    // rendered identically. The first is a review that came back clean; the
+    // second is a review whose findings were all discarded by grounding, W2
+    // verification, line proximity, dedup or clustering — and #510 is a
+    // confirmed case of that machinery dropping a legitimate finding.
+    //
+    // The #385 clamp above already covers the sharp end of this (orchestrator
+    // scored blocking on criticals that then vanished → 3/5, advisory). What
+    // is left is the quieter case: findings raised, none blocking, all
+    // filtered. The score stays 5 — nothing survived scrutiny, which is a real
+    // outcome — but the sentence says so rather than claiming emptiness.
+    const orchestratorRaised =
+      (orchestratorCriticalsCount ?? 0) + (orchestratorWarningsCount ?? 0);
+    if (filteredFindings.length === 0 && orchestratorRaised > 0) {
+      return {
+        mergeScore: 5,
+        mergeScoreReason: `${orchestratorRaised} finding${orchestratorRaised === 1 ? ' was' : 's were'} raised and filtered out before rendering. Nothing was left to act on; the decision trail shows why each was dropped.`,
+      };
+    }
+    // #516 — no reason on the genuinely clean path. The label already says
+    // "No issues found in the diff" and the stats bar above it already gives
+    // files and lines, so a reason here only restates one of them. The
+    // formatter omits an empty reason, so this renders as label + scope note.
     return {
       mergeScore: 5,
       mergeScoreReason: filteredFindings.length === 0
-        ? 'No issues found on changed lines.'
-        : 'No action items — only informational notes.',
+        ? ''
+        : 'Only informational notes.',
     };
   }
   if (isPureSecurityImprovement) {

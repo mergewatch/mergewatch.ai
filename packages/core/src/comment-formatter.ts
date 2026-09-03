@@ -101,8 +101,15 @@ export function buildCheckTitle(input: {
   blockingCriticalCount: number;
   orgBlocked?: boolean;
   orgBlockedBy?: string[];
+  /**
+   * #516 — findings raised and then dropped by post-orchestrator filtering.
+   * Without it a review that found six things and filtered all six reads
+   * "No issues found" in the Checks tab, identically to one that found none.
+   * Optional: callers that do not pass it get exactly today's wording.
+   */
+  suppressedCount?: number;
 }): string {
-  const { mergeScore, findingCount, blockingCriticalCount, orgBlocked, orgBlockedBy } = input;
+  const { mergeScore, findingCount, blockingCriticalCount, orgBlocked, orgBlockedBy, suppressedCount } = input;
   const prefix = mergeScore != null
     ? `${Math.max(1, Math.min(5, mergeScore))}/5 — `
     : '';
@@ -112,6 +119,9 @@ export function buildCheckTitle(input: {
   }
   if (findingCount > 0) {
     return `${prefix}${findingCount} finding${findingCount > 1 ? 's' : ''} (no blocking critical)`;
+  }
+  if ((suppressedCount ?? 0) > 0) {
+    return `${prefix}No issues surfaced (${suppressedCount} filtered)`;
   }
   return `${prefix}No issues found`;
 }
@@ -214,8 +224,16 @@ const SEVERITY_META: Record<Finding['severity'], { emoji: string; label: string;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
+// #516 — 5/5 said "Safe to merge", which is a claim about the PR. This review
+// reads the diff: it does not build, run tests, or look at any other check.
+// catalog-service#103 got a green "Safe to merge" on a PR that did not compile,
+// and the words were the promise. The label now states what was examined.
+//
+// Only 5/5 changed. The other four describe the review's own opinion —
+// "Needs fixes", "Do not merge" — and assert nothing about merge-safety that
+// the review did not establish.
 const MERGE_SCORE_META: Record<number, { emoji: string; label: string }> = {
-  5: { emoji: '\uD83D\uDFE2', label: 'Safe to merge' },
+  5: { emoji: '\uD83D\uDFE2', label: 'No issues found in the diff' },
   4: { emoji: '\uD83D\uDFE2', label: 'Generally safe' },
   3: { emoji: '\uD83D\uDFE1', label: 'Review recommended' },
   2: { emoji: '\uD83D\uDFE0', label: 'Needs fixes' },
@@ -252,18 +270,45 @@ export function buildReviewDetailUrl(
  * Two copies of this table would drift, and a review that reads "Needs fixes"
  * on GitHub and something else on the dashboard is worse than either alone.
  */
-export function mergeScoreMeta(score: number): { emoji: string; label: string; score: number } {
+export function mergeScoreMeta(
+  score: number,
+  /**
+   * #516 — does this review have anything to report? A 5/5 fires both for a
+   * review that found nothing and for one whose findings are all
+   * informational, and "No issues found in the diff" contradicts the notes
+   * rendered directly below it in the second case. Only score 5 varies.
+   */
+  hasNotes = false,
+): { emoji: string; label: string; score: number } {
   // Round before the lookup. MERGE_SCORE_META is keyed 1–5, so a fractional
   // score — the orchestrator clamps but does not round, so a model returning
   // 2.5 reaches here — missed the table entirely and produced
   // `undefined **2.5/5 — undefined**` in the rendered comment.
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
+  if (clamped === 5 && hasNotes) {
+    return { ...MERGE_SCORE_META[5], label: 'No action items in the diff', score: 5 };
+  }
   return { ...MERGE_SCORE_META[clamped], score: clamped };
 }
 
+/**
+ * What this review actually examined (#516).
+ *
+ * MergeWatch reads the diff with LLM agents. It does not compile anything, run
+ * tests, or read any other check on the commit — a fact that is invisible from
+ * a green verdict, and which catalog-service#103 turned into a "Safe to merge"
+ * on a PR containing an undeclared variable.
+ *
+ * Shown only on 4-5. Below that the verdict already tells the reader to stop,
+ * so the note would be noise on exactly the PRs where nobody is inferring
+ * merge-safety anyway.
+ */
+export const REVIEW_SCOPE_NOTE =
+  'Reviewed the diff only — MergeWatch does not build, run tests, or read other checks.';
+
 /** Render the merge score as a prominent badge line. */
-function renderMergeScore(score: number): string {
-  const { emoji, label, score: clamped } = mergeScoreMeta(score);
+function renderMergeScore(score: number, hasNotes: boolean): string {
+  const { emoji, label, score: clamped } = mergeScoreMeta(score, hasNotes);
   return `${emoji} **${clamped}/5 — ${label}**`;
 }
 
@@ -612,7 +657,10 @@ export function formatReviewComment(options: FormatOptions): string {
   // 4. Merge readiness score — highly visible
   if (mergeScore != null) {
     const score = section('score', KEEP);
-    const scoreDisplay = renderMergeScore(mergeScore);
+    // Anything to report — a rendered finding, or a reason explaining what
+    // happened to the ones there were.
+    const hasNotes = findings.length > 0 || Boolean(mergeScoreReason);
+    const scoreDisplay = renderMergeScore(mergeScore, hasNotes);
     const reasonSuffix = mergeScoreReason ? ` \u2014 ${mergeScoreReason}` : '';
     score.push(`> ${scoreDisplay}${reasonSuffix}`);
     // FP-J L3 \u2014 dispute-rate disclosure renders as a quieter sub-line so the
@@ -622,6 +670,14 @@ export function formatReviewComment(options: FormatOptions): string {
     // over the 30d window). Omitted on the clean path.
     if (disputeDisclosure && disputeDisclosure.trim()) {
       score.push(`> <sub>\ud83d\udcca ${disputeDisclosure.trim()}</sub>`);
+    }
+    // #516 — say what this review looked at, on the verdicts that read as an
+    // all-clear. A reader seeing a green 4/5 or 5/5 next to a failing CI check
+    // has to infer the scope; catalog-service#103 shows the inference goes the
+    // wrong way. Restricted to 4-5 because a 1-3 verdict already tells the
+    // reader to stop, so the note would be noise on every blocked PR.
+    if (mergeScoreMeta(mergeScore, hasNotes).score >= 4) {
+      score.push(`> <sub>${REVIEW_SCOPE_NOTE}</sub>`);
     }
     score.push('');
   }
