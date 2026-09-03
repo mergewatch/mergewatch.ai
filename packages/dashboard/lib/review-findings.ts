@@ -135,7 +135,7 @@ export function findingsSummaryLine(findings: Array<{ severity?: string }>): str
  * dashboard whose verdict disagrees with the PR comment.
  */
 const MERGE_SCORE_LABELS: Record<number, { emoji: string; label: string }> = {
-  5: { emoji: "🟢", label: "Safe to merge" },
+  5: { emoji: "🟢", label: "No issues found in the diff" },
   4: { emoji: "🟢", label: "Generally safe" },
   3: { emoji: "🟡", label: "Review recommended" },
   2: { emoji: "🟠", label: "Needs fixes" },

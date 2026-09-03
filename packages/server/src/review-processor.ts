@@ -1062,6 +1062,7 @@ export async function processReviewJob(
         blockingCriticalCount,
         orgBlocked,
         orgBlockedBy,
+        suppressedCount: result.suppressedCount,
       }),
       summary: findingSummaryParts.length > 0
         ? `Found: ${findingSummaryParts.join(', ')}`

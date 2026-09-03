@@ -1254,6 +1254,7 @@ export async function handler(
         blockingCriticalCount,
         orgBlocked,
         orgBlockedBy,
+        suppressedCount: result.suppressedCount,
       }),
       summary: findingSummaryParts.length > 0
         ? `Found: ${findingSummaryParts.join(', ')}`

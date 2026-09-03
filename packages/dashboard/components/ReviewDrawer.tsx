@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { FindingsSection } from "./FindingEvidence";
-import { reviewKey, isCompleted } from "../lib/review-findings";
+import { reviewKey, isCompleted, mergeScoreMeta } from "../lib/review-findings";
 import FilterTrail from "./FilterTrail";
 import type { DetailFinding } from "../lib/review-findings";
 
@@ -87,16 +87,22 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-const mergeScoreMeta: Record<number, { color: string; bg: string; label: string }> = {
-  5: { color: "text-primer-green", bg: "bg-primer-green/10", label: "Safe to merge" },
-  4: { color: "text-primer-green", bg: "bg-primer-green/10", label: "Generally safe" },
-  3: { color: "text-primer-orange", bg: "bg-primer-orange/10", label: "Review recommended" },
-  2: { color: "text-orange-500", bg: "bg-orange-500/10", label: "Needs fixes" },
-  1: { color: "text-primer-red", bg: "bg-primer-red/10", label: "Do not merge" },
+// #516 — colours only. The LABEL comes from `mergeScoreMeta`, which is
+// drift-tested against core, so the drawer cannot disagree with the PR
+// comment. This map used to carry its own copy of the wording and was the one
+// place the drift test could not see: core and lib/review-findings were
+// guarded against each other while a third copy sat here.
+const scoreColors: Record<number, { color: string; bg: string }> = {
+  5: { color: "text-primer-green", bg: "bg-primer-green/10" },
+  4: { color: "text-primer-green", bg: "bg-primer-green/10" },
+  3: { color: "text-primer-orange", bg: "bg-primer-orange/10" },
+  2: { color: "text-orange-500", bg: "bg-orange-500/10" },
+  1: { color: "text-primer-red", bg: "bg-primer-red/10" },
 };
 
 function MergeScoreBadge({ score, reason }: { score: number; reason?: string }) {
-  const s = mergeScoreMeta[score] ?? mergeScoreMeta[3];
+  const clamped = Math.max(1, Math.min(5, Math.round(score)));
+  const s = { ...(scoreColors[clamped] ?? scoreColors[3]), label: mergeScoreMeta(score).label };
   return (
     <div className={`mx-5 mt-4 rounded-lg border border-border-default ${s.bg} px-4 py-3`}>
       <div className="flex items-center justify-between">
