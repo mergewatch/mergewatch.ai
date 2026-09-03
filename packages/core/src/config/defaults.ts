@@ -14,6 +14,16 @@ export interface CustomAgentDef {
   severityDefault: 'info' | 'warning' | 'critical';
   /** Whether this custom agent is enabled */
   enabled: boolean;
+  /**
+   * #510 — org agents only. `blocking` means a critical finding from this
+   * agent fails the check and requests changes regardless of merge score
+   * (#235), which is why those findings are W2-verified before they can act.
+   *
+   * Absent for repo-level `.mergewatch.yml` agents, which cannot block —
+   * so absent reads as advisory, and the pipeline's behaviour for them is
+   * unchanged.
+   */
+  enforcement?: 'advisory' | 'blocking';
 }
 
 export interface UXConfig {

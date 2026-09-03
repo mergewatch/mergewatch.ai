@@ -1809,6 +1809,123 @@ describe('runReviewPipeline', () => {
     expect(todo!.verification).toBeUndefined();
   });
 
+  it('#510 — a BLOCKING agent\'s finding is verified, and a refuted one is demoted not dropped', async () => {
+    // The reported case: a `no-todo` agent asserting "a new TODO comment has
+    // been added" against a file containing no TODO. With enforcement:
+    // blocking that fails the check and requests changes on a false claim.
+    const blockingAgent = {
+      name: 'no-todo', prompt: 'Flag any new TODO comment',
+      severityDefault: 'critical' as const, enabled: true,
+      enforcement: 'blocking' as const,
+    };
+    const customResponse = validFindingsJson([
+      { file: 'foo.ts', line: 3, severity: 'critical', title: 'New TODO comment added', confidence: 95 },
+    ]);
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const llm = createMockLLM([
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Adds code.' }), '%% overview\nflowchart TD\n  A-->B',
+      customResponse, orchestrator,
+      // The verifier refutes it — no TODO construct at the cited line.
+      JSON.stringify({ valid: false, reason: 'No TODO marker at or near foo.ts:3.' }),
+    ]);
+
+    // The verifier SKIPS a finding whose file content it does not have, leaving
+    // `verification` undefined — deliberately, so callers without a grounding
+    // fetch never get the W7 clamp. Without this the test would pass for the
+    // wrong reason: verification never ran at all.
+    const fileWithoutAnyTodo = ['const a = 1;', 'const b = 2;', 'const c = 3;', 'const d = 4;'].join('\n');
+    const octokit = {
+      repos: {
+        getContent: vi.fn(async () => ({
+          data: { type: 'file', content: Buffer.from(fileWithoutAnyTodo, 'utf-8').toString('base64') },
+        })),
+      },
+    } as any;
+
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light',
+        maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [blockingAgent],
+        groundingFetch: { octokit, owner: 'o', repo: 'r', ref: 'sha', maxContextKB: 256, maxRounds: 1 },
+      },
+      { llm },
+    );
+
+    const todo = result.findings.find((f) => f.title === 'New TODO comment added');
+    // DEMOTED, never deleted: user-legislated policy must not silently vanish,
+    // which is what #385 exists to prevent (fixtures#515).
+    expect(todo).toBeDefined();
+    expect(todo!.verification).toBe('unverified');
+
+    // The trap this feature nearly shipped into: the shared grounding fetch is
+    // keyed off the ORCHESTRATOR's findings, and custom findings bypass the
+    // orchestrator (#385) — so foo.ts was never fetched, verifyFindings SKIPPED
+    // (a skip is not a refutation, so it tags nothing), and the whole feature
+    // was a no-op that logged "verifying 1" and returned the finding untouched.
+    // Verification succeeding looks exactly like verification never running
+    // unless something asserts the file was actually read.
+    expect(octokit.repos.getContent).toHaveBeenCalled();
+  });
+
+  it('#510 — an ADVISORY agent keeps the #385 bypass untouched', async () => {
+    // A wrong advisory finding is noise; a wrong blocking one stops a merge.
+    // Verification follows the consequence, so advisory pays no LLM cost and
+    // takes exactly today's path.
+    const advisoryAgent = {
+      name: 'no-todo', prompt: 'Flag any new TODO comment',
+      severityDefault: 'critical' as const, enabled: true,
+      enforcement: 'advisory' as const,
+    };
+    const customResponse = validFindingsJson([
+      { file: 'foo.ts', line: 3, severity: 'critical', title: 'New TODO comment added', confidence: 95 },
+    ]);
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    // NOTE: no verifier response queued. If the pipeline called the verifier
+    // for an advisory agent, the mock would run dry and this would fail.
+    const llm = createMockLLM([
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Adds code.' }), '%% overview\nflowchart TD\n  A-->B',
+      customResponse, orchestrator,
+    ]);
+
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [advisoryAgent] },
+      { llm },
+    );
+
+    const todo = result.findings.find((f) => f.title === 'New TODO comment added');
+    expect(todo).toBeDefined();
+    expect(todo!.verification).toBeUndefined();
+  });
+
+  it('#510 — a repo-level agent with no enforcement field is treated as advisory', async () => {
+    // Back-compat: `.mergewatch.yml` customAgents cannot block and carry no
+    // enforcement, so absent must never mean "verify".
+    const repoAgent = { name: 'house-rule', prompt: 'Flag X', severityDefault: 'critical' as const, enabled: true };
+    const customResponse = validFindingsJson([
+      { file: 'foo.ts', line: 3, severity: 'critical', title: 'House rule broken', confidence: 95 },
+    ]);
+    const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+    const llm = createMockLLM([
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
+      JSON.stringify({ summary: 'Adds code.' }), '%% overview\nflowchart TD\n  A-->B',
+      customResponse, orchestrator,
+    ]);
+
+    const result = await runReviewPipeline(
+      { diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light', maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [repoAgent] },
+      { llm },
+    );
+
+    const f = result.findings.find((x) => x.title === 'House rule broken');
+    expect(f).toBeDefined();
+    expect(f!.verification).toBeUndefined();
+  });
+
   it('#385 — a custom-agent finding at a location already surfaced by a kept builtin finding is skipped', async () => {
     const todoAgent = { name: 'no-todo', prompt: 'Flag any new TODO comment', severityDefault: 'warning' as const, enabled: true };
     const securityFinding = validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'warning', title: 'Builtin issue', confidence: 90 }]);
