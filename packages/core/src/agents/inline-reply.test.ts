@@ -471,6 +471,83 @@ describe('handleInlineReply', () => {
     expect(llm.calls).toHaveLength(0);
   });
 
+  // #544 — the marker check resolves via `inlineMarker(ctx.stage)`, and an
+  // ABSENT stage is prod (stage.ts:51). The Lambda and self-hosted handlers both
+  // omitted `stage`, so a dev App looked for the prod marker, failed to
+  // recognise a thread it had written itself, and silently discarded the reply.
+  // Verified in production: with the permission granted and everything else
+  // working, a dev-stage reply still returned `skipped`.
+  describe('#544 — stage-scoped thread ownership', () => {
+    const devThread = [
+      { id: 100, body: '<!-- mergewatch-inline:dev -->\nMissing try/catch around this call.', user: { login: 'mergewatch-ai-dev[bot]', type: 'Bot' as const }, created_at: '2026-04-01T00:00:00Z' },
+      { id: 101, body: 'resolved', user: { login: 'santthosh', type: 'User' as const }, in_reply_to_id: 100, created_at: '2026-04-01T01:00:00Z' },
+    ];
+
+    it('a dev-stage handler recognises a dev-stage thread root', async () => {
+      const { octokit } = makeOctokitMock(devThread);
+      const llm = makeLLM('unused');
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101, stage: 'dev' },
+        { octokit, llm, lightModelId: 'light' },
+      );
+      expect(result.action).not.toBe('skipped');
+    });
+
+    it('a PROD-stage handler does NOT claim a dev-stage thread', async () => {
+      // The other half of the guarantee. Passing a stage must not become "any
+      // MergeWatch marker will do" — the two Apps run on the same PRs and must
+      // never answer in each other's threads (cf. #418).
+      const { octokit } = makeOctokitMock(devThread);
+      const llm = makeLLM('unused');
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101, stage: 'prod' },
+        { octokit, llm, lightModelId: 'light' },
+      );
+      expect(result.action).toBe('skipped');
+      expect(result.reason).toMatch(/not a MergeWatch comment/);
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('a dev-stage handler does NOT claim a prod-stage thread', async () => {
+      const { octokit } = makeOctokitMock(baseComments);
+      const llm = makeLLM('unused');
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101, stage: 'dev' },
+        { octokit, llm, lightModelId: 'light' },
+      );
+      expect(result.action).toBe('skipped');
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('an absent stage still means prod, so existing callers are unaffected', async () => {
+      // The documented contract of the field. This is what made the omission
+      // look harmless: absent is a VALID configuration for prod and self-hosted,
+      // so nothing about the call site read as wrong.
+      const { octokit } = makeOctokitMock(baseComments);
+      const llm = makeLLM('unused');
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+        { octokit, llm, lightModelId: 'light' },
+      );
+      expect(result.action).not.toBe('skipped');
+    });
+
+    it('every skip carries a reason for the caller to log (#544)', async () => {
+      // The reason was always computed and always discarded by both runtimes.
+      // Asserting it exists here keeps the log fix honest at the source.
+      const { octokit } = makeOctokitMock([
+        { id: 100, body: 'human top comment', user: { login: 'alice', type: 'User' as const } },
+        { id: 101, body: 'reply', user: { login: 'bob', type: 'User' as const }, in_reply_to_id: 100 },
+      ]);
+      const result = await handleInlineReply(
+        { owner: 'o', repo: 'r', prNumber: 1, replyCommentId: 101 },
+        { octokit, llm: makeLLM('unused'), lightModelId: 'light' },
+      );
+      expect(result.action).toBe('skipped');
+      expect(result.reason).toBeTruthy();
+    });
+  });
+
   it('skips when the thread root is a third-party bot (CopilotAI, dependabot, etc.)', async () => {
     // Root is bot-authored but lacks the MergeWatch inline marker — exactly
     // the CopilotAI-thread scenario we want to ignore so MergeWatch doesn't

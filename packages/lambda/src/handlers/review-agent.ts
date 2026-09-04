@@ -264,6 +264,12 @@ async function handleInlineReplyMode(
         prNumber,
         replyCommentId: inlineReplyCommentId,
         conventions: conventionsResult?.content,
+        // #544 — WITHOUT this the marker check falls back to prod (an absent
+        // stage IS prod, by stage.ts:51), so a non-prod App looks for the prod
+        // marker, fails to recognise a thread it wrote itself, and silently
+        // discards the reply. Every other STAGE-scoped call site in this file
+        // was wired by #416; this one was missed.
+        stage: STAGE,
       },
       {
         octokit,
@@ -358,8 +364,12 @@ async function handleInlineReplyMode(
     }
 
     console.log(
-      'Inline reply %s for %s#%d (reply=%d, cost=$%s)',
+      // #544 — `reason` was computed on every skip and then thrown away, so
+      // the log could not distinguish "not our thread" from "already answered".
+      // That is the whole reason this took a hand-driven fixture to find.
+      'Inline reply %s%s for %s#%d (reply=%d, cost=$%s)',
       result.action,
+      result.reason ? ` (${result.reason})` : '',
       repoFullName,
       prNumber,
       inlineReplyCommentId,

@@ -187,6 +187,10 @@ async function handleInlineReplyJob(
         prNumber,
         replyCommentId: inlineReplyCommentId,
         conventions: conventionsResult?.content,
+        // #544 — see the Lambda handler. A self-hosted deployment that sets
+        // STAGE to anything other than prod would otherwise ignore every
+        // threaded reply its users write.
+        stage: STAGE,
       },
       {
         octokit,
@@ -284,8 +288,9 @@ async function handleInlineReplyJob(
     }
 
     console.log(
-      'Inline reply %s for %s#%d (reply=%d, cost=$%s)',
+      'Inline reply %s%s for %s#%d (reply=%d, cost=$%s)',
       result.action,
+      result.reason ? ` (${result.reason})` : '',
       repoFullName,
       prNumber,
       inlineReplyCommentId,
