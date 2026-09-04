@@ -571,6 +571,7 @@ async function handleCheckSuiteEvent(event: CheckSuiteEvent): Promise<void> {
     prNumber: prRef.number,
     headSha,
     trigger: 'check_suite rerequested',
+    octokit,
   });
 }
 
@@ -587,12 +588,20 @@ async function enqueueRereview(args: {
   prNumber: number;
   headSha: string;
   trigger: string;
+  /**
+   * An already-resolved client, when the caller needed one anyway. The
+   * check_suite path resolves one for its ownership check; re-resolving here
+   * would be a second token exchange for the same installation, and a second
+   * place for that exchange to fail after the ownership check already passed.
+   * Absent on the check_run path, which has no prior call.
+   */
+  octokit?: Awaited<ReturnType<typeof authProvider.getInstallationOctokit>>;
 }): Promise<void> {
   const { installationId, repository, prNumber, headSha, trigger } = args;
   const owner = repository.owner.login;
   const repo = repository.name;
 
-  const octokit = await authProvider.getInstallationOctokit(installationId);
+  const octokit = args.octokit ?? (await authProvider.getInstallationOctokit(installationId));
 
   // Classification: refetch the PR so we get a full object + labels for
   // agentReview detection, mirroring the pull_request.synchronize path.

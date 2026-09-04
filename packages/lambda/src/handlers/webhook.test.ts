@@ -643,6 +643,16 @@ describe('handler — check_suite.rerequested (#558)', () => {
     expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
+  it('resolves the installation client once, not once per step', async () => {
+    // Review finding on #562: the ownership check and the enqueue each resolved
+    // their own client, so every Re-run cost two token exchanges for the same
+    // installation — and gave the second one a chance to fail after ownership
+    // had already passed.
+    await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    expect(mockGetInstallationOctokit).toHaveBeenCalledTimes(1);
+  });
+
   it('one suite event yields exactly one job, however many checks it holds', async () => {
     // The fan-out worry resolves by construction: the suite is one event.
     mockGetInstallationOctokit.mockResolvedValue(
