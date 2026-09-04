@@ -63,6 +63,27 @@ describe('docker-publish — only a release ships images', () => {
 });
 
 describe('release gate — the release actually ships images', () => {
+  // v0.6.1: the gate tagged, created the release, then failed dispatching
+  // docker-publish with
+  //   HTTP 403: Resource not accessible by integration
+  //     .../actions/workflows/<id>/dispatches
+  // because the workflow declared only `contents: write`. Dispatching a
+  // workflow is an ACTIONS API write, and GITHUB_TOKEN grants exactly what the
+  // permissions block lists — so the release shipped with no images and a human
+  // had to publish them by hand.
+  //
+  // Asserted here rather than in the dispatch step because the failure is a
+  // property of the workflow's declared permissions, which nothing else checks.
+  it('grants actions: write, without which the dispatch 403s', () => {
+    const perms = gate.permissions ?? {};
+    expect(perms['actions']).toBe('write');
+  });
+
+  it('still grants contents: write for tagging and the release', () => {
+    // Guard against "fixing" the above by replacing rather than adding.
+    expect((gate.permissions ?? {})['contents']).toBe('write');
+  });
+
   const publish = () =>
     gate.jobs.release.steps.find((s: any) => s.name === 'Publish the images');
 
