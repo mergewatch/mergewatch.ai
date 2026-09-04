@@ -71,7 +71,7 @@ Pre-built images are published to GHCR on pushes to `main` that change relevant 
 
 ### Environment variables
 
-Create a [GitHub App](https://github.com/settings/apps/new) first (permissions: `pull_requests` rw, `contents` r, `checks` rw, `issues` rw; events: `pull_request`, `issue_comment`, `installation`).
+Create a [GitHub App](https://github.com/settings/apps/new) first (permissions: `pull_requests` rw, `contents` rw, `checks` rw, `issues` rw; events: `pull_request`, `issue_comment`, `pull_request_review_comment`, `installation`). See [docs/permissions.md](docs/permissions.md) for what each one is used for — `contents` needs **write** only to resolve review threads, which is a GitHub requirement rather than a design choice, and `pull_request_review_comment` is what makes threaded replies work.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
