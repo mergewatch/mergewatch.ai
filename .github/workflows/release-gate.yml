@@ -53,6 +53,12 @@ on:
 
 permissions:
   contents: write
+  # `actions: write` is what lets the release job DISPATCH docker-publish.
+  # Without it the dispatch fails 403 "Resource not accessible by integration"
+  # and the release exists with no images — which is exactly what v0.6.1 did.
+  # It is not covered by `contents: write`: dispatching a workflow is an Actions
+  # API write, and GITHUB_TOKEN grants only what is declared here.
+  actions: write
 
 jobs:
   suite:
