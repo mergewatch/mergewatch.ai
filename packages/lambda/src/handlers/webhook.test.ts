@@ -74,7 +74,7 @@ vi.mock('../github-auth-ssm.js', () => ({
 
 import { verifySignature, parseReviewMode, shouldHandleReviewCommentEvent, isMergeWatchCheckRun, handler } from './webhook.js';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME } from '@mergewatch/core';
-import type { PullRequestReviewCommentEvent, PullRequestEvent, CheckRunEvent } from '@mergewatch/core';
+import type { PullRequestReviewCommentEvent, PullRequestEvent, CheckRunEvent, CheckSuiteEvent } from '@mergewatch/core';
 
 // ---------------------------------------------------------------------------
 // verifySignature
@@ -508,6 +508,148 @@ describe('isMergeWatchCheckRun', () => {
     const event = makeCheckRunEvent();
     (event.check_run as unknown as { name: undefined }).name = undefined;
     expect(isMergeWatchCheckRun(event)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #558 — check_suite.rerequested dispatch
+//
+// The "Re-run" button fires check_suite.rerequested, not check_run.rerequested.
+// The webhook handled only the latter, so the event hit the dispatch switch's
+// default branch and the button silently did nothing — in production, for every
+// user. handleCheckRunEvent was correct throughout; it was never reached.
+// ---------------------------------------------------------------------------
+
+function makeCheckSuiteEvent(overrides: {
+  action?: CheckSuiteEvent['action'];
+  pullRequests?: CheckSuiteEvent['check_suite']['pull_requests'];
+  installation?: CheckSuiteEvent['installation'];
+} = {}): CheckSuiteEvent {
+  const base = makeCheckRunEvent();
+  return {
+    action: overrides.action ?? 'rerequested',
+    check_suite: {
+      id: 7001,
+      head_sha: 'abc123',
+      status: 'completed',
+      conclusion: 'failure',
+      app: { id: 42, slug: 'mergewatch-ai', name: 'MergeWatch' },
+      pull_requests: overrides.pullRequests ?? base.check_run.pull_requests,
+    },
+    repository: base.repository,
+    installation: 'installation' in overrides ? overrides.installation : { id: 999 },
+    sender: base.sender,
+  };
+}
+
+function makeCheckSuiteApiEvent(body: string) {
+  return {
+    body,
+    headers: {
+      'x-hub-signature-256': signBody(body),
+      'x-github-event': 'check_suite',
+    },
+  } as any;
+}
+
+/** Octokit whose listForRef reports the check runs present on the head SHA. */
+function octokitWithChecks(names: string[]) {
+  return {
+    pulls: {
+      get: vi.fn().mockResolvedValue({
+        data: { draft: false, labels: [{ name: 'needs-review' }], changed_files: 3 },
+      }),
+    },
+    checks: {
+      listForRef: vi.fn().mockResolvedValue({
+        data: { check_runs: names.map((name) => ({ name })) },
+      }),
+    },
+  };
+}
+
+describe('handler — check_suite.rerequested (#558)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetInstallationOctokit.mockResolvedValue(octokitWithChecks([MERGEWATCH_CHECK_RUN_NAME]));
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    mockFindExistingBotComment.mockResolvedValue(555);
+  });
+
+  it('enqueues a review job — the button now does something', async () => {
+    const body = JSON.stringify(makeCheckSuiteEvent());
+    const res = await handler(makeCheckSuiteApiEvent(body));
+
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(
+      (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input.Payload.toString(),
+    );
+    expect(payload.prNumber).toBe(42);
+    expect(payload.mode).toBe('review');
+    expect(payload.headSha).toBe('abc123');
+    expect(payload.existingCommentId).toBe(555);
+  });
+
+  it('ignores a suite that is not ours', async () => {
+    // A suite has no `name`, so isMergeWatchCheckRun's rule cannot be applied to
+    // the payload. It is applied one level down instead: our stage's check run
+    // must exist on the suite's head.
+    mockGetInstallationOctokit.mockResolvedValue(octokitWithChecks(['CodeQL', 'Build & Test']));
+    const body = JSON.stringify(makeCheckSuiteEvent());
+    const res = await handler(makeCheckSuiteApiEvent(body));
+
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('fails CLOSED when the ownership check errors', async () => {
+    // A missed re-run is recoverable by pushing a commit. Reviewing another
+    // tool's suite spends real money on work nobody asked for.
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn() },
+      checks: { listForRef: vi.fn().mockRejectedValue(new Error('503')) },
+    });
+    const res = await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-rerequested actions', async () => {
+    // `requested` fires on every push and would double every review.
+    for (const action of ['requested', 'completed'] as const) {
+      vi.clearAllMocks();
+      mockGetInstallationOctokit.mockResolvedValue(octokitWithChecks([MERGEWATCH_CHECK_RUN_NAME]));
+      await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent({ action }))));
+      expect(mockEnqueue, action).not.toHaveBeenCalled();
+    }
+  });
+
+  it('ignores a suite with no attached PR', async () => {
+    const res = await handler(
+      makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent({ pullRequests: [] }))),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('ignores an event with no installation id', async () => {
+    const res = await handler(
+      makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent({ installation: undefined }))),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('one suite event yields exactly one job, however many checks it holds', async () => {
+    // The fan-out worry resolves by construction: the suite is one event.
+    mockGetInstallationOctokit.mockResolvedValue(
+      octokitWithChecks([MERGEWATCH_CHECK_RUN_NAME, 'CodeQL', 'Build & Test']),
+    );
+    await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -281,6 +281,30 @@ export interface CheckRunEvent {
   sender: GitHubUser;
 }
 
+/**
+ * `check_suite` — what GitHub actually fires for the "Re-run" button.
+ *
+ * #558: the webhook handled `check_run.rerequested` and GitHub sends
+ * `check_suite.rerequested`, so the button silently did nothing in production
+ * for every user. A suite has no `name`, which is why ownership cannot be
+ * decided the way `isMergeWatchCheckRun` decides it.
+ */
+export interface CheckSuiteEvent {
+  action: "completed" | "requested" | "rerequested";
+  check_suite: {
+    id: number;
+    head_sha: string;
+    status: string | null;
+    conclusion: string | null;
+    /** The App the suite belongs to. Present, but see #558 on why it is not the identity check. */
+    app?: { id: number; slug: string; name: string };
+    pull_requests: CheckRunPullRequestRef[];
+  };
+  repository: GitHubRepository;
+  installation?: { id: number };
+  sender: GitHubUser;
+}
+
 // ---------------------------------------------------------------------------
 // Discriminated union for routing
 // ---------------------------------------------------------------------------
