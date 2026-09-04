@@ -292,6 +292,7 @@ export type {
   MarketplacePurchaseEvent,
   MarketplacePurchase,
   CheckRunEvent,
+  CheckSuiteEvent,
   CheckRunPullRequestRef,
   WebhookEvent,
   ReviewMode,

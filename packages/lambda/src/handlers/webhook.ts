@@ -43,6 +43,7 @@ import type {
   ReviewMode,
   ReviewJobPayload,
   AgentReviewConfig,
+  CheckSuiteEvent,
 } from '@mergewatch/core';
 import {
   DynamoPRLifecycleStore, DEFAULT_PR_LIFECYCLE_TABLE,
@@ -499,15 +500,108 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     return;
   }
 
+  await enqueueRereview({
+    installationId,
+    repository: event.repository,
+    prNumber: prRef.number,
+    // The event already names the commit the check ran on, so the config ref
+    // does not depend on the PR lookup succeeding.
+    headSha: event.check_run.head_sha,
+    trigger: 'check_run rerequested',
+  });
+}
+
+/**
+ * #558 — the "Re-run" button in GitHub's Checks UI fires
+ * `check_suite.rerequested`, NOT `check_run.rerequested`. The webhook only
+ * handled the latter, so the event fell through to the dispatch switch's
+ * default branch and the button silently did nothing — in production, for
+ * every user, on every PR. `handleCheckRunEvent` was complete and correct the
+ * whole time; it was simply never reached.
+ *
+ * `check_run.rerequested` is kept: GitHub sends it when a SINGLE check run is
+ * re-run, which is a different affordance with a different payload shape.
+ */
+async function handleCheckSuiteEvent(event: CheckSuiteEvent): Promise<void> {
+  if (event.action !== 'rerequested') return;
+
+  const installationId = event.installation?.id;
+  if (!installationId) {
+    console.warn('check_suite event missing installation ID — skipping');
+    return;
+  }
+
+  const prRef = event.check_suite.pull_requests?.[0];
+  if (!prRef) {
+    // A suite on a commit with no PR (a branch push). Nothing to review.
+    console.warn(
+      `check_suite rerequested with no attached PR on ${event.repository.full_name} @ ${event.check_suite.head_sha}`,
+    );
+    return;
+  }
+
   const owner = event.repository.owner.login;
   const repo = event.repository.name;
-  const prNumber = prRef.number;
+  const headSha = event.check_suite.head_sha;
 
+  // A suite carries no `name`, so `isMergeWatchCheckRun`'s identity rule cannot
+  // be applied to the payload. Apply the SAME rule one level down instead: our
+  // stage's check run must exist on the suite's head. That keeps a rename from
+  // breaking it (unlike app.id), keeps dev from acting on prod's suite, and
+  // costs one call on an event that only fires when a human clicks a button.
   const octokit = await authProvider.getInstallationOctokit(installationId);
+  const isOurs = await octokit.checks
+    .listForRef({ owner, repo, ref: headSha, per_page: 100 })
+    .then(({ data }) => data.check_runs.some((c) => c.name === checkRunName(STAGE)))
+    .catch((err) => {
+      // Fail closed: an unverifiable suite is not re-reviewed. A missed
+      // re-run is recoverable by pushing a commit; reviewing another tool's
+      // suite spends real money on work nobody asked for.
+      console.warn(
+        `check_suite ownership check failed for ${owner}/${repo}@${headSha} — not re-reviewing:`,
+        err,
+      );
+      return false;
+    });
+  if (!isOurs) return;
 
-  // The check_run event already names the commit the check ran on, so the
-  // config ref does not depend on the PR lookup succeeding.
-  const headSha = event.check_run.head_sha;
+  await enqueueRereview({
+    installationId,
+    repository: event.repository,
+    prNumber: prRef.number,
+    headSha,
+    trigger: 'check_suite rerequested',
+    octokit,
+  });
+}
+
+/**
+ * Shared tail for both re-run entry points (#558).
+ *
+ * Extracted rather than duplicated: `check_run` and `check_suite` must produce
+ * an identical review job, and two copies of the classification + comment
+ * lookup would drift the first time one of them was touched.
+ */
+async function enqueueRereview(args: {
+  installationId: number;
+  repository: CheckRunEvent['repository'];
+  prNumber: number;
+  headSha: string;
+  trigger: string;
+  /**
+   * An already-resolved client, when the caller needed one anyway. The
+   * check_suite path resolves one for its ownership check; re-resolving here
+   * would be a second token exchange for the same installation, and a second
+   * place for that exchange to fail after the ownership check already passed.
+   * Absent on the check_run path, which has no prior call.
+   */
+  octokit?: Awaited<ReturnType<typeof authProvider.getInstallationOctokit>>;
+}): Promise<void> {
+  const { installationId, repository, prNumber, headSha, trigger } = args;
+  const owner = repository.owner.login;
+  const repo = repository.name;
+
+  const octokit = args.octokit ?? (await authProvider.getInstallationOctokit(installationId));
 
   // Classification: refetch the PR so we get a full object + labels for
   // agentReview detection, mirroring the pull_request.synchronize path.
@@ -519,7 +613,7 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     .then(({ data }) => data)
     .catch((err) => {
       console.warn(
-        'Failed to fetch PR for check_run rerequest — enqueuing without labels/classification:',
+        `Failed to fetch PR for ${trigger} — enqueuing without labels/classification:`,
         `${owner}/${repo}#${prNumber}`,
         err,
       );
@@ -550,11 +644,11 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
     source: classification.source,
     agentKind: classification.agentKind,
     headSha,
-    ...ossRepoFields(event.repository),
+    ...ossRepoFields(repository),
   });
 
   console.log(
-    `Enqueued review job from check_run rerequested: ${owner}/${repo}#${prNumber} (existingComment=${existingCommentId ?? 'none'})`,
+    `Enqueued review job from ${trigger}: ${owner}/${repo}#${prNumber} (existingComment=${existingCommentId ?? 'none'})`,
   );
 }
 
@@ -740,6 +834,10 @@ export async function handler(
 
       case "check_run":
         await handleCheckRunEvent(payload as CheckRunEvent);
+        break;
+
+      case "check_suite":
+        await handleCheckSuiteEvent(payload as CheckSuiteEvent);
         break;
 
       case "installation":
