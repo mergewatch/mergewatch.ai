@@ -2,6 +2,8 @@
 export type { ILLMProvider, TokenUsage, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult } from './llm/types.js';
 export type { PromptSegment, PromptStability, PromptInput } from './llm/prompt-segment.js';
 export { renderPrompt, findVolatilityInversion, assertNonDecreasingVolatility, mostVolatile } from './llm/prompt-segment.js';
+export { toCacheableBlocks, hasCacheableBoundary, MAX_CACHE_BREAKPOINTS } from './llm/cache-blocks.js';
+export type { AnthropicContentBlock } from './llm/cache-blocks.js';
 export { normalizeLLMResult, StructuredOutputUnsupportedError } from './llm/types.js';
 export { TokenAccumulator, TrackingLLMProvider } from './llm/token-accumulator.js';
 export { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './llm/pricing.js';

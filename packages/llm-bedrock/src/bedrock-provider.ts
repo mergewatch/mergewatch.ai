@@ -17,7 +17,7 @@ import {
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, TokenUsage, PromptInput} from '@mergewatch/core';
-import { StructuredOutputUnsupportedError, renderPrompt} from '@mergewatch/core';
+import { StructuredOutputUnsupportedError, renderPrompt, toCacheableBlocks, hasCacheableBoundary } from '@mergewatch/core';
 
 // ─── Supported model IDs ───────────────────────────────────────────────────
 export const SUPPORTED_MODELS = {
@@ -81,10 +81,16 @@ function buildAnthropicBody(
   sampling: LLMSamplingConfig,
   modelId: string,
 ): ModelRequestBody {
+  // #490 — segments with more than one stability level become content blocks
+  // with cache_control at the boundaries; anything else stays the plain string
+  // it was, so a caller passing a string sees byte-identical behaviour.
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
-    messages: [{ role: 'user', content: renderPrompt(prompt) }],
+    messages: [{
+      role: 'user',
+      content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
+    }],
   };
   if (acceptsSamplingParams(modelId)) {
     body.temperature = sampling.temperature ?? 0;
