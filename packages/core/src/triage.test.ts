@@ -1,3 +1,4 @@
+import { renderPrompt } from './llm/prompt-segment.js';
 import { describe, it, expect } from 'vitest';
 import type { ILLMProvider } from './llm/types.js';
 import {
@@ -17,7 +18,7 @@ function recordingLLM(response: string) {
   const prompts: string[] = [];
   const llm: ILLMProvider = {
     async invoke(_modelId, prompt) {
-      prompts.push(prompt);
+      prompts.push(renderPrompt(prompt));
       return response;
     },
   };

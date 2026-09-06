@@ -1,3 +1,4 @@
+import type { PromptInput } from './prompt-segment.js';
 /**
  * Token usage accumulator and tracking LLM provider wrapper.
  *
@@ -89,7 +90,7 @@ export class TrackingLLMProvider implements ILLMProvider {
   // default instead.
   async invoke(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     maxTokens?: number,
     sampling?: LLMSamplingConfig,
   ): Promise<LLMInvokeResult> {
@@ -108,7 +109,7 @@ export class TrackingLLMProvider implements ILLMProvider {
   // fallback costs nothing) when the inner provider has no invokeStructured.
   async invokeStructured(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens?: number,
     sampling?: LLMSamplingConfig,

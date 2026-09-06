@@ -16,8 +16,8 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, TokenUsage } from '@mergewatch/core';
-import { StructuredOutputUnsupportedError } from '@mergewatch/core';
+import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, TokenUsage, PromptInput} from '@mergewatch/core';
+import { StructuredOutputUnsupportedError, renderPrompt} from '@mergewatch/core';
 
 // ─── Supported model IDs ───────────────────────────────────────────────────
 export const SUPPORTED_MODELS = {
@@ -76,7 +76,7 @@ export function acceptsSamplingParams(modelId: string): boolean {
 }
 
 function buildAnthropicBody(
-  prompt: string,
+  prompt: PromptInput,
   maxTokens: number,
   sampling: LLMSamplingConfig,
   modelId: string,
@@ -84,7 +84,7 @@ function buildAnthropicBody(
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: renderPrompt(prompt) }],
   };
   if (acceptsSamplingParams(modelId)) {
     body.temperature = sampling.temperature ?? 0;
@@ -103,7 +103,7 @@ function buildAnthropicBody(
  * `emit_result` and the API constrains its input against the JSON Schema.
  */
 function buildAnthropicStructuredBody(
-  prompt: string,
+  prompt: PromptInput,
   schema: object,
   maxTokens: number,
   sampling: LLMSamplingConfig,
@@ -112,7 +112,7 @@ function buildAnthropicStructuredBody(
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: renderPrompt(prompt) }],
     tools: [{
       name: 'emit_result',
       description: 'Emit the structured result of your analysis.',
@@ -133,13 +133,13 @@ function buildAnthropicStructuredBody(
 }
 
 function buildTitanBody(
-  prompt: string,
+  prompt: PromptInput,
   maxTokens: number,
   sampling: LLMSamplingConfig,
 ): ModelRequestBody {
   return {
     body: JSON.stringify({
-      inputText: prompt,
+      inputText: renderPrompt(prompt),
       textGenerationConfig: {
         maxTokenCount: maxTokens,
         temperature: sampling.temperature ?? 0,
@@ -161,7 +161,7 @@ function isTitanModel(modelId: string): boolean {
 
 function buildRequestBody(
   modelId: string,
-  prompt: string,
+  prompt: PromptInput,
   maxTokens: number,
   sampling: LLMSamplingConfig,
 ): ModelRequestBody {
@@ -231,7 +231,7 @@ export class BedrockLLMProvider implements ILLMProvider {
 
   async invoke(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
   ): Promise<LLMInvokeResult> {
@@ -256,7 +256,7 @@ export class BedrockLLMProvider implements ILLMProvider {
   // text fallback costs nothing.
   async invokeStructured(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
