@@ -39,11 +39,21 @@ export const AGENT_MODE_PLACEHOLDER = '{{AGENT_MODE}}';
 export const AGENT_MODE_SUFFIX = `This diff is agent-authored. Be extra suspicious of: (1) hallucinated or non-existent imports/APIs; (2) tests that pass without meaningful assertions; (3) unused code, dead branches, or over-abstraction; (4) references to deprecated or stale patterns the repo has moved past. Do not lower your bar for these categories just because the code looks plausible.`;
 
 // ─── Shared preamble inserted into every agent prompt ──────────────────────
-const SHARED_PREAMBLE = `You are a senior software engineer performing an automated code review.
-${TONE_PLACEHOLDER}
-${CONVENTIONS_PLACEHOLDER}
-${AGENT_MODE_PLACEHOLDER}
-Rules:
+/**
+ * #564 — the preamble split at its stability boundaries.
+ *
+ * It used to be one string with the tone / conventions / agent-mode
+ * placeholders sitting in the MIDDLE, which meant the long block of static
+ * rules below them could never be part of a stable cache prefix: everything
+ * after a per-repo substitution is per-repo.
+ *
+ * `PREAMBLE_OPENING` and `PREAMBLE_RULES` are byte-for-byte what surrounded
+ * the placeholders before. They are identical across all six agents, which is
+ * what lets one cache write serve every one of them.
+ */
+export const PREAMBLE_OPENING = `You are a senior software engineer performing an automated code review.`;
+
+export const PREAMBLE_RULES = `Rules:
 - Be concise and high-signal. Do NOT nitpick formatting, whitespace, or trivial naming.
 - Only report issues you are confident about.
 - Before reporting an issue, re-read the surrounding code in the diff carefully. If a guard, null check, validation, or mitigation already exists nearby that addresses the concern, do NOT report the issue.
@@ -68,6 +78,20 @@ Verify before reporting:
 Layering & responsibility (W11):
 - A LIBRARY / DATA-ACCESS function that correctly THROWS on an error is NOT a bug for "not handling" errors that belong to the caller. Error handling for a low-level function call belongs at the boundary that decides what to do on failure — usually the orchestrator / request handler / service entry-point — not inside the data-access function itself. Do not flag "missing try/catch around DB query" / "should swallow / log the error here" on a function whose contract is "throw on failure." Flag the actual gap (an UNHANDLED call site) instead, if one exists.
 - Respect the PR description's stated SCOPE. If the description says a concern is "out of scope", "deferred to TX/the next PR", "tracked elsewhere", "follow-up issue: …", or "intentionally not addressed in this PR" — and the diff does not introduce or worsen that concern — do NOT raise it as a new finding on this PR. Treat the description as authoritative for what this PR is and isn't trying to do.`;
+
+/**
+ * The original interleaved preamble, reassembled from the parts above.
+ *
+ * Retained because the ORCHESTRATOR and SUMMARY prompts are single-call — they
+ * gain nothing from a shared prefix and reordering them would change their
+ * behaviour for no benefit. The six finding-producing agents compose the parts
+ * directly instead (see `buildPrompt`).
+ */
+export const SHARED_PREAMBLE = `${PREAMBLE_OPENING}
+${TONE_PLACEHOLDER}
+${CONVENTIONS_PLACEHOLDER}
+${AGENT_MODE_PLACEHOLDER}
+${PREAMBLE_RULES}`;
 
 // ─── Security agent ────────────────────────────────────────────────────────
 export const SECURITY_REVIEWER_PROMPT = `${SHARED_PREAMBLE}
