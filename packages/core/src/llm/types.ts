@@ -1,3 +1,4 @@
+import type { PromptInput } from './prompt-segment.js';
 /**
  * Provider-agnostic LLM interface.
  *
@@ -74,7 +75,14 @@ export class StructuredOutputUnsupportedError extends Error {
 export interface ILLMProvider {
   invoke(
     modelId: string,
-    prompt: string,
+    /**
+     * #489 — a string, or ordered segments carrying stability labels. The
+     * union lets this phase migrate the three prompt builders without
+     * converting all 26 call sites at once: an unmigrated caller keeps passing
+     * a string and behaves exactly as before. Providers render with
+     * `renderPrompt`.
+     */
+    prompt: PromptInput,
     maxTokens?: number,
     sampling?: LLMSamplingConfig,
   ): Promise<string | LLMInvokeResult>;
@@ -88,7 +96,7 @@ export interface ILLMProvider {
    */
   invokeStructured?(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens?: number,
     sampling?: LLMSamplingConfig,

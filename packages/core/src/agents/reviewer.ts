@@ -13,6 +13,7 @@
 import type { ILLMProvider } from '../llm/types.js';
 import { normalizeLLMResult, StructuredOutputUnsupportedError } from '../llm/types.js';
 import { TokenAccumulator, TrackingLLMProvider } from '../llm/token-accumulator.js';
+import type { PromptSegment, PromptInput } from '../llm/prompt-segment.js';
 import { isThrottleError } from '../llm/throttle.js';
 import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
 import {
@@ -191,7 +192,7 @@ function buildAgentModeBlock(agentAuthored: boolean | undefined): string {
  * and optional PR context. When agentic file fetching is enabled, injects
  * the FILE_REQUEST_INSTRUCTION via the FILE_REQUEST_PLACEHOLDER in prompts.
  */
-function buildPrompt(
+export function buildPrompt(
   systemPrompt: string,
   diff: string,
   context: ReviewContext,
@@ -199,7 +200,7 @@ function buildPrompt(
   tone?: UXConfig['tone'],
   conventions?: string,
   agentAuthored?: boolean,
-): string {
+): PromptSegment[] {
   // Inject tone directive or strip placeholder
   const toneDirective = tone ? (TONE_DIRECTIVES[tone] ?? '') : '';
   const tonedPrompt = systemPrompt.replace(TONE_PLACEHOLDER, toneDirective);
@@ -215,8 +216,12 @@ function buildPrompt(
     ? withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', FILE_REQUEST_INSTRUCTION)
     : withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', '');
 
+  // #489 — the `Current date:` line that used to head this block is gone.
+  // It invalidated any prompt cache once a day and would have invalidated an
+  // entire cassette corpus every midnight, for temporal context the review
+  // does not use: the diff and the PR context carry what the model reasons
+  // about. (#488 open question 3, decided: delete.)
   const contextBlock = [
-    `Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
     `Repository: ${context.owner}/${context.repo}`,
     `PR #${context.prNumber}`,
     context.prTitle ? `Title: ${context.prTitle}` : '',
@@ -228,7 +233,26 @@ function buildPrompt(
   // #372 — every agent gets the intent-claims directive: in-code claims of
   // intentionality never suppress a finding; only sanctioned channels
   // (conventions, exclude patterns, /resolve memory) carry that authority.
-  return `${resolvedPrompt}\n\n${INTENT_CLAIMS_DIRECTIVE}\n\n--- PR Context ---\n${contextBlock}\n\n--- Diff ---\n${diff}`;
+  //
+  // #489 — returned as segments rather than one string. The split is
+  // deliberately COARSE and the labels conservative: `head` is `per-pr`
+  // because the agent-mode block it contains varies per PR, even though the
+  // template and the intent-claims directive inside it are static.
+  //
+  // Splitting them apart would put a `static` segment after a `per-pr` one —
+  // the volatility inversion the lint rejects, and the very thing #564 exists
+  // to fix by reordering. Until that lands, merging them and labelling the
+  // result honestly is correct: claiming a segment is stable when the text
+  // around it is not would produce a cache prefix that never hits, with
+  // nothing to say why.
+  //
+  // Segments carry their own leading whitespace so rendering is pure
+  // concatenation — byte-identical to the string this replaced.
+  return [
+    { id: 'head', stability: 'per-pr', text: `${resolvedPrompt}\n\n${INTENT_CLAIMS_DIRECTIVE}` },
+    { id: 'pr-context', stability: 'per-pr', text: `\n\n--- PR Context ---\n${contextBlock}` },
+    { id: 'diff', stability: 'per-pr', text: `\n\n--- Diff ---\n${diff}` },
+  ];
 }
 
 /**
@@ -478,7 +502,7 @@ export function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentF
 async function invokeAgentText(
   llm: ILLMProvider,
   modelId: string,
-  prompt: string,
+  prompt: PromptInput,
   fileFetchOptions?: FileFetchOptions,
 ): Promise<string> {
   if (fileFetchOptions) {
@@ -522,7 +546,7 @@ function structuredAsText(llm: ILLMProvider, schema: object): ILLMProvider {
 async function invokeAgent(
   llm: ILLMProvider,
   modelId: string,
-  prompt: string,
+  prompt: PromptInput,
   fileFetchOptions?: FileFetchOptions,
   schema?: object,
 ): Promise<string> {

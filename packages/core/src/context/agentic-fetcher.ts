@@ -1,3 +1,4 @@
+import type { PromptInput } from '../llm/prompt-segment.js';
 /**
  * Agentic file fetching — lets LLM agents request files they need.
  *
@@ -112,12 +113,12 @@ function parseFileRequest(response: string): string[] | null {
 export async function invokeWithFileFetching(
   llm: ILLMProvider,
   modelId: string,
-  basePrompt: string,
+  basePrompt: PromptInput,
   fetchOptions: FileFetchOptions,
   maxTokens?: number,
 ): Promise<AgenticInvokeResult> {
   const allFetchedFiles: Record<string, string> = {};
-  let currentPrompt = basePrompt;
+  let currentPrompt: PromptInput = basePrompt;
   let roundsUsed = 0;
 
   for (let round = 0; round < fetchOptions.maxRounds; round++) {
@@ -196,9 +197,17 @@ export async function invokeWithFileFetching(
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join('\n\n');
 
-    currentPrompt = basePrompt
-      + `\n\n--- Related Files ---\nThe following files were fetched at your request. Use them for context:\n\n${filesSection}`
+    // #489 — fetched files are the textbook `per-call` segment: they differ
+    // every round and every finding. Appending them as their own segment
+    // rather than concatenating onto the base keeps everything before them
+    // byte-stable, which is what a cache breakpoint needs. Rendering is pure
+    // concatenation, so the wire format is unchanged.
+    const fetchedText =
+      `\n\n--- Related Files ---\nThe following files were fetched at your request. Use them for context:\n\n${filesSection}`
       + '\n\nNow proceed with your analysis. Do NOT request more files.';
+    currentPrompt = typeof basePrompt === 'string'
+      ? basePrompt + fetchedText
+      : [...basePrompt, { id: 'fetched-files', stability: 'per-call' as const, text: fetchedText }];
   }
 
   // Max rounds reached — do a final invoke forcing analysis

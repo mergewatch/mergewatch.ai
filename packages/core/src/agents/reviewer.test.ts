@@ -1,3 +1,4 @@
+import { renderPrompt, type PromptInput } from '../llm/prompt-segment.js';
 import { describe, it, expect, vi } from 'vitest';
 import type { ILLMProvider } from '../llm/types.js';
 import type { CustomAgentDef } from '../config/defaults.js';
@@ -45,8 +46,10 @@ function createMockLLM(responses: string[]): ILLMProvider & { calls: { modelId: 
   const calls: { modelId: string; prompt: string }[] = [];
   return {
     calls,
-    async invoke(modelId: string, prompt: string, _maxTokens?: number) {
-      calls.push({ modelId, prompt });
+    async invoke(modelId: string, prompt: PromptInput, _maxTokens?: number) {
+      // #489 — record what reaches the wire, so the many string assertions
+      // downstream keep testing the rendered prompt rather than a shape.
+      calls.push({ modelId, prompt: renderPrompt(prompt) });
       return responses[idx++] ?? responses[responses.length - 1];
     },
   };
@@ -237,7 +240,8 @@ describe('runSecurityAgent', () => {
     let call = 0;
     const inner: ILLMProvider = {
       async invoke(_m, prompt, maxTokens) {
-        calls.push({ prompt, maxTokens });
+        // #489 — prompts are segments now; record what actually goes on the wire.
+        calls.push({ prompt: renderPrompt(prompt), maxTokens });
         call++;
         // Call 1: security agent, truncated at the cap. Call 2: its retry
         // (identical prompt), full response. Call 3: the orchestrator.
@@ -3892,7 +3896,7 @@ function createStructuredMockLLM(opts: {
     structuredCalls,
     textCalls,
     async invoke(_m: string, prompt: string) {
-      textCalls.push(prompt);
+      textCalls.push(renderPrompt(prompt));
       return (opts.textResponses ?? [])[ti++] ?? JSON.stringify({ findings: [] });
     },
     async invokeStructured(_m: string, prompt: string, schema: object) {

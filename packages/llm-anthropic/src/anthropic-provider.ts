@@ -1,5 +1,6 @@
+import { renderPrompt } from '@mergewatch/core';
 import Anthropic from '@anthropic-ai/sdk';
-import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult } from '@mergewatch/core';
+import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, PromptInput} from '@mergewatch/core';
 
 export class AnthropicLLMProvider implements ILLMProvider {
   private client: Anthropic;
@@ -10,7 +11,7 @@ export class AnthropicLLMProvider implements ILLMProvider {
 
   async invoke(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
   ): Promise<LLMInvokeResult> {
@@ -20,7 +21,10 @@ export class AnthropicLLMProvider implements ILLMProvider {
       temperature: sampling.temperature ?? 0,
       ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
       ...(sampling.topK !== undefined ? { top_k: sampling.topK } : {}),
-      messages: [{ role: 'user', content: prompt }],
+      // #489 — rendered here rather than upstream. This provider does not yet
+      // place cache breakpoints, so segments collapse to exactly the string
+      // it built before.
+      messages: [{ role: 'user', content: renderPrompt(prompt) }],
     });
     const block = response.content[0];
     if (block.type !== 'text') {
@@ -41,7 +45,7 @@ export class AnthropicLLMProvider implements ILLMProvider {
   // the JSON Schema — no free-text JSON to parse.
   async invokeStructured(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
@@ -58,7 +62,10 @@ export class AnthropicLLMProvider implements ILLMProvider {
         input_schema: schema as Anthropic.Messages.Tool['input_schema'],
       }],
       tool_choice: { type: 'tool', name: 'emit_result' },
-      messages: [{ role: 'user', content: prompt }],
+      // #489 — rendered here rather than upstream. This provider does not yet
+      // place cache breakpoints, so segments collapse to exactly the string
+      // it built before.
+      messages: [{ role: 'user', content: renderPrompt(prompt) }],
     });
     const block = response.content.find((b) => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') {

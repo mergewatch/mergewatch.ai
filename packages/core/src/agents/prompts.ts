@@ -1,3 +1,4 @@
+import type { PromptInput } from '../llm/prompt-segment.js';
 /**
  * System prompts for each review agent.
  *
@@ -606,11 +607,31 @@ export const PREVIOUS_FINDINGS_PLACEHOLDER = '{{PREVIOUS_FINDINGS}}';
  * them pass through untouched. reviewer.test.ts asserts both source
  * sentences still exist so a prompt rewording breaks loudly, not silently.
  */
-export function applyConfidenceFloor(prompt: string, floor: number): string {
-  if (floor === 75) return prompt;
-  return prompt
+function rewriteFloor(text: string, floor: number): string {
+  return text
     .replace('If you are less than 75% confident', `If you are less than ${floor}% confident`)
     .replace('Drop any finding with confidence below 75.', `Drop any finding with confidence below ${floor}.`);
+}
+
+/**
+ * #489 — segment-aware, and that matters more than it looks.
+ *
+ * This used to be a regex over the whole assembled prompt string. Left that
+ * way, any repo setting a non-default `minConfidence` would rewrite text
+ * anywhere in the prompt — including the parts a cache breakpoint or a
+ * cassette key depends on being stable. The result is a cache miss AND a
+ * cassette miss, for every such repo, with nothing to indicate why.
+ *
+ * Rewriting per segment confines the edit to the segment that actually holds
+ * the directive; every other segment stays byte-identical.
+ */
+export function applyConfidenceFloor(prompt: PromptInput, floor: number): PromptInput {
+  if (floor === 75) return prompt;
+  if (typeof prompt === 'string') return rewriteFloor(prompt, floor);
+  return prompt.map((seg) => {
+    const text = rewriteFloor(seg.text, floor);
+    return text === seg.text ? seg : { ...seg, text };
+  });
 }
 
 export const ORCHESTRATOR_PROMPT = `${SHARED_PREAMBLE}

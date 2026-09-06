@@ -1,4 +1,5 @@
-import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult } from '@mergewatch/core';
+import { renderPrompt } from '@mergewatch/core';
+import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, PromptInput} from '@mergewatch/core';
 
 export class LiteLLMProvider implements ILLMProvider {
   constructor(
@@ -8,7 +9,7 @@ export class LiteLLMProvider implements ILLMProvider {
 
   async invoke(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
   ): Promise<LLMInvokeResult> {
@@ -32,7 +33,7 @@ export class LiteLLMProvider implements ILLMProvider {
         temperature: sampling.temperature ?? 0,
         ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
         ...(sampling.topK !== undefined ? { top_k: sampling.topK } : {}),
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: renderPrompt(prompt) }],
       }),
     });
 
@@ -63,7 +64,7 @@ export class LiteLLMProvider implements ILLMProvider {
   // throws here — the caller falls back to the hardened text path.
   async invokeStructured(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
@@ -81,7 +82,7 @@ export class LiteLLMProvider implements ILLMProvider {
         ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
         ...(sampling.topK !== undefined ? { top_k: sampling.topK } : {}),
         response_format: { type: 'json_schema', json_schema: { name: 'result', schema, strict: false } },
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: renderPrompt(prompt) }],
       }),
     });
     if (!response.ok) {

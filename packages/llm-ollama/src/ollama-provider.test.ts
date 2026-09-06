@@ -153,3 +153,40 @@ describe('OllamaLLMProvider', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #489 — segments must reach the wire as a STRING
+//
+// This is the bug the refactor nearly shipped. `invoke` widened to accept
+// `PromptInput`, and this provider passed `prompt` straight into
+// `content:` in an untyped JSON body. TypeScript had nothing to check, so a
+// PromptSegment[] would have been serialised as a JSON ARRAY into every
+// request — breaking every review, and compiling perfectly cleanly.
+// ---------------------------------------------------------------------------
+describe('#489 — segment rendering', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sends segments as a concatenated string, never as an array', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ message: { content: 'ok' } }));
+    const provider = new OllamaLLMProvider('http://myhost:11434');
+    await provider.invoke('m', [
+      { id: 'head', stability: 'static', text: 'A' },
+      { id: 'diff', stability: 'per-pr', text: '\n\nB' },
+    ] as never);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const content = body.messages[0].content;
+    expect(typeof content).toBe('string');
+    expect(Array.isArray(content)).toBe(false);
+    expect(content).toBe('A\n\nB');
+  });
+
+  it('leaves a plain-string prompt byte-identical', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ message: { content: 'ok' } }));
+    const provider = new OllamaLLMProvider('http://myhost:11434');
+    await provider.invoke('m', 'plain prompt');
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.messages[0].content).toBe('plain prompt');
+  });
+});

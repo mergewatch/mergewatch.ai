@@ -1,11 +1,12 @@
-import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult } from '@mergewatch/core';
+import { renderPrompt } from '@mergewatch/core';
+import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, PromptInput} from '@mergewatch/core';
 
 export class OllamaLLMProvider implements ILLMProvider {
   constructor(private baseUrl: string = 'http://localhost:11434') {}
 
   async invoke(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
   ): Promise<LLMInvokeResult> {
@@ -23,7 +24,7 @@ export class OllamaLLMProvider implements ILLMProvider {
         model: modelId,
         stream: false,
         options,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: renderPrompt(prompt) }],
       }),
     });
 
@@ -48,7 +49,7 @@ export class OllamaLLMProvider implements ILLMProvider {
   // caller falls back to the hardened text path.
   async invokeStructured(
     modelId: string,
-    prompt: string,
+    prompt: PromptInput,
     schema: object,
     maxTokens = 4096,
     sampling: LLMSamplingConfig = {},
@@ -68,7 +69,7 @@ export class OllamaLLMProvider implements ILLMProvider {
         stream: false,
         options,
         format: schema,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: renderPrompt(prompt) }],
       }),
     });
     if (!response.ok) {
