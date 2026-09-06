@@ -11,8 +11,30 @@ import type { PromptInput } from './prompt-segment.js';
 
 /** Token usage from a single LLM invocation. */
 export interface TokenUsage {
+  /**
+   * UNCACHED input only. The Anthropic/Bedrock APIs report cached input in
+   * separate fields, so this is not the total the request was billed for —
+   * see the two below (#490).
+   */
   inputTokens: number;
   outputTokens: number;
+  /**
+   * #490 — input served from cache, billed at roughly 0.1× the input rate.
+   *
+   * Reading this matters for BILLING, not display: `estimatedCostUsd` drives
+   * Stripe charges, OSS grant drawdown and auto-reload. Left unread, cached
+   * tokens vanish from the count entirely and reported cost falls further
+   * than true cost — under-billing through a door `REVENUE LEAK` does not
+   * watch.
+   *
+   * Absent on providers with no cache API (litellm, ollama).
+   */
+  cacheReadInputTokens?: number;
+  /**
+   * #490 — input written to cache, billed at roughly 1.25× the input rate.
+   * Paid once by whichever agent writes the shared prefix first.
+   */
+  cacheWriteInputTokens?: number;
 }
 
 /** Result from an LLM invocation, optionally including token usage. */

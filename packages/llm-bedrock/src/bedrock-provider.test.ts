@@ -92,7 +92,12 @@ describe('BedrockLLMProvider', () => {
     const result = await provider.invoke('us.anthropic.claude-opus-4-6-v1', 'prompt');
 
     expect(result.text).toBe('Review result');
-    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    // #490 — cache fields are reported even when the response carries none,
+    // so an absent cache is an explicit zero rather than a missing number.
+    expect(result.usage).toEqual({
+      inputTokens: 100, outputTokens: 50,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+    });
   });
 
   it('parses Titan response correctly (no usage)', async () => {

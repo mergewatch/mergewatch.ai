@@ -83,6 +83,29 @@ describe('AnthropicLLMProvider', () => {
     expect(result.text).toBe('The answer is 42');
   });
 
+  it('#490 — extracts cache read/write tokens the API reports separately', async () => {
+    // input_tokens is UNCACHED input only. Reading only that field means cached
+    // tokens vanish from the bill entirely, and reported cost falls further
+    // than true cost — under-billing, through a door REVENUE LEAK does not watch.
+    mockCreate.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_input_tokens: 9000,
+        cache_creation_input_tokens: 400,
+      },
+    });
+
+    const provider = new AnthropicLLMProvider('key');
+    const result = await provider.invoke('claude-sonnet-4-20250514', 'prompt');
+    expect(result.usage).toEqual({
+      // Uncached input stays uncached input — not a total.
+      inputTokens: 100, outputTokens: 50,
+      cacheReadInputTokens: 9000, cacheWriteInputTokens: 400,
+    });
+  });
+
   it('returns usage with inputTokens and outputTokens', async () => {
     mockCreate.mockResolvedValueOnce({
       content: [{ type: 'text', text: 'ok' }],
@@ -92,7 +115,12 @@ describe('AnthropicLLMProvider', () => {
     const provider = new AnthropicLLMProvider('key');
     const result = await provider.invoke('claude-sonnet-4-20250514', 'prompt');
 
-    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
+    // #490 — cache fields are reported even when the response carries none,
+    // so an absent cache is an explicit zero rather than a missing number.
+    expect(result.usage).toEqual({
+      inputTokens: 100, outputTokens: 50,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+    });
   });
 
   it('uses default maxTokens of 4096', async () => {
