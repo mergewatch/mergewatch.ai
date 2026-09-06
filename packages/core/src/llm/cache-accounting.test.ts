@@ -31,7 +31,8 @@ describe('estimateCost with cache traffic', () => {
 
   it('a cached review costs MORE than counting uncached input alone', () => {
     // The under-billing failure stated directly: if cache traffic were ignored,
-    // this review would be billed 0.30 when it actually cost 0.63.
+    // this review would be billed 0.30 when it actually cost 0.60 —
+    // 100k uncached at $3/1M = $0.30, plus 1M cache-read at $3/1M x 0.1 = $0.30.
     const ignored = estimateCost(MODEL, 100_000, 0, PRICING)!;
     const actual = estimateCost(MODEL, 100_000, 0, PRICING, { readTokens: 1_000_000, writeTokens: 0 })!;
     expect(ignored).toBeCloseTo(0.3, 10);
