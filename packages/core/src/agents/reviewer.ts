@@ -14,6 +14,7 @@ import type { ILLMProvider } from '../llm/types.js';
 import { normalizeLLMResult, StructuredOutputUnsupportedError } from '../llm/types.js';
 import { TokenAccumulator, TrackingLLMProvider } from '../llm/token-accumulator.js';
 import type { PromptSegment, PromptInput } from '../llm/prompt-segment.js';
+import { assertNonDecreasingVolatility } from '../llm/prompt-segment.js';
 import { isThrottleError } from '../llm/throttle.js';
 import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
 import {
@@ -40,6 +41,9 @@ import {
   AGENT_MODE_SUFFIX,
   INTENT_CLAIMS_DIRECTIVE,
   applyConfidenceFloor,
+  SHARED_PREAMBLE,
+  PREAMBLE_OPENING,
+  PREAMBLE_RULES,
 } from './prompts.js';
 import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
@@ -201,26 +205,32 @@ export function buildPrompt(
   conventions?: string,
   agentAuthored?: boolean,
 ): PromptSegment[] {
-  // Inject tone directive or strip placeholder
+  // #564 — the six finding agents all embed SHARED_PREAMBLE, so splitting it
+  // off leaves a prefix that is IDENTICAL across every one of them. That is
+  // what lets a single cache write serve all six; previously each agent's own
+  // template sat in front of the shared diff and they shared no prefix at all.
+  //
+  // Throws rather than falling back: a silent failure here would assemble a
+  // prompt missing its rules, and the model would carry on and produce a
+  // plausible-looking review against half its instructions. Loud is the only
+  // safe failure mode.
+  // Not every prompt carries it. The six finding agents, the orchestrator and
+  // the summary do; DIAGRAM, DELTA_CAPTION, FINDING_VERIFICATION, INLINE_REPLY,
+  // RESPOND and TRIAGE_MAPPING are standalone single-call prompts that gain
+  // nothing from a shared prefix — there is no second agent to share it with.
+  // They keep the simple layout, with their template labelled `static` because
+  // it is identical on every invocation of that agent.
+  const sharesPreamble = systemPrompt.startsWith(SHARED_PREAMBLE);
+  const agentBody = sharesPreamble ? systemPrompt.slice(SHARED_PREAMBLE.length) : systemPrompt;
+
   const toneDirective = tone ? (TONE_DIRECTIVES[tone] ?? '') : '';
-  const tonedPrompt = systemPrompt.replace(TONE_PLACEHOLDER, toneDirective);
-
-  // Inject or strip the conventions block
-  const withConventions = tonedPrompt.replace(CONVENTIONS_PLACEHOLDER, buildConventionsBlock(conventions));
-
-  // Inject or strip the agent-mode block
-  const withAgentMode = withConventions.replace(AGENT_MODE_PLACEHOLDER, buildAgentModeBlock(agentAuthored));
-
-  // Inject or strip the file request instruction placeholder
-  const resolvedPrompt = agenticFetch
-    ? withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', FILE_REQUEST_INSTRUCTION)
-    : withAgentMode.replace('FILE_REQUEST_PLACEHOLDER', '');
+  const conventionsBlock = buildConventionsBlock(conventions);
+  const agentModeBlock = buildAgentModeBlock(agentAuthored);
 
   // #489 — the `Current date:` line that used to head this block is gone.
   // It invalidated any prompt cache once a day and would have invalidated an
   // entire cassette corpus every midnight, for temporal context the review
-  // does not use: the diff and the PR context carry what the model reasons
-  // about. (#488 open question 3, decided: delete.)
+  // does not use.
   const contextBlock = [
     `Repository: ${context.owner}/${context.repo}`,
     `PR #${context.prNumber}`,
@@ -230,29 +240,58 @@ export function buildPrompt(
     .filter(Boolean)
     .join('\n');
 
-  // #372 — every agent gets the intent-claims directive: in-code claims of
-  // intentionality never suppress a finding; only sanctioned channels
-  // (conventions, exclude patterns, /resolve memory) carry that authority.
+  // Volatility ascends: static → per-repo → per-pr → per-call. The agent body
+  // is `per-call` even though it is frozen in source, because it differs on
+  // every one of the six calls in a review — `stability` describes how often
+  // text changes BETWEEN INVOCATIONS, not whether it is a literal.
   //
-  // #489 — returned as segments rather than one string. The split is
-  // deliberately COARSE and the labels conservative: `head` is `per-pr`
-  // because the agent-mode block it contains varies per PR, even though the
-  // template and the intent-claims directive inside it are static.
-  //
-  // Splitting them apart would put a `static` segment after a `per-pr` one —
-  // the volatility inversion the lint rejects, and the very thing #564 exists
-  // to fix by reordering. Until that lands, merging them and labelling the
-  // result honestly is correct: claiming a segment is stable when the text
-  // around it is not would produce a cache prefix that never hits, with
-  // nothing to say why.
-  //
-  // Segments carry their own leading whitespace so rendering is pure
-  // concatenation — byte-identical to the string this replaced.
-  return [
-    { id: 'head', stability: 'per-pr', text: `${resolvedPrompt}\n\n${INTENT_CLAIMS_DIRECTIVE}` },
-    { id: 'pr-context', stability: 'per-pr', text: `\n\n--- PR Context ---\n${contextBlock}` },
-    { id: 'diff', stability: 'per-pr', text: `\n\n--- Diff ---\n${diff}` },
-  ];
+  // Long context before specific instruction also matches standard prompting
+  // guidance: the diff is what the model reasons over, the agent body is what
+  // it is being asked to do with it.
+  const segments: PromptSegment[] = sharesPreamble
+    ? [{
+        id: 'shared-directives',
+        stability: 'static',
+        // #372 — the intent-claims directive rides with the shared static
+        // block: in-code claims of intentionality never suppress a finding.
+        text: `${PREAMBLE_OPENING}\n${PREAMBLE_RULES}\n\n${INTENT_CLAIMS_DIRECTIVE}`,
+      }]
+    : [{
+        id: 'agent-template',
+        stability: 'static',
+        text: `${agentBody.replace(TONE_PLACEHOLDER, toneDirective)
+          .replace(CONVENTIONS_PLACEHOLDER, conventionsBlock)
+          .replace(AGENT_MODE_PLACEHOLDER, agentModeBlock)
+          .replace('FILE_REQUEST_PLACEHOLDER', agenticFetch ? FILE_REQUEST_INSTRUCTION : '')
+        }\n\n${INTENT_CLAIMS_DIRECTIVE}`,
+      }];
+
+  const repoScoped = sharesPreamble ? [toneDirective, conventionsBlock].filter(Boolean).join('\n') : '';
+  if (repoScoped) {
+    segments.push({ id: 'repo-conventions', stability: 'per-repo', text: `\n\n${repoScoped}` });
+  }
+
+  const prScoped = sharesPreamble ? [agentModeBlock].filter(Boolean).join('\n') : '';
+  segments.push({
+    id: 'pr-context',
+    stability: 'per-pr',
+    text: `${prScoped ? `\n\n${prScoped}` : ''}\n\n--- PR Context ---\n${contextBlock}`,
+  });
+  segments.push({ id: 'diff', stability: 'per-pr', text: `\n\n--- Diff ---\n${diff}` });
+
+  if (sharesPreamble) {
+    const fileRequest = agenticFetch ? `\n\n${FILE_REQUEST_INSTRUCTION}` : '';
+    segments.push({
+      id: 'agent-instructions',
+      stability: 'per-call',
+      text: `\n${agentBody.replace('FILE_REQUEST_PLACEHOLDER', '')}${fileRequest}`,
+    });
+  }
+
+  // Cheap, and it is the only thing standing between a mis-ordered edit and a
+  // cache that silently never hits.
+  assertNonDecreasingVolatility(segments, 'review prompt');
+  return segments;
 }
 
 /**

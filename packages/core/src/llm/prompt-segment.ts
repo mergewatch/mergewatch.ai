@@ -16,17 +16,24 @@
  */
 
 /**
- * How often a segment's text changes. Ordered least- to most-volatile; the
- * lint below depends on this order.
+ * How often a segment's text changes **between consecutive invocations**.
+ * Ordered least- to most-volatile; the lint below depends on this order.
+ *
+ * #564 — this is deliberately about invocation frequency, not about whether
+ * the text is a literal in source. An agent template is frozen in source and
+ * still `per-call`, because it differs on every one of the six calls in a
+ * single review. Reading it as `static` was what made the target segment order
+ * look like a volatility inversion; under the correct reading it is exactly
+ * the ascending order caching needs.
  */
 export type PromptStability =
-  /** Frozen in source: directives, agent templates. */
+  /** Identical on every invocation: shared directives, rules. */
   | 'static'
   /** Conventions, tone, custom rules — changes when a repo changes. */
   | 'per-repo'
   /** PR context, diff — changes per pull request. */
   | 'per-pr'
-  /** Fetched files, the finding under verification, previous findings. */
+  /** Differs per invocation: the agent's own instructions, fetched files, the finding under verification. */
   | 'per-call';
 
 export interface PromptSegment {
