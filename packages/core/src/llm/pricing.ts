@@ -84,16 +84,40 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
  * Estimate cost in USD for a given model and token counts.
  * Returns null if the model is not in the pricing table (and no custom pricing provided).
  */
+/**
+ * #490 — cache rates as MULTIPLIERS of the input rate, not as pricing fields.
+ *
+ * Adding `cacheReadPer1M` / `cacheWritePer1M` would mean editing ~40 rows AND
+ * breaking every `customPricing` override: a self-hosted `.mergewatch.yml`
+ * `pricing:` block carries two keys today, so any override not updated would
+ * silently price cache traffic at ZERO. Deriving keeps every existing
+ * two-key override correct by construction.
+ *
+ * Anthropic's published ratios; they hold across the Claude family, so a
+ * single pair covers every model in DEFAULT_PRICING and any custom entry.
+ */
+export const CACHE_READ_MULTIPLIER = 0.1;
+export const CACHE_WRITE_MULTIPLIER = 1.25;
+
 export function estimateCost(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
   customPricing?: Record<string, ModelPricing>,
+  /**
+   * Cache traffic. Optional so every existing call site keeps its meaning:
+   * absent means "no cache involved", which is what a provider without a
+   * cache API reports.
+   */
+  cache?: { readTokens?: number; writeTokens?: number },
 ): number | null {
   const pricing = customPricing?.[modelId] ?? DEFAULT_PRICING[modelId];
   if (!pricing) return null;
+  const cacheRead = (cache?.readTokens ?? 0) / 1_000_000 * pricing.inputPer1M * CACHE_READ_MULTIPLIER;
+  const cacheWrite = (cache?.writeTokens ?? 0) / 1_000_000 * pricing.inputPer1M * CACHE_WRITE_MULTIPLIER;
   return (inputTokens / 1_000_000) * pricing.inputPer1M
-       + (outputTokens / 1_000_000) * pricing.outputPer1M;
+       + (outputTokens / 1_000_000) * pricing.outputPer1M
+       + cacheRead + cacheWrite;
 }
 
 /**

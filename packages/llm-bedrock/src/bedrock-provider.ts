@@ -186,7 +186,15 @@ function parseAnthropicResponse(raw: string): ParsedResponse {
   const parsed = JSON.parse(raw);
   const text = parsed.content?.[0]?.text ?? '';
   const usage: TokenUsage | undefined = parsed.usage
-    ? { inputTokens: parsed.usage.input_tokens ?? 0, outputTokens: parsed.usage.output_tokens ?? 0 }
+    ? {
+        inputTokens: parsed.usage.input_tokens ?? 0,
+        outputTokens: parsed.usage.output_tokens ?? 0,
+        // #490 — the API reports these SEPARATELY from input_tokens, which
+        // counts uncached input only. Unread, cached tokens vanish from the
+        // bill entirely and reported cost falls further than true cost.
+        cacheReadInputTokens: parsed.usage.cache_read_input_tokens ?? 0,
+        cacheWriteInputTokens: parsed.usage.cache_creation_input_tokens ?? 0,
+      }
     : undefined;
   return { text, usage, stopReason: parsed.stop_reason ?? undefined };
 }
@@ -282,7 +290,15 @@ export class BedrockLLMProvider implements ILLMProvider {
     return {
       object: block.input,
       usage: parsed.usage
-        ? { inputTokens: parsed.usage.input_tokens ?? 0, outputTokens: parsed.usage.output_tokens ?? 0 }
+        ? {
+        inputTokens: parsed.usage.input_tokens ?? 0,
+        outputTokens: parsed.usage.output_tokens ?? 0,
+        // #490 — the API reports these SEPARATELY from input_tokens, which
+        // counts uncached input only. Unread, cached tokens vanish from the
+        // bill entirely and reported cost falls further than true cost.
+        cacheReadInputTokens: parsed.usage.cache_read_input_tokens ?? 0,
+        cacheWriteInputTokens: parsed.usage.cache_creation_input_tokens ?? 0,
+      }
         : undefined,
       stopReason: parsed.stop_reason ?? undefined,
     };

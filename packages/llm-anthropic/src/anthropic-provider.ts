@@ -35,6 +35,9 @@ export class AnthropicLLMProvider implements ILLMProvider {
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
+        // #490 — separate fields; input_tokens is uncached input only.
+        cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+        cacheWriteInputTokens: response.usage.cache_creation_input_tokens ?? 0,
       },
       stopReason: response.stop_reason ?? undefined,
     };
@@ -76,6 +79,9 @@ export class AnthropicLLMProvider implements ILLMProvider {
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
+        // #490 — separate fields; input_tokens is uncached input only.
+        cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+        cacheWriteInputTokens: response.usage.cache_creation_input_tokens ?? 0,
       },
       stopReason: response.stop_reason ?? undefined,
     };

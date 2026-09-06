@@ -15,6 +15,9 @@ import { estimateCost } from './pricing.js';
 interface ModelUsage {
   inputTokens: number;
   outputTokens: number;
+  /** #490 — tracked separately because they are billed at different rates. */
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
   invocations: number;
 }
 
@@ -25,9 +28,14 @@ export class TokenAccumulator {
   /** Record token usage for a model invocation. */
   add(modelId: string, tokenUsage?: TokenUsage): void {
     if (!tokenUsage) return;
-    const existing = this.usage.get(modelId) ?? { inputTokens: 0, outputTokens: 0, invocations: 0 };
+    const existing = this.usage.get(modelId)
+      ?? { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, invocations: 0 };
     existing.inputTokens += tokenUsage.inputTokens;
     existing.outputTokens += tokenUsage.outputTokens;
+    // #490 — a provider without a cache API omits these; absent means zero,
+    // which is the same arithmetic as before caching existed.
+    existing.cacheReadInputTokens += tokenUsage.cacheReadInputTokens ?? 0;
+    existing.cacheWriteInputTokens += tokenUsage.cacheWriteInputTokens ?? 0;
     existing.invocations += 1;
     this.usage.set(modelId, existing);
   }
@@ -36,6 +44,23 @@ export class TokenAccumulator {
   get totalInputTokens(): number {
     let total = 0;
     for (const u of this.usage.values()) total += u.inputTokens;
+    return total;
+  }
+
+  /**
+   * #490 — cache traffic across all models, reported separately from
+   * `totalInputTokens` because the API reports uncached input there and these
+   * are billed at different rates.
+   */
+  get totalCacheReadInputTokens(): number {
+    let total = 0;
+    for (const u of this.usage.values()) total += u.cacheReadInputTokens;
+    return total;
+  }
+
+  get totalCacheWriteInputTokens(): number {
+    let total = 0;
+    for (const u of this.usage.values()) total += u.cacheWriteInputTokens;
     return total;
   }
 
@@ -50,7 +75,10 @@ export class TokenAccumulator {
   estimateTotalCost(customPricing?: Record<string, { inputPer1M: number; outputPer1M: number }>): number | null {
     let total = 0;
     for (const [modelId, u] of this.usage.entries()) {
-      const cost = estimateCost(modelId, u.inputTokens, u.outputTokens, customPricing);
+      const cost = estimateCost(modelId, u.inputTokens, u.outputTokens, customPricing, {
+        readTokens: u.cacheReadInputTokens,
+        writeTokens: u.cacheWriteInputTokens,
+      });
       if (cost === null) return null;
       total += cost;
     }
