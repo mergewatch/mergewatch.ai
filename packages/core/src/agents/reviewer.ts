@@ -295,6 +295,53 @@ export function buildPrompt(
 }
 
 /**
+ * #569 — enforce `maxFindings` in code.
+ *
+ * It was only ever substituted into the orchestrator prompt as
+ * `MAX_FINDINGS_PLACEHOLDER`: a REQUEST to the model, never a cap. A repo
+ * setting `maxFindings: 3` could receive four findings with no signal that
+ * anything had been ignored — which is what `78a-output-shaping` caught.
+ * `minSeverity`, in the same config block and documented alike, has always
+ * been a real code filter.
+ *
+ * Applied AFTER the filter chain, not before: the user asked for at most N
+ * findings POSTED. Capping first would spend the budget on findings the
+ * filters then remove, leaving fewer than N for no reason.
+ *
+ * Custom-agent findings are EXEMPT. They bypass model filtering by design
+ * (#385) because they are user-legislated policy, not model taste — and a
+ * blocking agent's finding failing the check is the entire point. Dropping
+ * one to satisfy a noise cap would silently discard the thing #385 exists to
+ * protect. The cap governs what the MODEL produced.
+ */
+export function capFindings<T extends { category?: string; title: string; file: string; line: number }>(
+  findings: T[],
+  maxFindings: number,
+  customAgentNames: ReadonlySet<string>,
+): { kept: T[]; dropped: T[] } {
+  if (!Number.isFinite(maxFindings) || maxFindings <= 0) return { kept: findings, dropped: [] };
+
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  let modelBudget = maxFindings;
+  for (const f of findings) {
+    if (f.category && customAgentNames.has(f.category)) {
+      kept.push(f);
+      continue;
+    }
+    // Order is the orchestrator's ranking, preserved through the filters, so
+    // taking the first N keeps the strongest rather than an arbitrary slice.
+    if (modelBudget > 0) {
+      kept.push(f);
+      modelBudget--;
+    } else {
+      dropped.push(f);
+    }
+  }
+  return { kept, dropped };
+}
+
+/**
  * Scan text for top-level balanced JSON objects, respecting string literals
  * and escapes. Returns each candidate's exact source slice, in order. This is
  * what lets a response like `{"requestFiles": []}` + prose + `{"findings":
@@ -3538,13 +3585,32 @@ export async function runReviewPipeline(
     );
   }
 
+  // #569 — the cap, enforced. Last filter before finalize so it governs what
+  // is actually posted.
+  const { kept: cappedFindings, dropped: overCap } = capFindings(
+    filteredFindings,
+    maxFindings,
+    new Set(enabledCustomAgents.map((a) => a.name)),
+  );
+  for (const f of overCap) {
+    trace.record(f, 'dropped', 'max-findings', {
+      reason: `over the repo's maxFindings cap of ${maxFindings}`,
+    });
+  }
+  if (overCap.length > 0) {
+    console.warn(
+      '[max-findings] dropped %d finding%s over the cap of %d',
+      overCap.length, overCap.length === 1 ? '' : 's', maxFindings,
+    );
+  }
+
   // Delta caption — only on re-reviews where something actually changed
   // commit-to-commit. Uses lightModel to match the other prose agents.
   // #470 — everything still un-adjudicated survived to the reader.
-  trace.finalize(filteredFindings);
+  trace.finalize(cappedFindings);
   const filterOutcomes = trace.outcomes();
 
-  const delta = computeReviewDelta(filteredFindings, previousFindings);
+  const delta = computeReviewDelta(cappedFindings, previousFindings);
   const deltaCaption = delta
     ? await runDeltaCaptionAgent(delta, lightModelId, llm)
     : null;
@@ -3564,7 +3630,9 @@ export async function runReviewPipeline(
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
   const { mergeScore, mergeScoreReason, disputeDisclosure } = reconcileMergeScore({
-    filteredFindings,
+    // #569 — the verdict must describe what was POSTED. Scoring the uncapped
+    // set would justify a score against findings the reader never sees.
+    filteredFindings: cappedFindings,
     previousFindings,
     orchestratorScore: orchestratorResult.mergeScore,
     orchestratorReason: orchestratorResult.mergeScoreReason,
@@ -3598,7 +3666,7 @@ export async function runReviewPipeline(
 
   return {
     summary,
-    findings: filteredFindings,
+    findings: cappedFindings,
     changedLines,
     diagram: diagramResult.diagram,
     diagramCaption: diagramResult.caption,
