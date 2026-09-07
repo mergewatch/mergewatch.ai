@@ -36,7 +36,9 @@ export type FilterStage =
   | 'finding-verify'        // W2 / FP-E verifier verdict
   | 'line-proximity'        // ±3 changed-line filter
   | 'custom-agent-dedup'    // #385 re-entry
-  | 'triage-suppressed';    // W3
+  | 'triage-suppressed'
+  /** #569 — over the repo's `maxFindings` cap. */
+  | 'max-findings';    // W3
 
 /**
  * What happened to one finding in one review.
