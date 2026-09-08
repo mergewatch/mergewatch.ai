@@ -62,6 +62,38 @@ describe('#550 — the notes carry both halves', () => {
   });
 });
 
+describe('#550 review — the generator is called safely', () => {
+  it('does not mask a generator failure with `|| true`', () => {
+    // Review finding on #580. `|| true` conflated the generator FAILING with
+    // there being nothing to report — and the generator already emits an
+    // explicit line for the second case, so an empty result can only mean the
+    // first. Printing a placeholder would ship notes that look complete.
+    expect(notesStep).toContain('refusing to publish notes that omit what changed');
+    expect(notesStep).not.toContain('changelog-section.sh "$VERSION" --no-heading || true');
+  });
+
+  it('quotes the revision range and closes it with --', () => {
+    // Not shell injection: an expanded variable is an ARGUMENT and bash does
+    // not re-parse it, so `HEAD; rm -rf /` reaches git as one bad ref. The real
+    // hazard is a `-`-prefixed value being read as an OPTION, plus word
+    // splitting on whitespace.
+    const gen = readFileSync(resolve(ROOT, 'scripts/changelog-section.sh'), 'utf8');
+    expect(gen).toContain('git log "$RANGE"');
+    expect(gen).not.toMatch(/git log \$RANGE/);
+  });
+
+  it('rejects a --since that is not a plain ref', () => {
+    for (const bad of ['--output=/tmp/pwn', 'a b', 'x;y']) {
+      expect(() => gen(['0.6.2', '--since', bad])).toThrow();
+    }
+  });
+
+  it('still accepts ordinary refs', () => {
+    expect(() => gen(['0.6.2', '--since', 'v0.6.1'])).not.toThrow();
+    expect(() => gen(['0.6.2', '--since', 'HEAD~1'])).not.toThrow();
+  });
+});
+
 describe('#550 — the generator itself', () => {
   it('groups commits by type with their short sha', () => {
     const out = gen(['0.6.2', '--since', 'v0.6.1', '--no-heading']);

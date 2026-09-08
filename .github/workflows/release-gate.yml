@@ -447,14 +447,22 @@ jobs:
           #
           # Same generator as CHANGELOG.md. --no-heading because a GitHub
           # Release's title already IS the version.
-          CHANGES="$(scripts/changelog-section.sh "$VERSION" --no-heading || true)"
+          # `|| true` would conflate two different things: the generator
+          # FAILING, and there being nothing to report. The generator already
+          # emits an explicit "no feature or fix commits in this range" line
+          # for the second, so an empty result here can only mean the first —
+          # and silently printing a placeholder would ship notes that look
+          # complete. Capture the status and fail the release instead.
+          CHANGES=""
+          gen_rc=0
+          CHANGES="$(scripts/changelog-section.sh "$VERSION" --no-heading)" || gen_rc=$?
+          if [ "$gen_rc" -ne 0 ] || [ -z "$CHANGES" ]; then
+            echo "::error::changelog-section.sh failed (rc=$gen_rc) — refusing to publish notes that omit what changed"
+            exit 1
+          fi
           {
             printf '## What changed\n'
-            if [ -n "$CHANGES" ]; then
-              printf '%s\n' "$CHANGES"
-            else
-              printf '\n_Changelog generation produced nothing — see the commit range._\n'
-            fi
+            printf '%s\n' "$CHANGES"
             printf '\n---\n\n'
             printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
             printf 'Graded fixture suite:\n\n'

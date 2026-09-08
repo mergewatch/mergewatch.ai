@@ -41,6 +41,25 @@ if [ -z "$SINCE" ]; then
   SINCE=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 fi
 
+# Validate the ref before it reaches git.
+#
+# Not shell injection — an expanded variable is an ARGUMENT, and bash does not
+# re-parse it for metacharacters, so `HEAD; rm -rf /` reaches git as a single
+# bad ref and is rejected. The real hazard is narrower: a value starting with
+# `-` would be read by git as an OPTION rather than a revision, which is
+# argument injection proper. Whitespace and globs would also split or expand
+# into a malformed invocation.
+#
+# No caller passes --since today, so this is defence for a flag that exists to
+# be used later rather than a fix for a live path.
+if [ -n "$SINCE" ] && ! printf '%s' "$SINCE" | grep -qE '^[A-Za-z0-9._/^~-]+$'; then
+  echo "Error: --since must be a plain git ref (got '$SINCE')" >&2
+  exit 1
+fi
+case "$SINCE" in
+  -*) echo "Error: --since must not start with '-' (got '$SINCE')" >&2; exit 1 ;;
+esac
+
 if [ -n "$SINCE" ]; then
   RANGE="${SINCE}..HEAD"
   COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/compare/${SINCE}...${TAG}"
@@ -52,7 +71,9 @@ fi
 # `- <subject> (<short sha>)`. The repo's commit convention already carries the
 # issue numbers in the subject — `fix(core): … (#544) (#547)` — so linking is
 # GitHub's autolinking rather than anything this has to construct.
-collect() { git log $RANGE --no-merges --format="- %s (%h)" "$@" 2>/dev/null || true; }
+# `"$RANGE"` quoted, and `--` closes the revision list so nothing after it can
+# be read as a path or an option.
+collect() { git log "$RANGE" --no-merges --format="- %s (%h)" "$@" -- 2>/dev/null || true; }
 
 FEATURES=$(collect --grep="^feat")
 FIXES=$(collect --grep="^fix")
@@ -68,7 +89,7 @@ OUT=""
 # chore-only release. Say so rather than emitting an empty section that reads
 # like the generator broke.
 if [ -z "$FEATURES$FIXES$OTHERS" ]; then
-  COUNT=$(git log $RANGE --no-merges --oneline 2>/dev/null | wc -l | tr -d ' ')
+  COUNT=$(git log "$RANGE" --no-merges --oneline -- 2>/dev/null | wc -l | tr -d ' ')
   OUT+=$'\n'"_No feature or fix commits in this range (${COUNT} commit(s) since ${SINCE:-the start})._"$'\n'
 fi
 
