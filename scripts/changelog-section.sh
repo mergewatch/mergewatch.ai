@@ -68,6 +68,23 @@ else
   COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/commits/${TAG}"
 fi
 
+# Confirm the range resolves BEFORE collecting.
+#
+# Review finding on #580 (clustered warning): `collect()` ends in
+# `2>/dev/null || true`, so a git failure there returns empty and the script
+# reports "no feature or fix commits in this range" — a wrong range and an
+# uneventful release rendering identically. In a release that means notes
+# claiming nothing changed.
+#
+# Today a bad ref does still fail, but only because the empty-range branch runs
+# `git log` again under pipefail. That is correct by ACCIDENT: one edit to that
+# line removes the protection with nothing to say so. Checking here makes it
+# intentional.
+if ! git rev-list --max-count=1 "$RANGE" >/dev/null 2>&1; then
+  echo "Error: range '$RANGE' does not resolve — refusing to report an empty changelog for it" >&2
+  exit 1
+fi
+
 # `- <subject> (<short sha>)`. The repo's commit convention already carries the
 # issue numbers in the subject — `fix(core): … (#544) (#547)` — so linking is
 # GitHub's autolinking rather than anything this has to construct.
