@@ -120,6 +120,30 @@ describe('docs audit — the script itself', () => {
     expect(src).toMatch(/failures\.length[\s\S]{0,200}exit\(2\)/);
   });
 
+  it('verifies findings by trying to refute them before reporting any', () => {
+    // Measured on the first full run: 11 of 13 criticals were findings whose
+    // own evidence did not contradict the text. Instructing the first pass not
+    // to do that helped and did not fix it — the same place the review
+    // pipeline landed before W2. The refute pass took precision from ~15% to
+    // ~80% on the same corpus.
+    const src = readFileSync(SCRIPT, 'utf8');
+    expect(src).toContain('VERIFY_SYSTEM');
+    expect(src).toMatch(/Default to refuted when you are unsure/);
+  });
+
+  it('drops a finding whose verification errored rather than promoting it', () => {
+    // A verifier that throws leaves the finding UNPROVEN. Keeping it would
+    // report an unverified claim as confirmed — the inverse of the audit's
+    // whole purpose.
+    const src = readFileSync(SCRIPT, 'utf8');
+    expect(src).toMatch(/catch\s*\{[^}]*refuted\+\+/);
+  });
+
+  it('reports how many findings were refuted, not just what survived', () => {
+    // A reader who sees 5 findings should know whether 5 or 50 were raised.
+    expect(readFileSync(SCRIPT, 'utf8')).toMatch(/refuted.*\*\*.*upheld/s);
+  });
+
   it('instructs the model that its own priors are not evidence', () => {
     // The failure mode of an LLM auditor is agreeing with plausible prose.
     const src = readFileSync(SCRIPT, 'utf8');

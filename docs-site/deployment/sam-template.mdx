@@ -79,9 +79,13 @@ The Lambda execution role follows least-privilege principles. It includes the fo
   </Accordion>
 
   <Accordion title="DynamoDB">
-    `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:Query`
+    `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem`,
+    `dynamodb:Query`, `dynamodb:Scan`, `dynamodb:BatchGetItem`, `dynamodb:BatchWriteItem`
 
-    Scoped to the two MergeWatch tables only. No `Scan` or `DeleteItem` permissions are granted.
+    Specific actions rather than `dynamodb:*`, and scoped by `Resource` to the two MergeWatch
+    table ARNs — the grant cannot reach any other table in the account. `Scan` is used where a
+    lookup has no partition key to query by; `DeleteItem` backs record removal such as revoking
+    an API key.
   </Accordion>
 
   <Accordion title="Amazon Bedrock">

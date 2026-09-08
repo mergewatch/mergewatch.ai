@@ -77,7 +77,12 @@ async function buildFactSheet() {
     const flat = Object.entries(cfg)
       .map(([k, v]) => `  ${k} = ${typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}`)
       .join('\n');
-    facts.push(`## Real DEFAULT_CONFIG (packages/core/src/config/defaults.ts)\n${flat}`);
+    facts.push(
+      `## Real DEFAULT_CONFIG — defaults for \`.mergewatch.yml\` ONLY\n${flat}\n\n` +
+        'IMPORTANT: these are the repo-config defaults. The web dashboard has its OWN separate\n' +
+        'setting names and defaults (e.g. severityThreshold, maxComments) which are NOT these keys\n' +
+        'renamed. Never report a dashboard setting as contradicting a DEFAULT_CONFIG key.',
+    );
   } catch (e) {
     cannotRun(`could not load DEFAULT_CONFIG (${e.message}). Run \`pnpm run build\` first.`);
   }
@@ -85,8 +90,23 @@ async function buildFactSheet() {
   // Webhook events actually dispatched.
   const wh = join(REPO, 'packages/lambda/src/handlers/webhook.ts');
   if (existsSync(wh)) {
-    const evts = [...readFileSync(wh, 'utf8').matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]);
-    facts.push(`## Webhook events the product handles (webhook.ts dispatch)\n  ${[...new Set(evts)].join(', ')}`);
+    const src = readFileSync(wh, 'utf8');
+    const evts = [...src.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]);
+    const actions = [...new Set([...src.matchAll(/action !== '([a-z_]+)'/g)].map((m) => m[1]))];
+    facts.push(
+      `## Webhook events the product handles (webhook.ts dispatch)\n  ${[...new Set(evts)].join(', ')}\n` +
+        `  Actions gated on in handlers: ${actions.join(', ')}\n` +
+        '  A doc naming event.action (e.g. check_run.rerequested) is describing the same thing\n' +
+        '  as the bare event name here. That is not a contradiction.',
+    );
+  }
+
+  // Built-in skip patterns — docs list these verbatim and the list is long
+  // enough that per-identifier grep evidence gets truncated mid-list.
+  const skip = join(REPO, 'packages/core/src/skip-logic.ts');
+  if (existsSync(skip)) {
+    const pats = [...readFileSync(skip, 'utf8').matchAll(/'(\*\*\/[^']+)'/g)].map((m) => m[1]);
+    if (pats.length) facts.push(`## Built-in skip patterns (skip-logic.ts)\n  ${pats.join(', ')}`);
   }
 
   // Provider packages that exist.
@@ -117,21 +137,40 @@ function identifiers(text) {
   return [...ids].slice(0, 40);
 }
 
-/** grep the real source for an identifier; return a few anchoring lines. */
-function evidenceFor(id, budget = 3) {
+/**
+ * Evidence for one identifier.
+ *
+ * Searches the WHOLE repo, not just packages/. Scoping this to source
+ * directories made every reference to a doc or a root-level file report as
+ * "NOT FOUND", which the model then dutifully filed as a finding — the
+ * retrieval was wrong, and the model was faithfully reporting what it was
+ * given. A path that exists on disk is checked as a path first, because
+ * "does this file exist" has a real answer that grep cannot give.
+ */
+function evidenceFor(id, budget = 6) {
   const out = [];
+
+  if (/[./]/.test(id) && existsSync(join(REPO, id))) {
+    return [`${id} — EXISTS on disk at repo root path "${id}"`];
+  }
+
   let rg;
   try {
-    rg = execFileSync(
-      'grep',
-      ['-rn', '--include=*.ts', '--include=*.yaml', '--include=*.yml', '--include=*.mjs', '-F', id, 'packages', 'scripts', 'infra'],
-      { cwd: REPO, encoding: 'utf8', maxBuffer: 8e6, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
+    // `git grep`, not `grep -r`: it searches only TRACKED files. A plain
+    // recursive grep also reads .claude/worktrees/, which holds stale full
+    // copies of this repo from earlier agent runs — the audit cited one of
+    // those as ground truth and reported the real README as wrong. Build
+    // output and dependencies fall out for free.
+    rg = execFileSync('git', ['grep', '-nI', '-F', id, '--', '.'], {
+      cwd: REPO, encoding: 'utf8', maxBuffer: 3.2e7, stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch {
     return out; // grep exits 1 on no match — absence is itself a signal
   }
   for (const line of rg.split('\n')) {
     if (!line || line.includes('.test.')) continue;
+    // A docs page repeating the claim is not evidence FOR the claim.
+    if (line.startsWith('docs-site/') || line.startsWith('README.md')) continue;
     if (out.length >= budget) break;
     out.push(line.slice(0, 240));
   }
@@ -147,7 +186,7 @@ function contextFor(pageText) {
       grounded++;
       blocks.push(`### \`${id}\` — found in source\n${ev.join('\n')}`);
     } else {
-      blocks.push(`### \`${id}\` — NOT FOUND anywhere in packages/, scripts/ or infra/`);
+      blocks.push(`### \`${id}\` — not found anywhere in this repository`);
     }
   }
   return { text: blocks.join('\n\n').slice(0, 24000), grounded, total: blocks.length };
@@ -170,9 +209,33 @@ Report a finding when the page:
   - claims an absolute ("never", "always", "cannot", "all") that the evidence contradicts or qualifies
   - contradicts itself elsewhere on the same page
 
+CRITICAL SCOPING RULE. Some pages describe OTHER companies' products (comparison and competitor
+pages). This codebase is evidence about MergeWatch ONLY. It is not evidence about any other
+product, and the absence of a third party's name from this repository says nothing whatsoever
+about that third party. Never report a claim about another product as a finding, however
+confident you feel — put it in "unverifiable" or omit it. Only claims about MergeWatch's own
+behaviour, configuration, permissions and defaults are in scope.
+
+Likewise, "not found in this repository" is evidence ONLY for claims about MergeWatch's own
+internals. It is not evidence that some external repository, product or service does not exist.
+
 Do NOT report: wording you would phrase differently, missing content you merely expect, style,
 tone, marketing claims, or anything about the future. An audit that reports taste is one that
 gets switched off.
+
+Configuration examples are ILLUSTRATIVE. A sample .mergewatch.yml naming SECURITY.md or
+src/payments/** is showing the reader the shape of the setting; it is not claiming those paths
+exist in this repository. Never report an example value as a finding.
+
+Absence of evidence is not evidence of absence. The evidence you are given is a keyword grep with
+a small per-identifier budget, so a real thing can easily be missing from it. Report "X does not
+exist" ONLY when its absence is the kind of thing the ground-truth sections above would have
+listed. Otherwise it is unverifiable.
+
+Before filing anything, check that your own evidence line CONTRADICTS the quoted sentence. If the
+evidence is consistent with the claim — even partly, even if you would have worded it differently
+— it is not a finding. Filing a finding whose evidence agrees with the text is the single fastest
+way to make this audit worthless.
 
 Severity: "critical" only for a claim that would cause a reader to misconfigure the product or
 misjudge its security posture. "warning" for a claim that is wrong but harmless. "info" for
@@ -230,7 +293,7 @@ try {
   cannotRun(`could not construct the Bedrock provider: ${e.message}`);
 }
 
-let inTok = 0, outTok = 0;
+let inTok = 0, outTok = 0, cacheRead = 0, cacheWrite = 0;
 const results = [];
 const failures = [];
 
@@ -246,7 +309,17 @@ async function auditPage(page) {
   const r = await provider.invokeStructured(MODEL, segments, SCHEMA, 4096);
   inTok += r.usage?.inputTokens ?? 0;
   outTok += r.usage?.outputTokens ?? 0;
-  return { page, ...r.value, grounded: ctx.grounded, identifiers: ctx.total };
+  cacheRead += r.usage?.cacheReadInputTokens ?? 0;
+  cacheWrite += r.usage?.cacheWriteInputTokens ?? 0;
+
+  // The schema makes both keys required, but a malformed object must be
+  // treated as an unaudited page rather than silently becoming an empty
+  // finding list — that would be a page reported clean without being read.
+  const o = r.object;
+  if (!o || !Array.isArray(o.findings) || !Array.isArray(o.unverifiable)) {
+    throw new Error(`model returned no usable audit object (stop: ${r.stopReason ?? 'unknown'})`);
+  }
+  return { page, findings: o.findings, unverifiable: o.unverifiable, grounded: ctx.grounded, identifiers: ctx.total, _ev: ctx.text };
 }
 
 const queue = [...pages];
@@ -256,8 +329,8 @@ await Promise.all(
       const page = queue.shift();
       try {
         const r = await auditPage(page);
-        results.push(r);
         const n = r.findings.length;
+        results.push(r);
         process.stderr.write(`  ${n ? '✗' : '·'} ${page}${n ? ` — ${n} finding(s)` : ''}\n`);
       } catch (e) {
         failures.push({ page, error: e.message });
@@ -267,26 +340,123 @@ await Promise.all(
   }),
 );
 
+/* ────────────────── verification: refute before reporting ───────────────── */
+
+/**
+ * #576 — a second pass that tries to REFUTE each finding.
+ *
+ * The first pass has one dominant failure mode: it files findings whose own
+ * evidence does not actually contradict the text — a dashboard setting read
+ * as a renamed config key, an illustrative example read as a claim about this
+ * repo. Measured on the first full run, 11 of 13 criticals were that shape.
+ *
+ * Instructing the first pass not to do it helped and did not fix it, which is
+ * the same place the review pipeline ended up before W2. So the same answer:
+ * ask a fresh call, holding the same evidence, to knock the finding down.
+ * Defaulting to "refuted" when the evidence is not decisive is deliberate —
+ * a false positive in a release gate costs more than a missed nit, because it
+ * spends the reader's trust and the gate only has so much of that.
+ */
+const VERIFY_SYSTEM = `You are checking whether a documentation finding is REAL before it blocks a release.
+
+You get the finding, the sentence it is about, and the same source evidence the auditor had.
+
+Refute the finding if ANY of these hold:
+  - the evidence does not actually contradict the quoted sentence
+  - the quoted text is an illustrative EXAMPLE (a sample config, a sample instruction) rather than
+    a claim about this repository
+  - the claim is about a third-party product; this codebase is not evidence about those
+  - the finding compares two DIFFERENT settings (e.g. a dashboard setting vs a .mergewatch.yml key)
+    as though one were the other
+  - the evidence is merely absent or incomplete rather than contradictory
+  - the finding is about wording, tone, completeness or taste rather than a false statement
+
+Uphold it ONLY if the evidence positively shows the sentence states something untrue.
+
+Default to refuted when you are unsure. A false positive in a release gate costs more than a
+missed one: it spends the reader's trust, and once people stop believing this report they stop
+reading it.`;
+
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['real', 'refuted'] },
+    reason: { type: 'string' },
+  },
+  required: ['verdict', 'reason'],
+};
+
+async function verifyFinding(f, evidence) {
+  const segments = [
+    { id: 'verify-rules', stability: 'static', text: `${VERIFY_SYSTEM}\n\n` },
+    {
+      id: 'verify-case',
+      stability: 'per-call',
+      text:
+        `# Evidence available to the auditor\n\n${evidence}\n\n` +
+        `# The finding\n\nPage: ${f.page}\nSeverity: ${f.severity}\n` +
+        `Quoted sentence: ${f.quote}\n\nClaimed problem: ${f.problem}\n` +
+        `Cited evidence: ${f.evidence}\n\nIs this finding real?`,
+    },
+  ];
+  const r = await provider.invokeStructured(MODEL, segments, VERIFY_SCHEMA, 1024);
+  inTok += r.usage?.inputTokens ?? 0;
+  outTok += r.usage?.outputTokens ?? 0;
+  cacheRead += r.usage?.cacheReadInputTokens ?? 0;
+  cacheWrite += r.usage?.cacheWriteInputTokens ?? 0;
+  // A verifier that errors must not silently promote the finding to real.
+  return r.object?.verdict === 'real' ? { real: true } : { real: false, reason: r.object?.reason ?? 'verifier failed' };
+}
+
 /* ────────────────── report ──────────────────────────────────────────────── */
 
 // A page that errored was NOT audited. Counting it as clean is the exact
 // failure this script's exit codes exist to prevent, so it degrades the whole
 // run to "did not run" rather than quietly shrinking the denominator.
-const findings = results.flatMap((r) => r.findings.map((f) => ({ ...f, page: r.page })));
+const raw = results.flatMap((r) => r.findings.map((f) => ({ ...f, page: r.page, _ev: r._ev })));
+
+let refuted = 0;
+const findings = [];
+{
+  const q = [...raw];
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, q.length || 1) }, async () => {
+      while (q.length) {
+        const f = q.shift();
+        try {
+          const v = await verifyFinding(f, f._ev ?? '');
+          if (v.real) findings.push(f);
+          else refuted++;
+        } catch {
+          // Verification failed, so the finding is unproven. Keeping it would
+          // report an unverified claim as confirmed.
+          refuted++;
+        }
+      }
+    }),
+  );
+  for (const f of findings) delete f._ev;
+  if (raw.length) process.stderr.write(`  verified: ${findings.length} upheld, ${refuted} refuted\n`);
+}
 const rank = { critical: 0, warning: 1, info: 2 };
 findings.sort((a, b) => rank[a.severity] - rank[b.severity]);
 
 let cost = 0;
 try {
   const core = await import(`file://${join(REPO, 'packages/core/dist/index.js')}`);
-  cost = core.estimateCost(MODEL, inTok, outTok) ?? 0;
+  cost = core.estimateCost(MODEL, inTok, outTok, undefined, { readTokens: cacheRead, writeTokens: cacheWrite }) ?? 0;
 } catch { /* cost is reporting only */ }
 
 const lines = [];
 lines.push('# Pre-release documentation audit');
 lines.push('');
 lines.push(`Audited **${results.length}/${pages.length}** page(s) against the codebase using \`${MODEL}\`.`);
-lines.push(`Tokens: ${inTok.toLocaleString()} in / ${outTok.toLocaleString()} out · est. **$${cost.toFixed(2)}**`);
+lines.push(`Findings are verified by a second pass that tries to refute them: **${refuted}** refuted, **${findings.length}** upheld.`);
+lines.push(
+  `Tokens: ${inTok.toLocaleString()} in / ${outTok.toLocaleString()} out` +
+    (cacheRead || cacheWrite ? ` · cache ${cacheRead.toLocaleString()} read / ${cacheWrite.toLocaleString()} write` : '') +
+    ` · est. **$${cost.toFixed(2)}**`,
+);
 lines.push('');
 
 if (failures.length) {
