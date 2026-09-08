@@ -277,7 +277,7 @@ pnpm run test:coverage  # Run with coverage report
 
 ## Releasing
 
-Releases are cut by the **Release Gate** workflow (#505). It grades the fixture
+Releases are cut by the **Release Gate** workflow (#505). Full detail — the four phases, the gate's outcomes, and what a cut costs — is in [docs/releasing.md](docs/releasing.md). It grades the fixture
 suite, waits for a human to verify the manual scenarios, and only then tags,
 releases, and publishes images. Nothing reaches a `v*` tag without both halves,
 and since #513 nothing reaches GHCR without a tag.
