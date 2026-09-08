@@ -82,6 +82,11 @@ for (const p of [...onDisk].sort()) if (!nav.has(p)) add(`${ROOT}/${p}.mdx`, 'pa
 
 /* ---- 3. internal links and images resolve ---- */
 const images = new Set(files.filter((f) => f.includes('/images/')).map((f) => relative(ROOT, f)));
+/* Every shipped file, not just pages: docs may legitimately link to a PDF,
+ * an OpenAPI spec or a download. Resolving those against the page slugs alone
+ * would report a working link as broken, and a structural check that cries
+ * wolf is one someone eventually switches off. */
+const assets = new Set(files.map((f) => relative(ROOT, f)));
 const targets = [...mdx, 'README.md'].filter(existsSync);
 
 for (const f of targets) {
@@ -93,8 +98,8 @@ for (const f of targets) {
     if (!path) continue;
     if (path.startsWith('/images/')) {
       if (!images.has(path.slice(1))) add(f, `link to missing image "${href}"`);
-    } else if (!onDisk.has(path.slice(1))) {
-      add(f, `link to "${href}" resolves to no page`);
+    } else if (!onDisk.has(path.slice(1)) && !assets.has(path.slice(1))) {
+      add(f, `link to "${href}" resolves to no page or file`);
     }
   }
 

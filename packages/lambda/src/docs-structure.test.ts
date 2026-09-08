@@ -77,6 +77,19 @@ describe('docs structure checker — every check class can actually fail', () =>
     rmSync(d, { recursive: true, force: true });
   });
 
+  it('does not flag a link to a shipped non-page asset', () => {
+    // A link to a PDF, spec or download is valid and must not be reported as
+    // broken. A structural check that cries wolf is one someone switches off.
+    const d = scaffold();
+    mkdirSync(join(d, 'docs-site/files'), { recursive: true });
+    writeFileSync(join(d, 'docs-site/files/spec.pdf'), 'x');
+    edit(d, 'a/one', (s) => `${s}\n[spec](/files/spec.pdf)\n`);
+    const { code, out } = run(d);
+    expect(out).not.toMatch(/resolves to no page/);
+    expect(code).toBe(0);
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it('flags a page that exists but is unreachable from the nav', () => {
     const d = scaffold();
     writeFileSync(join(d, 'docs-site/a/ghost.mdx'), '---\ntitle: "T"\ndescription: "D"\n---\n');
