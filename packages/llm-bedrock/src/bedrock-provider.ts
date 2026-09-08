@@ -118,7 +118,16 @@ function buildAnthropicStructuredBody(
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
-    messages: [{ role: 'user', content: renderPrompt(prompt) }],
+    // #490 — the STRUCTURED path needs the breakpoints too, and this is the
+    // path that matters: since #390 the six finding agents PREFER
+    // invokeStructured, so patching only buildAnthropicBody left every agent
+    // call sending no cache_control at all. The first gate run after
+    // breakpoints shipped showed cost unchanged and zero cache tokens, which
+    // is exactly what a half-wired provider looks like.
+    messages: [{
+      role: 'user',
+      content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
+    }],
     tools: [{
       name: 'emit_result',
       description: 'Emit the structured result of your analysis.',

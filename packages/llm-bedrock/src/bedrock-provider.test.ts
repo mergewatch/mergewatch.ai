@@ -301,3 +301,71 @@ describe('BedrockLLMProvider', () => {
     expect(result.usage).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #490 — BOTH request paths must carry cache breakpoints
+//
+// The bug this locks down: `buildAnthropicBody` was patched and
+// `buildAnthropicStructuredBody` was not. Since #390 the six finding agents
+// PREFER invokeStructured, so every agent call shipped with no cache_control
+// at all. The first gate run after breakpoints landed showed cost unchanged at
+// $4.53 and zero cache tokens — precisely what a half-wired provider looks
+// like, and indistinguishable from "Bedrock ignored our breakpoints".
+//
+// Testing only the text path would have passed while the product cached
+// nothing, which is why both are asserted here.
+// ---------------------------------------------------------------------------
+describe('#490 — cache breakpoints on every path', () => {
+  const MODEL = 'us.anthropic.claude-sonnet-4-20250514-v1:0';
+  const SEGMENTS = [
+    { id: 'shared', stability: 'static', text: 'DIRECTIVES' },
+    { id: 'diff', stability: 'per-pr', text: '\n\nDIFF' },
+    { id: 'agent', stability: 'per-call', text: '\n\nAGENT' },
+  ] as never;
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('the TEXT path sends content blocks with cache_control', async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const provider = new BedrockLLMProvider('us-east-1');
+    await provider.invoke(MODEL, SEGMENTS, 100);
+
+    const content = getLastCommandBody().messages[0].content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.filter((b: { cache_control?: unknown }) => b.cache_control).length).toBeGreaterThan(0);
+  });
+
+  it('the STRUCTURED path sends them too — the path the agents actually use', async () => {
+    mockSend.mockResolvedValueOnce(makeResponse({
+      content: [{ type: 'tool_use', name: 'emit_result', input: { ok: true } }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const provider = new BedrockLLMProvider('us-east-1');
+    await provider.invokeStructured!(MODEL, SEGMENTS, { type: 'object' }, 100);
+
+    const body = getLastCommandBody();
+    expect(Array.isArray(body.messages[0].content)).toBe(true);
+    expect(body.messages[0].content.filter((b: { cache_control?: unknown }) => b.cache_control).length)
+      .toBeGreaterThan(0);
+    // …and the forced tool is still there; caching must not disturb #390.
+    expect(body.tools[0].name).toBe('emit_result');
+  });
+
+  it('both paths leave a plain string as a plain string', async () => {
+    // An unmigrated caller must not start paying the 1.25x write premium.
+    for (const structured of [false, true]) {
+      vi.clearAllMocks();
+      mockSend.mockResolvedValueOnce(makeResponse({
+        content: [structured ? { type: 'tool_use', name: 'emit_result', input: {} } : { type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }));
+      const provider = new BedrockLLMProvider('us-east-1');
+      if (structured) await provider.invokeStructured!(MODEL, 'plain', { type: 'object' }, 100);
+      else await provider.invoke(MODEL, 'plain', 100);
+      expect(getLastCommandBody().messages[0].content).toBe('plain');
+    }
+  });
+});
