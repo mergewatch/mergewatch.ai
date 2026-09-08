@@ -1,5 +1,92 @@
 # Changelog
 
+## [v0.6.1](https://github.com/mergewatch/mergewatch.ai/commits/v0.6.1) (2026-09-04)
+
+Backfilled — the release gate did not update the changelog at the time (#549). 12 commits.
+
+### Bug Fixes
+- fix(core): pass the deployment stage to the inline-reply handler (#544) (#547) (d065b72)
+- fix(core): reject a wrong-shaped orchestrator response instead of crashing (#540) (#541) (227f966)
+- fix(core): verify findings from blocking custom agents (#510) (#535) (9532d2d)
+- fix(core): the verdict says what it examined (#534) (074e0ed)
+- fix(core): the reject footer promised more than the system delivers (#528) (#533) (55f0f67)
+- fix(core): annotate the test stub parameter that broke typecheck on main (#532) (f16bc46)
+- fix(core): discard a review whose head moved instead of publishing it (#527) (#531) (ab63d28)
+- fix(core): close our inline threads when a finding is withdrawn (#530) (bd41587)
+- fix(core): check runs update instead of accumulating (#526) (#529) (6beb8d4)
+- fix(release): publish images only from a gated release (#513) (#514) (ac8f5eb)
+
+### Other Changes
+- docs: explain the Contents write permission before we ask for it (#545) (#546) (30118d2)
+- docs: capture the prompt structure / caching / replay design (#520) (a092415)
+
+## [v0.6.0](https://github.com/mergewatch/mergewatch.ai/commits/v0.6.0) (2026-08-27)
+
+Backfilled — the release gate did not update the changelog at the time (#549). 57 commits.
+
+### Features
+- feat(ci): release gate — grade the suite, verify the manual set, then cut the tag (#507) (13ed897)
+- feat(dashboard): link from the drawer to the full review (#493) (8e3b31a)
+- feat(dashboard): drawer carries the full review; one URL shape for both runtimes (#487) (4010712)
+- feat(dashboard): per-finding evidence panel and the filtered-findings trail (#482) (5711046)
+- feat(dashboard): render findings, summary and merge score on review detail (#481) (ac7a1f0)
+- feat(storage): persist the filter outcome ledger (Dynamo + Postgres) (#480) (beac1f2)
+- feat(core): filter outcome ledger — record why every finding was dropped (#478) (62304cd)
+- feat(core): per-finding evidence in the PR comment (#476) (0d27bf9)
+- feat(billing): record GitHub Marketplace purchases for attribution (#421) (#422) (5b7543c)
+- docs: close out #416 — Tags column, E2E-95/96, graduate the feature doc (#420) (0373fca)
+- feat(core): stage-scoped review identity for dev/prod A/B (#416, stage 1) (#417) (05355f0)
+- feat(billing): OSS operator commands, dashboard, and docs (#409, stage 3) (#412) (44f9c66)
+- feat(billing): OSS pre-approval claimed automatically on install (#409, stage 2) (#411) (a5c69df)
+- feat(billing): OSS grants can be scoped to a whole org (#409, stage 1) (#410) (24b237d)
+
+### Bug Fixes
+- fix(release): build the notes before the tag, and stop grep killing the step (#512) (47e3112)
+- fix(ci): make the fixtures lock an enforceable invariant, not a convention (#508) (4637f56)
+- fix(dashboard): an unconfigured trace table now fails visibly (#494) (#504) (cfd5a18)
+- fix(dashboard): resolve the org from the cookie on pages, not just the shell (#498) (#500) (579b4eb)
+- fix(dashboard): keep the selected org in a user-scoped cookie (#499) (6ea3748)
+- fix(dashboard): the trace table name never reached the Amplify runtime (#497) (5af1450)
+- fix(dashboard): drawer guarded on "complete" against an API that sends "completed" (#496) (4cbc89b)
+- fix(dashboard): the drawer never had review.id, so trail and link were hidden (#495) (4d05a90)
+- fix(core): alias the ledger key when a fingerprint is assigned (#485) (b6a6148)
+- fix(core): omit absent fields from the ledger so traces can actually persist (#483) (4e3f0ad)
+- fix(core): carry convergence past the orchestrator; make the cited-code fence safe (#479) (e9e7282)
+- fix(core): bound every review write path so an oversized comment truncates (#474) (91dff2c)
+- fix(core): cluster findings before the filters that delete them (#385) (#466) (5ad2872)
+- fix(core): absence-of-code findings survive grounding intact (#459) (#461) (3611f60)
+- fix(core): grounding demotes unanchorable criticals instead of deleting them (#459) (#460) (cb51bea)
+- fix(core): stop treating CI and build config as trivial (#455) (#458) (816ef7a)
+- ci: restore the fixtures tooling from origin/main, and assert it (#451) (#457) (1e968aa)
+- fix(core): contain worktree path traversal before retrieval lands (#424) (#432) (75e89dc)
+- fix(core): validate agent findings shape before counting them (#401) (#429) (5505543)
+- fix(core): bound review input so oversized diffs skip, not hard-fail (#423) (#426) (f081e2d)
+- fix(core): dismiss only our own App's stale reviews (#418) (#419) (59f5ac4)
+- fix(scripts): narrowing an org-scoped OSS grant to a repo list now works (#415) (c121bc6)
+
+### Other Changes
+- docs: three answers for E2E-95..99, not one (#442) (#464) (1b9728b)
+- ci: the E2E gate tears down only what it set up (#442) (#465) (130b83d)
+- ci: production wait timer 30 min -> 10 min (#445) (#463) (290793c)
+- ci: setup-sam v2 -> v3, drop the Node 20 forcing flag (#453) (#462) (a88a01d)
+- ci: gate waits on review status, not a 120s timer (#451) (#456) (69788a1)
+- ci: give the E2E gate a git identity (#451) (#454) (c5cc2e4)
+- ci: let the E2E gate be self-tested without pushing to main (#451) (#452) (59b7d74)
+- ci: make the E2E gate's selection failure actually report why (#445) (#450) (8fbb431)
+- ci: E2E gate against dev, blocking prod (#445) (#448) (9ffe8bd)
+- docs: drive /ship through merge and deploy, not just to a green PR (#445) (#449) (7105565)
+- chore(ci): split dev and prod into separate concurrency groups (#446) (5d16242)
+- docs: phased plan for the context architecture (#424) (#433) (5cae461)
+- docs: settle tool loop mechanics — reuse the runtime, carve out Ollama (#424) (#431) (93b3338)
+- docs: settle corpus mechanics and storage for the context architecture (#424) (#430) (cf93bb7)
+- docs: flip E2E-98 to shipped, with the production verification (#423) (#427) (c4c770b)
+- chore(ci): production gate is a 30-minute wait timer, not an approval (#428) (e74746e)
+- chore: default review model to Sonnet 4.6 for its 1M context (#423) (#425) (3ba317d)
+- chore: default review model to Sonnet 4.5 (#414) (20a4da9)
+- docs: close gaps found by a systematic docs-vs-code audit (#408) (d957ae5)
+- docs: close out #409 — flip E2E statuses and mark the plan shipped (#413) (9a5ce45)
+- docs: document minConfidence and correct two stale threshold claims (#407) (3bec1b6)
+
 ## [0.5.0](https://github.com/mergewatch/mergewatch.ai/commits/v0.5.0) (2026-08-19)
 
 First tagged release since `0.1.0` (2026-04-04). Covers the full parity release plan, the MCP server, billing, org custom agents, the multi-agent false-positive reduction work, and the review-reliability hardening series (structured outputs, admission control, verification guardrails).

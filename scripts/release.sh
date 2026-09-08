@@ -17,11 +17,25 @@ set -euo pipefail
 
 # ── Validate input ──────────────────────────────────────────────────────────
 
-VERSION="${1:-}"
+VERSION=""
+# #549 — the Release Gate calls this to prepare a release, and the GATE owns
+# git: it commits and tags the graded SHA under its own identity, with a guard
+# that the tagged commit is the one the suite graded. A script that also tagged
+# would create a second tag path with none of those guards.
+NO_GIT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-git) NO_GIT=1; shift ;;
+    *) VERSION="$1"; shift ;;
+  esac
+done
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: ./scripts/release.sh <version>"
+  echo "Usage: ./scripts/release.sh <version> [--no-git]"
   echo "Example: ./scripts/release.sh 0.2.0"
+  echo ""
+  echo "  --no-git   Edit files only. No commit, no tag — for the Release Gate,"
+  echo "             which owns git and verifies what it tags."
   exit 1
 fi
 
@@ -64,21 +78,16 @@ echo ""
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-# All package.json files to update
-PACKAGE_FILES=(
-  "$REPO_ROOT/package.json"
-  "$REPO_ROOT/packages/core/package.json"
-  "$REPO_ROOT/packages/server/package.json"
-  "$REPO_ROOT/packages/lambda/package.json"
-  "$REPO_ROOT/packages/dashboard/package.json"
-  "$REPO_ROOT/packages/billing/package.json"
-  "$REPO_ROOT/packages/storage-dynamo/package.json"
-  "$REPO_ROOT/packages/storage-postgres/package.json"
-  "$REPO_ROOT/packages/llm-anthropic/package.json"
-  "$REPO_ROOT/packages/llm-bedrock/package.json"
-  "$REPO_ROOT/packages/llm-litellm/package.json"
-  "$REPO_ROOT/packages/llm-ollama/package.json"
-)
+# All package.json files to update.
+#
+# #549 — DERIVED, not hardcoded. The list used to be typed out and
+# `packages/mcp` was never added, which is why packages/mcp/package.json still
+# read 0.1.0 while every other package read 0.5.0. A list maintained by hand
+# beside the thing it describes will drift; this one cannot.
+PACKAGE_FILES=("$REPO_ROOT/package.json")
+while IFS= read -r f; do
+  PACKAGE_FILES+=("$f")
+done < <(find "$REPO_ROOT/packages" -mindepth 2 -maxdepth 2 -name package.json | sort)
 
 for f in "${PACKAGE_FILES[@]}"; do
   if [ -f "$f" ]; then
@@ -161,9 +170,13 @@ echo "  Updated CHANGELOG.md"
 # ── Step 5: Commit and tag ─────────────────────────────────────────────────
 
 echo ""
-git add -A
-git commit -m "chore: release ${TAG}"
-git tag -a "$TAG" -m "Release ${TAG}"
+if [ "$NO_GIT" -eq 1 ]; then
+  echo "  --no-git: files edited; the commit and tag are the caller's."
+else
+  git add -A
+  git commit -m "chore: release ${TAG}"
+  git tag -a "$TAG" -m "Release ${TAG}"
+fi
 
 echo ""
 echo "============================================="

@@ -303,7 +303,27 @@ jobs:
     name: E2E gate (dev)
     runs-on: ubuntu-latest
     needs: deploy-dev
-    if: vars.E2E_GATE_ENABLED == 'true' && github.event.inputs.skip_e2e_gate != 'true'
+    # #549 — a release-prep commit is excluded, and this is NOT an unverified
+    # deploy. The Release Gate pushes `chore: release vX.Y.Z` to main and then
+    # grades that exact SHA itself, moments later, with the same suite. Running
+    # here as well would grade the identical commit twice — and worse, the two
+    # runs contend for the `e2e-fixtures` group below with
+    # `cancel-in-progress: false`, so this one would queue behind the release's
+    # suite and drive the shared fixtures repo afterwards.
+    #
+    # Keyed on the author email rather than the commit message. Both are
+    # settable by anyone who can push to `main`, so this is NOT a security
+    # boundary — and the earlier claim that it was one overstated it. Anyone
+    # with push access can already dispatch this workflow with
+    # `skip_e2e_gate: true`, so nothing is being protected here.
+    #
+    # It is a narrower ACCIDENT filter: a human writing "chore: release v1.2.3"
+    # by hand is plausible, whereas a human committing as
+    # release-gate@mergewatch.ai is not. That is the whole claim.
+    if: >-
+      vars.E2E_GATE_ENABLED == 'true'
+      && github.event.inputs.skip_e2e_gate != 'true'
+      && github.event.head_commit.author.email != 'release-gate@mergewatch.ai'
     # This group protects a RESOURCE, not this workflow (#506).
     #
     # The resource is the `mergewatch/fixtures` repo. Every suite run opens real
