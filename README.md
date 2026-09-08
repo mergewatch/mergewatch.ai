@@ -277,52 +277,84 @@ pnpm run test:coverage  # Run with coverage report
 
 ## Releasing
 
-MergeWatch uses [semantic versioning](https://semver.org/) with a single release script that updates all packages, Docker images, and changelog in one step.
+Releases are cut by the **Release Gate** workflow (#505). It grades the fixture
+suite, waits for a human to verify the manual scenarios, and only then tags,
+releases, and publishes images. Nothing reaches a `v*` tag without both halves,
+and since #513 nothing reaches GHCR without a tag.
 
 ### Cutting a release
 
 ```bash
-# 1. Make sure you're on main with a clean tree
-git checkout main && git pull
-
-# 2. Run the release script (bumps versions, updates changelog, commits, tags)
-./scripts/release.sh 0.2.0
-
-# 3. Push the commit and tag
-git push && git push --tags
-
-# 4. Create a GitHub Release (triggers Docker image builds)
-gh release create v0.2.0 --generate-notes
+gh workflow run release-gate.yml \
+  -f version=v0.7.0 \
+  -f candidate_ref=main
 ```
+
+| Input | Meaning |
+|---|---|
+| `version` | The tag to cut, e.g. `v0.7.0` |
+| `candidate_ref` | Commit or branch to release (default `main`) |
+| `dry_run` | Grade and stop — no approval, no tag. **Not a cheaper path:** it runs the same full suite |
+
+Then:
+
+1. **Graded suite** runs the automated fixtures. It holds the `e2e-fixtures`
+   concurrency lock, so a release and a merge's deploy gate can never drive the
+   shared fixtures repo at once.
+2. **Manual verification** pauses for a person to work through the manual
+   fixtures. Approve it in the run's *Review deployments* prompt. This phase
+   holds no lock, so it can wait as long as needed without queueing anyone's
+   deploys.
+3. **Cut the release** tags the exact commit the suite graded, creates the
+   GitHub Release, then dispatches the image build and waits for it.
+
+If the suite fails, the release is not cut. Fix the cause rather than re-running
+— and note that re-cutting the same version is blocked by the existing-tag
+guard until the tag is removed.
 
 ### What happens automatically
 
 | Trigger | Action |
 |---------|--------|
-| `gh release create` | Docker images built and pushed to GHCR with semver tags (`0.2.0`, `0.2`, `latest`) |
-| Push to `main` | SAM deploy to dev (auto), prod (manual approval via GitHub environment) |
-| Push to `main` | Docker `:latest` and SHA-tagged images published |
+| Push to `main` | Build & test, SAM deploy to dev, E2E gate, then **prod deploy on a ~10 minute timer** |
+| Release Gate | Tags the graded commit, creates the GitHub Release, dispatches the Docker build |
 
-### What the release script does
+**Production deploys need no approval.** #428 replaced the required reviewer with
+a wait timer, so a merge to `main` reaches production whether or not anyone is
+watching.
 
-`scripts/release.sh <version>` automates:
-1. Updates `version` in root + all 11 workspace `package.json` files
-2. Updates the server health check version string
-3. Updates `docker-compose.yml` image tags to the new version
-4. Generates a changelog section from conventional commits (feat/fix/other)
-5. Commits as `chore: release vX.Y.Z` and creates an annotated git tag
+**Creating a release by hand does not publish images.** `docker-publish.yml`
+listens for `release: published`, but GitHub suppresses that event for releases
+created with `GITHUB_TOKEN` — which is what the gate uses. That asymmetry is why
+the gate dispatches the image build explicitly and waits for it, and why v0.6.0
+shipped with no images before the guard existed.
 
 ### Docker image tags
 
-Images are published to `ghcr.io/mergewatch/mergewatch` and `ghcr.io/mergewatch/mergewatch-dashboard`:
+Images are published to `ghcr.io/mergewatch/mergewatch` and `ghcr.io/mergewatch/mergewatch-dashboard`.
 
-Every tag comes from a **released** version. Nothing is published from `main`.
+Every tag comes from a **released** version. Nothing is published from `main` —
+the `push` trigger was removed in #513 because it meant `latest` tracked `main`
+with no gate at all.
 
 | Tag | When |
 |-----|------|
-| `0.2.0` | On GitHub Release for `v0.2.0` |
-| `0.2` | On GitHub Release for `v0.2.x` (tracks latest patch) |
+| `0.7.0` | On the release for `v0.7.0` |
+| `0.7` | On the release for `v0.7.x` (tracks the latest patch) |
 | `latest` | The most recent release |
+| `<sha>` | The commit the release was cut from |
+
+### `scripts/release.sh`
+
+Updates the version in every workspace `package.json`, the server health-check
+string, and `docker-compose.yml`, and generates a changelog section from
+conventional commits.
+
+**The Release Gate does not currently call it.** The gate replaced the manual
+flow and never adopted the script, which is why released versions and the
+version strings in the repo have drifted — `v0.6.0` shipped with every
+`package.json` still reading `0.5.0`. Wiring it in is tracked separately; until
+then, treat it as a local helper rather than part of the release.
 | `abc1234` | The released commit's SHA |
 
 > **`latest` changed meaning after `v0.6.0`.** It used to be built on every push to
