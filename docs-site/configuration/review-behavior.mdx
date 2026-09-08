@@ -46,7 +46,7 @@ MergeWatch deliberately skips reviews in the following situations:
 
 - **Draft PRs** — Skipped by default. Set `rules.skipDrafts: false` in your `.mergewatch.yml` to review drafts.
 - **All changed files are built-in trivial** — If every file in the PR matches MergeWatch's built-in trivial-paths list (lock files, docs, build artifacts, editor/CI config), the PR is skipped. Use `includePatterns` to opt specific paths back in.
-- **PR exceeds `rules.maxFiles` limit** — PRs with more changed files than the configured `maxFiles` value (default: 50) are skipped with a comment explaining why.
+- **PR exceeds `rules.maxFiles` limit** — PRs with more changed files than the configured `maxFiles` value (default: 50) are skipped with a visible check run explaining why. Only an `autoReview: false` skip is silent — every other skip kind still surfaces a check run.
 - **Billing blocked (managed SaaS)** — Once the free tier is used up, reviews require a balance above the minimum. Below it, reviews are blocked *before* the model is called rather than run and billed. See [Billing](/dashboard/billing).
 </Warning>
 

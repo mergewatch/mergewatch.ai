@@ -59,6 +59,9 @@ permissions:
   # It is not covered by `contents: write`: dispatching a workflow is an Actions
   # API write, and GITHUB_TOKEN grants only what is declared here.
   actions: write
+  # #576 — the docs audit calls Bedrock through the same OIDC role the deploy
+  # uses. No new secret: `deploy.yml` already invokes bedrock-runtime this way.
+  id-token: write
 
 jobs:
   # ── prepare ────────────────────────────────────────────────────────────────
@@ -341,9 +344,100 @@ jobs:
           # failures look like regressions.
           scripts/reset-env.sh || echo "::warning::teardown failed — check for stale fixture branches"
 
+  # ── audit ──────────────────────────────────────────────────────────────────
+  # #576 — read README.md and every docs page against the code before cutting.
+  #
+  # Runs in PARALLEL with `suite`: it touches no fixtures and must not sit in
+  # the e2e-fixtures concurrency group, which would block every merge's E2E
+  # gate while it ran.
+  #
+  # Findings do NOT fail this job, on purpose. The release still cannot proceed
+  # without them being seen: `verify` needs this job and renders the report into
+  # the approval summary, so a human adjudicates with the findings in front of
+  # them. Failing here instead would leave no path to release with a known,
+  # accepted finding except disabling the audit — which is how audits die.
+  #
+  # A run that could NOT audit (exit 2) DOES fail. "Nobody checked" and
+  # "checked and clean" must never render the same way, and an incomplete run
+  # silently shrinking its denominator is exactly that failure.
+  audit:
+    name: Documentation audit
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.audit.outputs.status }}
+      findings: ${{ steps.audit.outputs.findings }}
+    steps:
+      - name: Checkout the prepared commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The audit reads DEFAULT_CONFIG from the built package rather than
+      # regexing the source, so the build has to have happened.
+      - run: pnpm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Structural checks
+        run: node scripts/check-docs-structure.mjs
+
+      - name: Audit the docs against the codebase
+        id: audit
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -euo pipefail
+
+          # `|| rc=$?` rather than `set +e`: the exit code IS the result here,
+          # and the rest of the step must still run under -e.
+          rc=0
+          node scripts/audit-docs.mjs --out audit-report.md || rc=$?
+
+          case "$rc" in
+            0) echo "status=clean"    >> "$GITHUB_OUTPUT" ;;
+            1) echo "status=findings" >> "$GITHUB_OUTPUT" ;;
+            *) echo "status=failed"   >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          if [ -f audit-report.md ]; then
+            cat audit-report.md >> "$GITHUB_STEP_SUMMARY"
+            # grep -c exits 1 on zero matches, which -e would treat as fatal.
+            n=$(grep -c '^### ' audit-report.md || true)
+            echo "findings=${n:-0}" >> "$GITHUB_OUTPUT"
+          else
+            echo "findings=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Exit 2 means the docs were not actually checked. That must stop the
+          # release; only a real audit may hand off to the human.
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::The documentation audit could not run. This is not a clean result."
+            exit 1
+          fi
+
+      - name: Upload the audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-audit-report
+          path: audit-report.md
+          if-no-files-found: warn
+
   verify:
     name: Manual verification
-    needs: suite
+    needs: [suite, audit]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     # Required reviewers live on this environment. No concurrency group: this
@@ -360,6 +454,8 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           GRADED: ${{ needs.suite.outputs.graded }}
+          AUDIT_STATUS: ${{ needs.audit.outputs.status }}
+          AUDIT_FINDINGS: ${{ needs.audit.outputs.findings }}
         run: |
           {
             echo "# Release $VERSION — manual verification"
@@ -368,6 +464,31 @@ jobs:
             echo '```'
             echo "$GRADED"
             echo '```'
+            echo
+            echo "## Documentation audit (#576)"
+            echo
+            # The three states are spelled out rather than reduced to a tick.
+            # "did not run" reading as "clean" is the failure this gate exists
+            # to prevent, so the approver is told which one they are looking at.
+            case "$AUDIT_STATUS" in
+              clean)
+                echo "✅ **Audited, no findings.** Every claim the evidence could settle agreed with the code."
+                ;;
+              findings)
+                echo "🟡 **Audited — $AUDIT_FINDINGS finding(s).** Read the full report in the"
+                echo "\`Documentation audit\` job summary, or the \`docs-audit-report\` artifact."
+                echo
+                echo "Approving this job accepts these findings as known and shipping anyway."
+                ;;
+              *)
+                echo "⚠️ **The audit did not complete.** The documentation was NOT checked."
+                echo "This is not a clean result — treat the docs as unverified for this release."
+                ;;
+            esac
+            echo
+            echo "The audit checks factual claims against code. It does NOT check prose"
+            echo "quality, screenshots, or whether examples run — see the report's own"
+            echo "\"What this audit did NOT verify\" section."
             echo
             echo "## What still needs a human"
             echo

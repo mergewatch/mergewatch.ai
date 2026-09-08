@@ -41,7 +41,7 @@ description: "Fixes for reviews not posting, webhooks not arriving, Docker conta
   **Fix:**
   1. Confirm the Postgres container is running: `docker compose ps`
   2. Check that `DATABASE_URL` matches your Postgres container's hostname, port, user, and password
-  3. If using the default `docker-compose.yml`, the Postgres service is named `postgres` — the connection string should use `postgres` as the hostname (e.g. `postgresql://mergewatch:password@postgres:5432/mergewatch`)
+  3. If using the default `docker-compose.yml`, the Postgres service is named `db` — the connection string should use `postgres` as the hostname (e.g. `postgresql://mergewatch:password@postgres:5432/mergewatch`)
   4. Restart the stack: `docker compose down && docker compose up -d`
 </Accordion>
 
