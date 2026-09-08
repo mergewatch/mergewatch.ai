@@ -61,8 +61,88 @@ permissions:
   actions: write
 
 jobs:
+  # ── prepare ────────────────────────────────────────────────────────────────
+  # #549 — bump versions and the changelog BEFORE grading.
+  #
+  # The gate tags the exact SHA the suite graded and re-verifies that before
+  # tagging. A version-bump commit changes the SHA, so the invariant has to be
+  # preserved deliberately. Bumping first is the only ordering where the tree
+  # that was TESTED and the tree that was TAGGED are byte-identical — the guard
+  # below stays a plain equality check rather than becoming parentage
+  # arithmetic, and the tag never points at a tree whose package.json is stale.
+  #
+  # That is not hypothetical: v0.6.0 shipped with every package.json still
+  # reading 0.5.0, and there is no 0.6.0 changelog section, because #505
+  # replaced the manual flow and never adopted scripts/release.sh.
+  #
+  # Accepted cost: if the suite then fails, `main` briefly carries a bump for a
+  # release that did not happen. Visible, recoverable, and cheaper than tagging
+  # a tree nobody graded.
+  prepare:
+    name: Prepare the release commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          # release.sh requires main and a clean tree, and the commit has to
+          # land on a branch rather than a detached HEAD.
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump versions and the changelog
+        id: commit
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.candidate_ref }}
+        run: |
+          set -uo pipefail
+          # Only `main` can be prepared: the bump commit is pushed there, and
+          # pushing it while grading a different ref would tag a tree that was
+          # never prepared.
+          if [ "$REF" != "main" ]; then
+            echo "::error::candidate_ref must be 'main' to prepare a release (got '$REF')"
+            exit 1
+          fi
+
+          git config user.name  "mergewatch-release-gate"
+          git config user.email "release-gate@mergewatch.ai"
+
+          # --no-git: the script edits files, this job owns the commit. A
+          # script that also tagged would create a second tag path with none
+          # of the guards below.
+          if ! scripts/release.sh "$VERSION" --no-git; then
+            echo "::error::release.sh failed — nothing was committed"
+            exit 1
+          fi
+
+          if git diff --quiet; then
+            echo "::error::release.sh changed nothing — is $VERSION already the current version?"
+            exit 1
+          fi
+
+          git add -A
+          git commit -m "chore: release $VERSION"
+          git push origin main
+
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "prepared $VERSION at $SHA"
+          {
+            echo "## Prepared"
+            echo ""
+            echo "- Version: \`$VERSION\`"
+            echo "- Commit: \`$SHA\`"
+            echo ""
+            echo "The suite grades THIS commit, and the release tags it. Tested and tagged are the same tree."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   suite:
     name: Graded suite
+    needs: prepare
     runs-on: ubuntu-latest
     # The same group the deploy gate uses. Different groups was #506: both
     # workflows drive one shared fixtures repo, and reset-env.sh closes every
@@ -99,7 +179,10 @@ jobs:
       - name: Checkout candidate
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.candidate_ref }}
+          # #549 — the PREPARED commit, not the input ref. The bump landed on
+          # main a moment ago; grading the input ref would grade the tree from
+          # before it.
+          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
 
       - name: Pin the candidate to a SHA
@@ -274,7 +357,7 @@ jobs:
 
   release:
     name: Cut the release
-    needs: [suite, verify]
+    needs: [prepare, suite, verify]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
