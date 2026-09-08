@@ -22,3 +22,19 @@ jobs:
       - run: pnpm run build
       - run: pnpm run typecheck
       - run: pnpm run test:coverage
+
+  # #576 — structural docs checks. Deliberately a separate job from Build &
+  # Test: it needs no install (node built-ins only, ~1s), and a docs-only PR
+  # should get its answer without waiting on the full build. These checks are
+  # mechanical only — link/nav/frontmatter resolution. Whether the docs are
+  # TRUE is the release-time agent audit's job, and a green run here must not
+  # be read as saying anything about accuracy.
+  docs:
+    name: Docs structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - run: node scripts/check-docs-structure.mjs
