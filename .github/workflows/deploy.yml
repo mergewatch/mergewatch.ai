@@ -311,8 +311,15 @@ jobs:
     # `cancel-in-progress: false`, so this one would queue behind the release's
     # suite and drive the shared fixtures repo afterwards.
     #
-    # Keyed on the committer, not the message: a message is user-supplied text
-    # and anyone could write `chore: release` to skip the gate.
+    # Keyed on the author email rather than the commit message. Both are
+    # settable by anyone who can push to `main`, so this is NOT a security
+    # boundary — and the earlier claim that it was one overstated it. Anyone
+    # with push access can already dispatch this workflow with
+    # `skip_e2e_gate: true`, so nothing is being protected here.
+    #
+    # It is a narrower ACCIDENT filter: a human writing "chore: release v1.2.3"
+    # by hand is plausible, whereas a human committing as
+    # release-gate@mergewatch.ai is not. That is the whole claim.
     if: >-
       vars.E2E_GATE_ENABLED == 'true'
       && github.event.inputs.skip_e2e_gate != 'true'

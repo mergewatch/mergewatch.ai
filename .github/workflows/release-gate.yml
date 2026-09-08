@@ -99,7 +99,12 @@ jobs:
           VERSION: ${{ inputs.version }}
           REF: ${{ inputs.candidate_ref }}
         run: |
-          set -uo pipefail
+          # -e matters here. Without it a failed `git push` does NOT abort:
+          # execution continues, SHA is captured from a local-only commit, the
+          # output is written, and the step exits 0 because the last command
+          # succeeded. The job would go GREEN having pushed nothing, and `suite`
+          # would then try to grade a commit that exists on no remote.
+          set -euo pipefail
           # Only `main` can be prepared: the bump commit is pushed there, and
           # pushing it while grading a different ref would tag a tree that was
           # never prepared.
@@ -129,6 +134,15 @@ jobs:
           git push origin main
 
           SHA="$(git rev-parse HEAD)"
+          # Belt and braces on top of `set -e`: confirm the commit is actually
+          # on the remote before handing the SHA downstream. A push that
+          # "succeeded" but landed elsewhere would otherwise be graded and
+          # tagged as if it were on main.
+          git fetch origin main --quiet
+          if [ "$(git rev-parse origin/main)" != "$SHA" ]; then
+            echo "::error::pushed $SHA but origin/main is $(git rev-parse origin/main) — refusing to continue"
+            exit 1
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "prepared $VERSION at $SHA"
           {
@@ -175,6 +189,20 @@ jobs:
           esac
           echo "candidate: $REF"
           echo "version:   $VERSION"
+
+      - name: Require a prepared commit
+        env:
+          PREPARED: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # `actions/checkout` treats an empty `ref` as "the default branch",
+          # so a missing output would silently grade the PRE-bump tree and the
+          # release would tag something the suite never saw. Refuse instead.
+          if [ -z "$PREPARED" ]; then
+            echo "::error::prepare produced no SHA — refusing to grade an unknown tree"
+            exit 1
+          fi
+          echo "grading prepared commit $PREPARED"
 
       - name: Checkout candidate
         uses: actions/checkout@v6

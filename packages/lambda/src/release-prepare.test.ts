@@ -49,6 +49,24 @@ describe('#549 — the prepare stage', () => {
     expect(gate.jobs.release.needs).toContain('prepare');
   });
 
+  it('fails fast, so a failed push cannot go green', () => {
+    // Review finding on #578. With `set -uo pipefail` and no -e, a failed
+    // `git push` did not abort: SHA was captured from a local-only commit, the
+    // output was written, and the step exited 0 on the last command. The job
+    // would have gone GREEN having pushed nothing.
+    const run = JSON.stringify(gate.jobs.prepare.steps);
+    expect(run).toContain('set -euo pipefail');
+    // …and the pushed commit is confirmed to be on the remote.
+    expect(run).toContain('origin/main');
+  });
+
+  it('the suite refuses an empty prepared SHA', () => {
+    // actions/checkout treats an empty `ref` as the DEFAULT BRANCH, so a
+    // missing output would silently grade the pre-bump tree and the release
+    // would tag something the suite never saw.
+    expect(JSON.stringify(gate.jobs.suite.steps)).toContain('refusing to grade an unknown tree');
+  });
+
   it('refuses to prepare anything but main', () => {
     // The bump is pushed to main; preparing a different ref would tag a tree
     // that was never prepared.
@@ -70,9 +88,11 @@ describe('#549 — the deploy gate skips a release-prep commit', () => {
     expect(deploy.jobs['e2e-gate'].if).toContain('release-gate@mergewatch.ai');
   });
 
-  it('keys on the committer, not the commit message', () => {
-    // A message is user-supplied text: anyone could write `chore: release` to
-    // skip the gate.
+  it('keys on the author email, not the commit message', () => {
+    // Neither is a security boundary — both are settable by anyone who can
+    // push to main, and they can already dispatch with skip_e2e_gate. This is
+    // an ACCIDENT filter: a human writing "chore: release v1.2.3" by hand is
+    // plausible; a human committing as release-gate@mergewatch.ai is not.
     expect(deploy.jobs['e2e-gate'].if).toContain('author.email');
     expect(deploy.jobs['e2e-gate'].if).not.toContain('head_commit.message');
   });
