@@ -78,12 +78,18 @@ did not expect.
 
 ### Events
 
-`pull_request`, `issue_comment`, `pull_request_review_comment`, `installation`
+`pull_request`, `issue_comment`, `pull_request_review_comment`, `check_run`, `check_suite`, `installation`
 
 `pull_request_review_comment` is what makes replying inside a finding thread
 work. If you are configuring a self-hosted App and omit it, reviews will post
 normally but threaded replies — including `resolved` and `/mergewatch reject` —
 will be silently ignored.
+
+`check_suite` is what makes the **Re-run all checks** button work. GitHub fires
+`check_suite.rerequested` for that button, not `check_run.rerequested`, so an
+App subscribed only to `check_run` shows a button that does nothing at all.
+Both are needed: `check_run.rerequested` covers re-running the single
+MergeWatch check, which is a separate affordance with a different payload.
 
 ## Self-hosted
 

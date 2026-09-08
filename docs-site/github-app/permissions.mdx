@@ -11,17 +11,17 @@ MergeWatch follows the principle of least privilege. Every permission below is t
 
 | Permission | Level | Why it's needed |
 | --- | --- | --- |
-| **Checks** | `read & write` | Create check runs on the pull request with a findings summary, merge readiness score, and pass/fail status. <img src="/images/repo.checks-permission.png" alt="Checks — Read and write" /> |
-| **Contents** | `read` | Read the pull request diff and the `.mergewatch.yml` configuration file from the repository root. MergeWatch never writes to repository contents. <img src="/images/repo.contents-permission.png" alt="Contents — Read-only" /> |
-| **Issues** | `read & write` | Create and update PR summary comments (GitHub's API uses the Issues endpoint for PR comments), list existing comments to avoid duplicates, and add reactions (e.g., :eyes: when a review starts). <img src="/images/repo.issues-permission.png" alt="Issues — Read and write" /> |
+| **Checks** | `read & write` | Create check runs on the pull request with a findings summary, merge readiness score, and pass/fail status. |
+| **Contents** | `read & write` | **Read:** the pull request diff, file contents used to ground and verify findings against the real code, and `.mergewatch.yml` from the repository root. **Write:** resolving and unresolving review threads MergeWatch itself created — that is the only thing the write half is used for. GitHub offers no narrower permission that covers thread resolution. Declining this permission is supported: reviews, findings, inline comments and check runs all continue to work, and only thread tidying is lost. |
+| **Issues** | `read & write` | Create and update PR summary comments (GitHub's API uses the Issues endpoint for PR comments), list existing comments to avoid duplicates, and add reactions (e.g., :eyes: when a review starts). |
 | **Metadata** | `read` | Automatically granted to all GitHub Apps. Provides access to basic repository metadata (name, description, default branch). |
-| **Pull requests** | `read & write` | Post inline review findings as PR review comments, create and dismiss reviews, and read PR metadata and diffs. This is the primary output channel for every review. <img src="/images/repo.pr-permission.png" alt="Pull requests — Read and write" /> |
+| **Pull requests** | `read & write` | Post inline review findings as PR review comments, create and dismiss reviews, and read PR metadata and diffs. This is the primary output channel for every review. |
 
 ### Organization permissions
 
 | Permission | Level | Why it's needed |
 | --- | --- | --- |
-| **Members** | `read` | Verify that the user accessing organization-level settings in the dashboard is an org admin. No member data is stored. <img src="/images/org.members-permission.png" alt="Members — Read-only" /> |
+| **Members** | `read` | Verify that the user accessing organization-level settings in the dashboard is an org admin. No member data is stored. |
 
 <Info>
   All permissions are set at install time via the GitHub App manifest. You can verify them at any time in **GitHub Settings > Applications > MergeWatch > Permissions**.
@@ -32,8 +32,8 @@ MergeWatch follows the principle of least privilege. Every permission below is t
 Equally important is what the app *cannot* do. These permissions are intentionally excluded.
 
 <CardGroup cols={3}>
-  <Card title="No repository: write" icon="lock">
-    MergeWatch cannot push commits, merge pull requests, or modify any file in your repository. It is read-only with respect to code.
+  <Card title="No commits, branches, or files" icon="lock">
+    MergeWatch never pushes commits, creates or deletes branches or tags, modifies files, opens or merges pull requests, or changes repository settings. `Contents: read & write` is granted only because GitHub routes review-thread resolution through it.
   </Card>
   <Card title="No secrets: read" icon="key">
     MergeWatch cannot access repository or organization secrets. It has zero visibility into your CI/CD credentials, tokens, or environment variables.
@@ -53,6 +53,7 @@ MergeWatch subscribes to the following webhook events. Each event triggers a spe
 | `issue_comment` | Listens for `@mergewatch` mentions in PR comments (`@mergewatch review`, `@mergewatch summary`, or free-form respond mode). |
 | `pull_request_review_comment` | Detects when a human replies inside a review-comment thread that MergeWatch started, so the bot can reply inline. Only `created` actions with an `in_reply_to_id` are handled. |
 | `check_run` | Listens for `rerequested` so reviewers can re-run a MergeWatch review by clicking the **Re-run** button on the check in GitHub's Checks UI. |
+| `check_suite` | Listens for `rerequested`. GitHub's **Re-run all checks** button fires `check_suite.rerequested`, *not* `check_run.rerequested` — without this event that button silently does nothing. |
 | `installation` | Tracks when the app is installed or uninstalled so MergeWatch can provision or clean up installation records. |
 
 See [Webhook Events](/github-app/webhook-events) for the exact action-level handling per event.
