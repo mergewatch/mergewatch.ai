@@ -439,7 +439,23 @@ jobs:
           longest=$(printf '%s' "$GRADED" | { grep -oE '`+' || true; } \
             | awk '{ if (length($0) > m) m = length($0) } END { print m+0 }')
           fence=$(printf '%*s' "$(( longest < 3 ? 3 : longest + 1 ))" '' | tr ' ' '`')
+          # #550 — what CHANGED goes first. The provenance block below is the
+          # evidence this gate exists to produce and is kept in full, but a
+          # reader deciding whether to upgrade needs the changes, and the notes
+          # used to omit them entirely: v0.6.1's said nothing about its eight
+          # fixes, two of which had made features silently non-functional.
+          #
+          # Same generator as CHANGELOG.md. --no-heading because a GitHub
+          # Release's title already IS the version.
+          CHANGES="$(scripts/changelog-section.sh "$VERSION" --no-heading || true)"
           {
+            printf '## What changed\n'
+            if [ -n "$CHANGES" ]; then
+              printf '%s\n' "$CHANGES"
+            else
+              printf '\n_Changelog generation produced nothing — see the commit range._\n'
+            fi
+            printf '\n---\n\n'
             printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
             printf 'Graded fixture suite:\n\n'
             printf '%s\n%s\n%s\n\n' "$fence" "$GRADED" "$fence"
