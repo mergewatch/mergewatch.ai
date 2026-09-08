@@ -188,6 +188,46 @@ describe('formatReviewComment', () => {
     expect(result).not.toContain('```mermaid');
   });
 
+  // #561 — the payload and the prose must describe the SAME review.
+  //
+  // Two representations of one number will drift the first time someone edits
+  // one of them. The grader will prefer the payload, so a payload that
+  // disagreed with the visible table would silently bill against numbers
+  // nobody could see.
+  it('#561 — the machine-readable payload agrees with the rendered table', async () => {
+    const { parseCostPayload } = await import('./comment-formatter.js');
+    const result = formatReviewComment(baseOptions({
+      inputTokens: 115256,
+      outputTokens: 2551,
+      estimatedCostUsd: 0.2424,
+    }));
+
+    const payload = parseCostPayload(result);
+    expect(payload).not.toBeNull();
+    expect(payload!.estimatedCostUsd).toBe(0.2424);
+    expect(payload!.inputTokens).toBe(115256);
+    expect(payload!.outputTokens).toBe(2551);
+
+    // …and those exact figures are what the human table shows.
+    expect(result).toContain('$0.2424');
+    expect(result).toContain('115,256 in');
+    expect(result).toContain('2,551 out');
+  });
+
+  it('#561 — a re-review payload carries both figures the prose splits', async () => {
+    const { parseCostPayload } = await import('./comment-formatter.js');
+    const result = formatReviewComment(baseOptions({
+      inputTokens: 10, outputTokens: 5,
+      estimatedCostUsd: 0.1, cumulativeCostUsd: 0.75,
+    }));
+    const payload = parseCostPayload(result);
+    expect(payload!.estimatedCostUsd).toBe(0.1);
+    expect(payload!.cumulativeCostUsd).toBe(0.75);
+    // The prose form the regex has to special-case; the payload does not.
+    expect(result).toContain('this run');
+    expect(result).toContain('total for PR');
+  });
+
   // Review details section
   it('shows review details with tokens, cost, duration, and model', () => {
     const result = formatReviewComment(baseOptions({

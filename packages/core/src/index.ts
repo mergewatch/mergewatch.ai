@@ -151,6 +151,8 @@ export type { ReviewThreadComment } from './github/client.js';
 // ─── Comment formatter ──────────────────────────────────────────────────────
 export { formatReviewComment,
   mergeScoreMeta, buildReviewDetailUrl, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent } from './comment-formatter.js';
+export { renderCostPayload, parseCostPayload, COST_PAYLOAD_MARKER } from './comment-formatter.js';
+export type { CostPayload } from './comment-formatter.js';
 export type { Finding, WorkDoneSection } from './comment-formatter.js';
 
 // ─── Review delta ────────────────────────────────────────────────────────────

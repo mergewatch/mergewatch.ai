@@ -558,6 +558,55 @@ function fitSections(sections: Section[], budget: number, reviewDetailUrl?: stri
  *
  * @returns A markdown string ready to be posted as a GitHub PR comment.
  */
+/**
+ * #561 — marker for the machine-readable cost payload.
+ *
+ * Exported so a consumer parses against the same constant the formatter
+ * writes, rather than a copied literal.
+ */
+export const COST_PAYLOAD_MARKER = 'mw-cost';
+
+export interface CostPayload {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCostUsd?: number | null;
+  cumulativeCostUsd?: number | null;
+}
+
+/**
+ * Render the cost payload as an HTML comment.
+ *
+ * Emitted even when every field is absent: a payload of `{}` still tells a
+ * reader "this deployment emits payloads and this review genuinely had no
+ * cost", which is different from "no payload, so I could not tell". That
+ * distinction is the whole point — a silent zero is what #561 is about.
+ */
+export function renderCostPayload(p: CostPayload): string {
+  const body: Record<string, number> = {};
+  if (p.inputTokens != null) body.inputTokens = p.inputTokens;
+  if (p.outputTokens != null) body.outputTokens = p.outputTokens;
+  if (p.estimatedCostUsd != null) body.estimatedCostUsd = p.estimatedCostUsd;
+  if (p.cumulativeCostUsd != null) body.cumulativeCostUsd = p.cumulativeCostUsd;
+  return `<!-- ${COST_PAYLOAD_MARKER}:${JSON.stringify(body)} -->`;
+}
+
+/**
+ * Read a cost payload back. Returns null when absent or unparseable — the
+ * caller then falls back to the prose table, which is what keeps a review
+ * from an older deployment readable.
+ */
+export function parseCostPayload(body: string): CostPayload | null {
+  const m = new RegExp(`<!-- ${COST_PAYLOAD_MARKER}:(\\{.*?\\}) -->`).exec(body ?? '');
+  if (!m) return null;
+  try {
+    const parsed: unknown = JSON.parse(m[1]);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as CostPayload;
+  } catch {
+    return null;
+  }
+}
+
 export function formatReviewComment(options: FormatOptions): string {
   const {
     summary,
@@ -917,6 +966,17 @@ export function formatReviewComment(options: FormatOptions): string {
     }
     details.push('');
     details.push('</details>');
+    // #561 — a machine-readable copy of the numbers rendered above.
+    //
+    // The E2E grader parses cost out of the PROSE table with a regex, across a
+    // repo boundary. A formatter change stops it matching and the suite total
+    // silently collapses to $0.00 — which reads as good news. Nothing pins the
+    // two ends together, and nothing can: the parser is in another repo, so a
+    // test here would have to copy the regexes and could drift the same way.
+    //
+    // An HTML comment removes the coupling rather than testing it. Invisible
+    // when rendered, same pattern as the `mw-fp` inline fingerprint.
+    details.push(renderCostPayload({ inputTokens, outputTokens, estimatedCostUsd, cumulativeCostUsd }));
     details.push('');
   }
 
