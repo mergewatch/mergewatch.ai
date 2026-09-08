@@ -140,14 +140,25 @@ describe('release gate — the tag must point at the commit that was graded (#50
 });
 
 describe('release gate — shell hygiene', () => {
-  it('uses set -uo pipefail in every run block that sets shell options', () => {
+  it('sets -u and pipefail in every run block that sets shell options', () => {
     // The Grade step used `set -o pipefail` alone, so an unset $MW_STAGE would
     // have passed an empty --stage rather than failing.
+    //
+    // #549 — asserts the PROPERTY (`-u` present, pipefail present) rather than
+    // the exact string `set -uo pipefail`. The prepare step deliberately adds
+    // `-e`: without it a failed `git push` did not abort, and the job went
+    // green having pushed nothing. Matching a literal spelling would have made
+    // that fix fail a test whose intent it actually satisfies.
+    //
+    // `-e` stays opt-in rather than universal: several steps here handle
+    // failure explicitly (`|| true` on the fence guard, `|| rc=$?` on the
+    // selector) and would break under it.
     for (const job of Object.values<any>(wf.jobs)) {
       for (const step of job.steps ?? []) {
         if (typeof step.run === 'string' && step.run.includes('set -')) {
-          expect(step.run, `${step.name} should use set -uo pipefail`)
-            .toMatch(/set -uo pipefail/);
+          const flags = /set -([a-z]+) pipefail/.exec(step.run)?.[1] ?? '';
+          expect(flags, `${step.name} must set -u`).toContain('u');
+          expect(step.run, `${step.name} must set pipefail`).toContain('pipefail');
         }
       }
     }
