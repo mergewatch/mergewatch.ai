@@ -157,6 +157,11 @@ describe('docs structure checker — wired into per-PR CI', () => {
 
   it('is its own job, so a docs failure is not reported as a build failure', () => {
     expect(wf.jobs.docs).toBeTruthy();
+    // Assert the build job is present by its real key BEFORE asserting what it
+    // does not contain. Renaming it would otherwise leave the second assertion
+    // inspecting `undefined`, which passes for the wrong reason — the failure
+    // mode this whole file exists to rule out.
+    expect(wf.jobs.test, 'the Build & Test job key changed — update this test').toBeTruthy();
     expect(JSON.stringify(wf.jobs.test)).not.toContain('check-docs-structure');
   });
 });
