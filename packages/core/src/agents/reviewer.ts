@@ -2334,18 +2334,30 @@ export async function verifyFindings(
         return { keep: false };
       }
 
-      const prompt = `${verifierPromptHead}
-
---- Finding ---
-File: ${f.file}
-Line: ${f.line}
-Severity: ${f.severity}
-Title: ${f.title}
-Description: ${f.description}
-Suggestion: ${f.suggestion}
-
---- Complete current file: ${f.file} ---
-${content}`;
+      // #490 — the FILE goes ABOVE the finding, and that ordering is the
+      // single biggest saving in the pipeline. This used to send
+      // `head + finding + file`, so ten findings in one file re-sent that
+      // whole file ten times at full price. With the file above, the prefix
+      // `head + file` is identical for every finding in that file and is
+      // served from cache after the first.
+      //
+      // Labels: the file content is `per-pr` because it is fixed at the PR
+      // head for the whole review; only the finding differs per call. That
+      // gives static → per-pr → per-call, which is where the breakpoint goes.
+      const prompt: PromptSegment[] = [
+        { id: 'verifier-head', stability: 'static', text: verifierPromptHead },
+        {
+          id: 'verifier-file',
+          stability: 'per-pr',
+          text: `\n\n--- Complete current file: ${f.file} ---\n${content}`,
+        },
+        {
+          id: 'verifier-finding',
+          stability: 'per-call',
+          text: `\n\n--- Finding ---\nFile: ${f.file}\nLine: ${f.line}\nSeverity: ${f.severity}\n`
+            + `Title: ${f.title}\nDescription: ${f.description}\nSuggestion: ${f.suggestion}`,
+        },
+      ];
 
       try {
         // #390 — prefer schema-constrained verdicts; unsupported providers

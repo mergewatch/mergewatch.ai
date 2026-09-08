@@ -1,4 +1,4 @@
-import { renderPrompt } from '@mergewatch/core';
+import { renderPrompt, toCacheableBlocks, hasCacheableBoundary } from '@mergewatch/core';
 import Anthropic from '@anthropic-ai/sdk';
 import type { ILLMProvider, LLMInvokeResult, LLMSamplingConfig, LLMStructuredResult, PromptInput} from '@mergewatch/core';
 
@@ -24,7 +24,10 @@ export class AnthropicLLMProvider implements ILLMProvider {
       // #489 — rendered here rather than upstream. This provider does not yet
       // place cache breakpoints, so segments collapse to exactly the string
       // it built before.
-      messages: [{ role: 'user', content: renderPrompt(prompt) }],
+      messages: [{
+        role: 'user',
+        content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
+      }] as never,
     });
     const block = response.content[0];
     if (block.type !== 'text') {
@@ -68,7 +71,10 @@ export class AnthropicLLMProvider implements ILLMProvider {
       // #489 — rendered here rather than upstream. This provider does not yet
       // place cache breakpoints, so segments collapse to exactly the string
       // it built before.
-      messages: [{ role: 'user', content: renderPrompt(prompt) }],
+      messages: [{
+        role: 'user',
+        content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
+      }] as never,
     });
     const block = response.content.find((b) => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') {
