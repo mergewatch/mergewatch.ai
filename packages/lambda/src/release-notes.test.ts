@@ -140,6 +140,17 @@ describe('#550 — the generator itself', () => {
     expect(gen(['0.6.2', '--since', 'v0.6.1', '--no-heading'])).toMatch(/\(#\d+\)/);
   });
 
+  it('fails on a range that does not resolve, rather than reporting "no changes"', () => {
+    // Review finding on #580. `collect()` ends in `|| true`, so a git failure
+    // returned empty and a WRONG RANGE rendered identically to an uneventful
+    // release — which in a release means notes claiming nothing changed.
+    //
+    // A bad ref did already fail, but only because the empty-range branch ran
+    // git again under pipefail: correct by accident, and one edit from silently
+    // losing it.
+    expect(() => gen(['0.7.0', '--since', 'v9.9.9'])).toThrow(/does not resolve/);
+  });
+
   it('says so plainly when nothing conventional is in range', () => {
     // A docs-only or chore-only release is a real case. An empty section would
     // read like the generator broke.
