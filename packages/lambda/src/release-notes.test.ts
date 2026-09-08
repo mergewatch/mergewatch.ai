@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import yaml from 'js-yaml';
 
 /**
@@ -21,8 +23,39 @@ const notesStep = JSON.stringify(
   gate.jobs.release.steps.find((s: any) => s.name === 'Tag and release'),
 );
 
-const gen = (args: string[]) =>
-  execFileSync(resolve(ROOT, 'scripts/changelog-section.sh'), args, { cwd: ROOT, encoding: 'utf8' });
+/**
+ * A throwaway repo with known commits and a tag.
+ *
+ * These used to run against this repo's own history. That exercised real
+ * `git log` — which was the point — but made the tests environment-dependent:
+ * CI checks out shallow and WITHOUT tags, so `--since v0.6.1` failed there
+ * while passing locally. Building the history keeps the real-git property and
+ * removes the dependency on whatever the checkout happens to contain.
+ */
+function repoWithHistory(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'changelog-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+  git('init', '--quiet', '-b', 'main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  const commit = (msg: string) => {
+    writeFileSync(join(dir, 'f.txt'), msg);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', msg);
+  };
+  commit('chore: before the tag');
+  git('tag', 'v0.6.1');
+  commit('feat(core): a new capability (#101) (#102)');
+  commit('fix(core): a real defect (#103)');
+  commit('chore: not user-facing');
+  return dir;
+}
+
+const REPO = repoWithHistory();
+
+const gen = (args: string[], cwd = REPO) =>
+  execFileSync(resolve(ROOT, 'scripts/changelog-section.sh'), args, { cwd, encoding: 'utf8' });
 
 describe('#550 — one generator feeds both', () => {
   it('release.sh calls the shared script rather than inlining git log', () => {
