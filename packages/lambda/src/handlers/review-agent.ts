@@ -102,7 +102,7 @@ import {
 import { BedrockLLMProvider, SUPPORTED_MODELS } from '@mergewatch/llm-bedrock';
 import { isSaas, billingCheck, recordReview, postBlockedCheckRun, ensureBillingIssue, updateBillingFields, getStripe, isLapsedOssGrant } from '@mergewatch/billing';
 import { SSMGitHubAuthProvider } from '../github-auth-ssm.js';
-import { payloadFromEvent, attemptFromEvent, rateLimitedCheckSummary, type ReviewAgentEvent } from './review-agent-event.js';
+import { payloadFromEvent, attemptFromEvent, billingAttemptIdFromEvent, rateLimitedCheckSummary, type ReviewAgentEvent } from './review-agent-event.js';
 // #416 — deployment stage, so review artifacts (comment marker, check-run
 // name) are scoped per stage. Absent means prod, which is the frozen
 // production identity — see packages/core/src/stage.ts.
@@ -1223,7 +1223,7 @@ export async function handler(
       let billingRecorded = false;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          await recordReview(dynamodb, INSTALLATIONS_TABLE, String(installationId), result.estimatedCostUsd, prNumberCommitSha, stripe, ossRepoContext);
+          await recordReview(dynamodb, INSTALLATIONS_TABLE, String(installationId), result.estimatedCostUsd, prNumberCommitSha, stripe, ossRepoContext, billingAttemptIdFromEvent(rawEvent) ?? undefined);
           billingRecorded = true;
           break;
         } catch (err) {

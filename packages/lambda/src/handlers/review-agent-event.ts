@@ -14,6 +14,8 @@ interface SqsRecordLike {
   body: string;
   /** SQS delivery bookkeeping — "1" on first receive, incremented on redelivery. */
   attributes?: { ApproximateReceiveCount?: string };
+  /** #563 — stable across a redelivery, distinct per enqueue. */
+  messageId?: string;
 }
 
 export type ReviewAgentEvent = ReviewJobPayload | { Records: SqsRecordLike[] };
@@ -62,4 +64,28 @@ export function rateLimitedCheckSummary(attempt: number, parkedAtIso: string): s
     + 'If all attempts exhaust, the job is dead-lettered and automatically re-driven every few '
     + 'minutes until the provider recovers (#398), so a long outage still resolves without '
     + 'intervention. You can also re-run this check or comment `@mergewatch review` to retry now.';
+}
+
+/**
+ * #563 — an identity for the BILLABLE unit of work.
+ *
+ * Billing keyed on `prNumber#sha` could not distinguish a redelivered webhook
+ * (must not double-charge) from a genuine second review of the same commit
+ * (must charge). Stripe rejected the second call because the key had already
+ * been used with a different amount, so the re-review was delivered and never
+ * billed — while DynamoDB still recorded the usage. The two ledgers disagreed,
+ * silently.
+ *
+ * The SQS message id has exactly the right semantics: SQS reuses it when
+ * redelivering the same message, and a new review is a NEW enqueue with a new
+ * id. Absent on the direct-invoke fallback (a stack deployed without the
+ * queue), where returning null preserves today's per-commit keying rather than
+ * inventing an identity that could double-charge.
+ */
+export function billingAttemptIdFromEvent(event: ReviewAgentEvent): string | null {
+  if (event != null && typeof event === 'object' && 'Records' in event && Array.isArray(event.Records)) {
+    const id = event.Records[0]?.messageId;
+    return typeof id === 'string' && id !== '' ? id : null;
+  }
+  return null;
 }

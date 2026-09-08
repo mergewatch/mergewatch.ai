@@ -37,6 +37,20 @@ export async function recordReview(
   reviewKey: string,
   stripe?: Stripe,
   repo?: RepoContext,
+  /**
+   * #563 — identity of the billable unit of work, when the runtime can supply
+   * one. `reviewKey` is `prNumber#sha`, which cannot distinguish a redelivered
+   * webhook (must not double-charge) from a genuine second review of the same
+   * commit (must charge). Stripe rejected the second call because the key had
+   * already been used with a different amount, so the re-review was delivered
+   * and never billed — while DynamoDB still recorded the usage, leaving the
+   * two ledgers silently disagreeing.
+   *
+   * Absent means keep the old per-commit key: that is correct for a runtime
+   * with no stable per-attempt identity, and inventing one there could
+   * double-charge a redelivery.
+   */
+  billingAttemptId?: string,
 ): Promise<void> {
   const fields = await getBillingFields(client, table, installationId);
 
@@ -97,11 +111,21 @@ export async function recordReview(
             platformFee: String(cost.platformFee),
           },
         },
-        { idempotencyKey: `review-billing-${installationId}-${reviewKey}` },
+        {
+          idempotencyKey: billingAttemptId
+            ? `review-billing-${installationId}-${reviewKey}-${billingAttemptId}`
+            : `review-billing-${installationId}-${reviewKey}`,
+        },
       );
     } catch (err) {
-      // Non-critical: DynamoDB is the source of truth, Stripe is secondary
-      console.warn('Failed to debit Stripe customer balance:', err);
+      // #563 — the ledgers can now disagree only on a real Stripe failure, not
+      // on a re-review. Logged at ERROR because a failed debit means usage was
+      // recorded and money was not taken: the divergence accumulates silently
+      // and nothing else watches for it.
+      console.error(
+        '[billing] Stripe debit FAILED — usage recorded but not charged for %s:',
+        reviewKey, err,
+      );
     }
 
     // Check if auto-reload should fire
