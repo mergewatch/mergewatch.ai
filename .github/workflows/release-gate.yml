@@ -439,7 +439,31 @@ jobs:
           longest=$(printf '%s' "$GRADED" | { grep -oE '`+' || true; } \
             | awk '{ if (length($0) > m) m = length($0) } END { print m+0 }')
           fence=$(printf '%*s' "$(( longest < 3 ? 3 : longest + 1 ))" '' | tr ' ' '`')
+          # #550 — what CHANGED goes first. The provenance block below is the
+          # evidence this gate exists to produce and is kept in full, but a
+          # reader deciding whether to upgrade needs the changes, and the notes
+          # used to omit them entirely: v0.6.1's said nothing about its eight
+          # fixes, two of which had made features silently non-functional.
+          #
+          # Same generator as CHANGELOG.md. --no-heading because a GitHub
+          # Release's title already IS the version.
+          # `|| true` would conflate two different things: the generator
+          # FAILING, and there being nothing to report. The generator already
+          # emits an explicit "no feature or fix commits in this range" line
+          # for the second, so an empty result here can only mean the first —
+          # and silently printing a placeholder would ship notes that look
+          # complete. Capture the status and fail the release instead.
+          CHANGES=""
+          gen_rc=0
+          CHANGES="$(scripts/changelog-section.sh "$VERSION" --no-heading)" || gen_rc=$?
+          if [ "$gen_rc" -ne 0 ] || [ -z "$CHANGES" ]; then
+            echo "::error::changelog-section.sh failed (rc=$gen_rc) — refusing to publish notes that omit what changed"
+            exit 1
+          fi
           {
+            printf '## What changed\n'
+            printf '%s\n' "$CHANGES"
+            printf '\n---\n\n'
             printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
             printf 'Graded fixture suite:\n\n'
             printf '%s\n%s\n%s\n\n' "$fence" "$GRADED" "$fence"

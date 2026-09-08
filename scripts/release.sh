@@ -128,33 +128,10 @@ fi
 CHANGELOG="$REPO_ROOT/CHANGELOG.md"
 TODAY=$(date +%Y-%m-%d)
 
-# Find previous tag (if any)
-PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-if [ -n "$PREV_TAG" ]; then
-  RANGE="${PREV_TAG}..HEAD"
-  COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/compare/${PREV_TAG}...${TAG}"
-else
-  RANGE="HEAD"
-  COMPARE_URL="https://github.com/mergewatch/mergewatch.ai/commits/${TAG}"
-fi
-
-# Collect commits grouped by type
-FEATURES=$(git log $RANGE --oneline --no-merges --grep="^feat" --format="- %s (%h)" 2>/dev/null || true)
-FIXES=$(git log $RANGE --oneline --no-merges --grep="^fix" --format="- %s (%h)" 2>/dev/null || true)
-OTHERS=$(git log $RANGE --oneline --no-merges --invert-grep --grep="^feat" --grep="^fix" --grep="^chore" --grep="^docs" --grep="^ci" --grep="^test" --format="- %s (%h)" 2>/dev/null || true)
-
-# Build the new changelog section
-NEW_SECTION="## [${VERSION}](${COMPARE_URL}) (${TODAY})"$'\n'
-if [ -n "$FEATURES" ]; then
-  NEW_SECTION+=$'\n'"### Features"$'\n'"${FEATURES}"$'\n'
-fi
-if [ -n "$FIXES" ]; then
-  NEW_SECTION+=$'\n'"### Bug Fixes"$'\n'"${FIXES}"$'\n'
-fi
-if [ -n "$OTHERS" ]; then
-  NEW_SECTION+=$'\n'"### Other Changes"$'\n'"${OTHERS}"$'\n'
-fi
+# #550 — ONE generator, shared with the release notes. Two implementations of
+# "what changed in this release" would disagree the first time either was
+# touched, and the notes are the copy a user actually reads.
+NEW_SECTION=$("$REPO_ROOT/scripts/changelog-section.sh" "$VERSION")
 
 if [ -f "$CHANGELOG" ]; then
   # Prepend new section after the header line
