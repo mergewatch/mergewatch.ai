@@ -208,8 +208,26 @@ export class TraceRecorder {
     if (outcome === 'merged' && extra?.mergedInto && this.resolve(extra.mergedInto) === key) {
       return;
     }
-    // First verdict wins: a later stage never rewrites an earlier one's record.
-    if (e.outcome) return;
+    // #594, second half. `enter()` files same-(file,title) findings from
+    // different agents under ONE row, and those instances can have DIFFERENT
+    // fates: the orchestrator drops one as a duplicate while another survives,
+    // is renamed by a merge, and aliases back to that same row.
+    //
+    // First-verdict-wins then makes the row say `dropped` for a finding the
+    // reader actually SAW. Observed on mergewatch/fixtures#2597.
+    //
+    // Overwriting would fix the lie by telling a different one — it would erase
+    // the earlier stage's reasoning, which the one-terminal-outcome rule exists
+    // to protect. Two instances with two fates deserve two rows, so a survivor
+    // that only reached this row THROUGH AN ALIAS gets filed under its own key
+    // instead. A finding recorded directly against an already-decided row is
+    // unchanged: same key in, first verdict still wins.
+    if (e.outcome) {
+      const ownKey = outcomeKey(f);
+      if (outcome !== 'surfaced' || ownKey === key || this.entries.get(ownKey)?.outcome) return;
+      this.enter(f, 'orchestrator');
+      e = this.entries.get(ownKey)!;
+    }
     e.outcome = outcome;
     e.stage = stage;
     e.reason = extra?.reason;
