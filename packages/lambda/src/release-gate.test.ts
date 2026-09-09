@@ -251,11 +251,18 @@ describe('release gate — the version is validated before anything is written',
    * EXPLAINING the ordering, so a naive indexOf matches prose and asserts the
    * opposite of what it means. Compare executable lines only.
    */
-  const code = (jobStepId: string) =>
-    (wf.jobs.prepare.steps.find((s: any) => s.id === jobStepId).run as string)
+  const code = (jobStepId: string) => {
+    const step = wf.jobs.prepare.steps.find((s: any) => s.id === jobStepId);
+    // Assert the step exists before reading it. Renaming or removing the id
+    // would otherwise throw a TypeError that reads as a broken test rather
+    // than as "the step this guards is gone" — and these assertions are the
+    // only thing standing between a typo'd version and a push to main.
+    expect(step, `no step with id '${jobStepId}' in the prepare job`).toBeTruthy();
+    return (step.run as string)
       .split('\n')
       .filter((l: string) => !/^\s*#/.test(l))
       .join('\n');
+  };
 
   it('prepare rejects a malformed version before it commits or pushes', () => {
     // The v0.6.2 cut was dispatched as `0.6.2` (no `v`). `prepare` accepted it
