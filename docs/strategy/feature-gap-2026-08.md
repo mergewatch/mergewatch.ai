@@ -1,6 +1,6 @@
 # Feature Gap Refresh — August 2026
 
-> Supersedes the competitor-facing portions of [`feature-gap.md`](./feature-gap.md) (2026-07-17). Adds **Greptile** and **Macroscope** as first-class comparators, updates CodeRabbit/Qodo/Copilot to their Aug-2026 state, and maps every gap to a scheduled weekly release. Tracking issue: [#304](https://github.com/mergewatch/mergewatch.ai/issues/304).
+> Supersedes the competitor-facing portions of [`feature-gap.md`](./feature-gap.md) (2026-07-17). Adds **Greptile** and **Macroscope** as first-class comparators, updates CodeRabbit/Qodo/Copilot to their Aug-2026 state, and maps every gap to a themed week, bucketed into semver releases. Tracking issue: [#304](https://github.com/mergewatch/mergewatch.ai/issues/304).
 > **Date:** 2026-08-13 · **Sources:** vendor sites/docs/changelogs fetched 2026-08-13 (research briefs in the issue bodies); MergeWatch capabilities from this codebase.
 
 ---
@@ -61,27 +61,32 @@ Legend: ✅ has it · 🟡 partial · ❌ missing. MW column shows MergeWatch to
 
 ---
 
-## Weekly release plan (one release per week)
+## Release plan
+
+R1–R12 are the planning units — each is a week of themed work. They **ship in semver minor releases, three themes per minor**, so the parity plan completes exactly at **v1.0.0**. The weekly rhythm is how the work is cut; the version is what users see.
 
 Full issue specs live on each issue; master tracker is [#304](https://github.com/mergewatch/mergewatch.ai/issues/304).
 
-| Release | Due | Theme | Issues |
-|---|---|---|---|
-| **R1** | Aug 22 | Table-stakes review UX | #273 · #274 · #275 |
-| **R2** | Aug 29 | Incremental review + profiles | #276 · #277 |
-| **R3** | Sep 5 | Deterministic signals I | #278 · #279 |
-| **R4** | Sep 12 | Deterministic signals II | #280 · #281 |
-| **R5** | Sep 19 | Fix loop | #282 · #283 |
-| **R6** | Sep 26 | Feedback capture + noise learning | #284 · #285 |
-| **R7** | Oct 3 | Learnings engine | #286 · #287 · #253 |
-| **R8** | Oct 10 | Ticket compliance | #288 |
-| **R9** | Oct 17 | Provenance moat | #289 (supersedes #272) · #290 |
-| **R10** | Oct 24 | Context depth | #291 · #292 |
-| **R11** | Oct 31 | Enterprise trust | #293 · #294 · #295 |
-| **R12** | Nov 7 | Reach & reporting | #296 · #297 · #298 |
-| Backlog | — | Deferred | #299 · #300 · #301 · #302 · #303 |
+| Ships in | Theme | Week of | Focus | Issues |
+|---|---|---|---|---|
+| **v0.8.0** (Sep 5) | R1 | Aug 22 | Table-stakes review UX | #273 · #274 · #275 |
+| ↳ | R2 | Aug 29 | Incremental review + profiles | #276 · #277 |
+| ↳ | R3 | Sep 5 | Deterministic signals I | #278 · #279 |
+| **v0.9.0** (Sep 26) | R4 | Sep 12 | Deterministic signals II | #280 · #281 |
+| ↳ | R5 | Sep 19 | Fix loop | #282 · #283 |
+| ↳ | R6 | Sep 26 | Feedback capture + noise learning | #284 · #285 |
+| **v0.10.0** (Oct 17) | R7 | Oct 3 | Learnings engine | #286 · #287 · #253 |
+| ↳ | R8 | Oct 10 | Ticket compliance | #288 · #555 |
+| ↳ | R9 | Oct 17 | Provenance moat | #289 (supersedes #272) · #290 |
+| **v1.0.0** (Nov 6) | R10 | Oct 24 | Context depth | #291 · #292 |
+| ↳ | R11 | Oct 31 | Enterprise trust | #293 · #294 · #295 · #556 |
+| ↳ | R12 | Nov 6 | Reach & reporting | #296 · #297 · #298 |
+| ↳ | AD0 | Sep 11 | Validate the demand — evidence only, no build | #316 · #317 · #318 · #319 · #332 |
+| — | Backlog | — | Deferred, unmilestoned | #299 · #300 · #301 · #302 · #303 |
 
-**Sequencing rationale** (unchanged from [`catch-up-plan.md`](./catch-up-plan.md), re-cut for weekly cadence): table-stakes credibility first, then the deterministic evidence that makes the gate defensible, then the fix loop the market now expects, then the feedback/learnings moat, compliance surfaces, provenance differentiation, context depth, and reach last. Big rocks (index, learnings, SSO) will span more than a week of build time — the milestone marks the release that *ships* them; start early.
+**Sequencing rationale** (unchanged from [`catch-up-plan.md`](./catch-up-plan.md), re-cut for weekly cadence, now grouped into minors): table-stakes credibility first, then the deterministic evidence that makes the gate defensible, then the fix loop the market now expects, then the feedback/learnings moat, compliance surfaces, provenance differentiation, context depth, and reach last. Big rocks (index, learnings, SSO) will span more than a week of build time — the milestone marks the release that *ships* them; start early.
+
+**v1.0.0 is parity-complete plus the Adversarial Defense evidence gate (AD0).** AD0 carries no engineering build and is due well before v1.0.0 ships, so the go/no-go for AD1–AD4 is settled before 1.0 goes out. The AD track then continues as minors — v1.1.0 through v1.4.0 — each conditional on that evidence. See [#332](https://github.com/mergewatch/mergewatch.ai/issues/332).
 
 ---
 
