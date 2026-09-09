@@ -241,3 +241,45 @@ describe('release gate — the release step cannot strand a tag', () => {
     }
   });
 });
+
+describe('release gate — the version is validated before anything is written', () => {
+  const prep = JSON.stringify(wf.jobs.prepare);
+  const suite = JSON.stringify(wf.jobs.suite);
+
+  /**
+   * Comments in this run block mention both `release.sh` and `git push` while
+   * EXPLAINING the ordering, so a naive indexOf matches prose and asserts the
+   * opposite of what it means. Compare executable lines only.
+   */
+  const code = (jobStepId: string) =>
+    (wf.jobs.prepare.steps.find((s: any) => s.id === jobStepId).run as string)
+      .split('\n')
+      .filter((l: string) => !/^\s*#/.test(l))
+      .join('\n');
+
+  it('prepare rejects a malformed version before it commits or pushes', () => {
+    // The v0.6.2 cut was dispatched as `0.6.2` (no `v`). `prepare` accepted it
+    // — release.sh strips a leading `v` — bumped every package.json, wrote a
+    // CHANGELOG section, committed and PUSHED to main. `suite` then rejected
+    // the same input on format. main was left carrying "chore: release 0.6.2"
+    // for a release that was never tagged.
+    const run = code('commit');
+    const validateAt = run.indexOf('version must look like');
+    const mutateAt = run.indexOf('scripts/release.sh');
+    expect(validateAt).toBeGreaterThan(-1);
+    expect(validateAt).toBeLessThan(mutateAt);
+  });
+
+  it('nothing is pushed before the version has been checked', () => {
+    const run = code('commit');
+    expect(run.indexOf('version must look like')).toBeLessThan(run.indexOf('git push'));
+  });
+
+  it('prepare and suite accept exactly the same spellings', () => {
+    // If they diverge, a run can mutate main and then be rejected downstream
+    // for the very input that mutation was based on.
+    const pattern = 'v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*';
+    expect(prep).toContain(pattern);
+    expect(suite).toContain(pattern);
+  });
+});
