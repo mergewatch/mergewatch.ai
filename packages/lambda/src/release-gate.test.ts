@@ -241,3 +241,74 @@ describe('release gate — the release step cannot strand a tag', () => {
     }
   });
 });
+
+describe('release gate — the version is validated before anything is written', () => {
+  const prep = JSON.stringify(wf.jobs.prepare);
+  const suite = JSON.stringify(wf.jobs.suite);
+
+  /**
+   * Comments in this run block mention both `release.sh` and `git push` while
+   * EXPLAINING the ordering, so a naive indexOf matches prose and asserts the
+   * opposite of what it means. Compare executable lines only.
+   */
+  const code = (jobStepId: string) => {
+    const step = wf.jobs.prepare.steps.find((s: any) => s.id === jobStepId);
+    // Assert the step exists before reading it. Renaming or removing the id
+    // would otherwise throw a TypeError that reads as a broken test rather
+    // than as "the step this guards is gone" — and these assertions are the
+    // only thing standing between a typo'd version and a push to main.
+    expect(step, `no step with id '${jobStepId}' in the prepare job`).toBeTruthy();
+    return (step.run as string)
+      .split('\n')
+      .filter((l: string) => !/^\s*#/.test(l))
+      .join('\n');
+  };
+
+  it('prepare rejects a malformed version before it commits or pushes', () => {
+    // The v0.6.2 cut was dispatched as `0.6.2` (no `v`). `prepare` accepted it
+    // — release.sh strips a leading `v` — bumped every package.json, wrote a
+    // CHANGELOG section, committed and PUSHED to main. `suite` then rejected
+    // the same input on format. main was left carrying "chore: release 0.6.2"
+    // for a release that was never tagged.
+    const run = code('commit');
+    const validateAt = run.indexOf('version must look like');
+    const mutateAt = run.indexOf('scripts/release.sh');
+    expect(validateAt).toBeGreaterThan(-1);
+    expect(validateAt).toBeLessThan(mutateAt);
+  });
+
+  it('nothing is pushed before the version has been checked', () => {
+    const run = code('commit');
+    expect(run.indexOf('version must look like')).toBeLessThan(run.indexOf('git push'));
+  });
+
+  it('prepare and suite accept exactly the same spellings', () => {
+    // If they diverge, a run can mutate main and then be rejected downstream
+    // for the very input that mutation was based on.
+    // Compare the actual validation lines rather than a hand-escaped literal:
+    // the point is that the two are IDENTICAL, whatever they say.
+    const check = (job: any) =>
+      JSON.stringify(job).match(/=~ \^v\?[^"]*?\$/)?.[0];
+    expect(check(wf.jobs.prepare)).toBeTruthy();
+    expect(check(wf.jobs.prepare)).toBe(check(wf.jobs.suite));
+  });
+
+  it('rejects versions a `case` glob would have let through', () => {
+    // A glob is too loose to gate a mutation of main: `*` spans anything, so
+    // v1.2.3.4 and v1.2.3junk matched and would have produced a bad tag.
+    const re = /^v?[0-9]+\.[0-9]+\.[0-9]+$/;
+    for (const ok of ['v1.2.3', '0.6.2', 'v0.6.2', '10.20.30']) {
+      expect(re.test(ok), `${ok} should be accepted`).toBe(true);
+    }
+    for (const bad of ['v1.2.3.4', 'v1.2.3junk', 'v1..2', '1.2', 'vX.Y.Z', '', 'v1.2.3-rc1']) {
+      expect(re.test(bad), `${bad} should be rejected`).toBe(false);
+    }
+  });
+
+  it('uses an anchored regex, not a case glob, at both sites', () => {
+    for (const job of [prep, suite]) {
+      expect(job).toContain('=~ ^v?[0-9]+');
+      expect(job).not.toContain('v[0-9]*.[0-9]*.[0-9]*');
+    }
+  });
+});

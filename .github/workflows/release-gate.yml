@@ -108,6 +108,24 @@ jobs:
           # succeeded. The job would go GREEN having pushed nothing, and `suite`
           # would then try to grade a commit that exists on no remote.
           set -euo pipefail
+          # The version format is validated HERE, before anything is written.
+          # It used to be checked only in `suite`, which runs AFTER this job has
+          # already committed and pushed the bump — so `-f version=0.6.2`
+          # (no `v`) left main carrying a "chore: release 0.6.2" commit for a
+          # release that was then rejected on format and never tagged.
+          #
+          # `release.sh` strips a leading `v`, so this job accepted an input
+          # `suite` would refuse. Validate first, and accept both spellings so
+          # the two jobs cannot disagree again.
+          # A `case` glob is too loose to gate a mutation: `*` spans anything,
+          # so v1.2.3.4 and v1.2.3junk both matched and would have produced a
+          # bad tag. Anchored regex — optional `v`, exactly three numeric
+          # components, nothing else.
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"
+            exit 1
+          fi
+
           # Only `main` can be prepared: the bump commit is pushed there, and
           # pushing it while grading a different ref would tag a tree that was
           # never prepared.
@@ -186,10 +204,17 @@ jobs:
           REF: ${{ inputs.candidate_ref }}
         run: |
           set -uo pipefail
-          case "$VERSION" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::version must look like v1.2.3 (got '$VERSION')"; exit 1 ;;
-          esac
+          # Same two spellings `prepare` accepts. If these ever diverge again,
+          # a run can mutate main and then be rejected here for the input that
+          # mutation was based on.
+          # A `case` glob is too loose to gate a mutation: `*` spans anything,
+          # so v1.2.3.4 and v1.2.3junk both matched and would have produced a
+          # bad tag. Anchored regex — optional `v`, exactly three numeric
+          # components, nothing else.
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"
+            exit 1
+          fi
           echo "candidate: $REF"
           echo "version:   $VERSION"
 
