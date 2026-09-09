@@ -189,6 +189,25 @@ export class TraceRecorder {
       // path this fallback exists to handle.
       e = this.entries.get(outcomeKey(f))!;
     }
+    // #594 — a "merge" whose target resolves to the finding's OWN row is a
+    // rename, not an absorption. `enter()` deliberately files identically
+    // titled findings from different agents under ONE row (the cross-agent
+    // convergence signal), and FP-C then merges exactly those findings — so an
+    // absorbed sibling can resolve to the very row its representative lives in.
+    //
+    // Writing 'merged' there spends the row's single terminal verdict on
+    // itself. `finalize()` later calls record(rep, 'surfaced'), which resolves
+    // to the same row, sees an outcome, and returns — so a finding the reader
+    // DID see is filed as merged-away, and any later stage that drops it
+    // cannot record that either.
+    //
+    // The failure is worst exactly where the ledger matters most: the more
+    // agents that independently converge on a finding, the more certain it is
+    // to be mis-recorded. On mergewatch/fixtures#2550 both the prod and dev
+    // reviews produced zero `surfaced` rows while prod rendered two criticals.
+    if (outcome === 'merged' && extra?.mergedInto && this.resolve(extra.mergedInto) === key) {
+      return;
+    }
     // First verdict wins: a later stage never rewrites an earlier one's record.
     if (e.outcome) return;
     e.outcome = outcome;
