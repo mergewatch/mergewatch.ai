@@ -175,6 +175,12 @@ export interface MergeWatchConfig {
    * PR gets reviewed at all when every file is otherwise trivial.
    */
   includePatterns: string[];
+  /**
+   * Patterns that ADD to the built-in trivial list. Decides whether a PR is
+   * reviewed at all; `excludePatterns` decides what reaches the agents once it
+   * is. `includePatterns` overrides both.
+   */
+  skipPatterns: string[];
   /** Minimum severity to report: 'info' | 'warning' | 'critical' */
   minSeverity: 'info' | 'warning' | 'critical';
   /**
@@ -259,6 +265,7 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
     '**/*.wasm',
   ],
   includePatterns: [],
+  skipPatterns: [],
   minSeverity: 'info',
   minConfidence: 75,
   maxFindings: 25,

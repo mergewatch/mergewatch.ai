@@ -1411,6 +1411,9 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     if (Array.isArray(parsed.includePatterns)) {
       config.includePatterns = parsed.includePatterns.filter((p: unknown) => typeof p === 'string');
     }
+    if (Array.isArray(parsed.skipPatterns)) {
+      config.skipPatterns = parsed.skipPatterns.filter((p: unknown) => typeof p === 'string');
+    }
     if (parsed.agents && typeof parsed.agents === 'object') {
       const a = parsed.agents as Record<string, unknown>;
       config.agents = {

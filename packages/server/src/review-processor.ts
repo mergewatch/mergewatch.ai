@@ -3,7 +3,7 @@ import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, createCheckRun,
   resolveWithdrawnFindingThreads, withdrawnThreadKey, isStillPRHead,
-  formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns,
+  formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, extractSkipPatterns,
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
@@ -392,11 +392,12 @@ export async function processReviewJob(
   // yamlConfig was fetched earlier for the autoReview silent-skip gate and
   // is reused below for includePatterns + runtimeConfig — no second round-trip.
   const includePatterns = extractIncludePatterns(yamlConfig);
+  const skipPatterns = extractSkipPatterns(yamlConfig);
 
   // Smart skip check — bypass when user explicitly requested a review via @mergewatch
   const skipReason = job.mentionTriggered
     ? null
-    : shouldSkipPR(prContext.files || [], includePatterns);
+    : shouldSkipPR(prContext.files || [], includePatterns, skipPatterns);
   if (skipReason) {
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', { completedAt: now, skipReason });
     await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, now);

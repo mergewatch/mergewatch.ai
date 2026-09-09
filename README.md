@@ -164,9 +164,17 @@ rules:
   reviewOnMention: true
   skipDrafts: true
 
+# Files whose contents are dropped from the diff sent to the agents.
 excludePatterns:
   - "**/*.lock"
   - "**/dist/**"
+
+# Files that count as trivial, so a PR touching only these is skipped without
+# a review at all. Adds to the built-in list; `includePatterns` overrides both.
+# Use it for the non-code files only your repo knows about.
+skipPatterns:
+  - ".mergewatch.yml"
+  - "skills/**"
 
 # Review tone: collaborative | direct | advisory
 tone: collaborative
