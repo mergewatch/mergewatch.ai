@@ -447,3 +447,64 @@ describe('#594 — a cross-agent representative is recorded as surfaced, not mer
     expect(outs[0].stage).toBe('finding-verify');
   });
 });
+
+describe('#594 second half — `surfaced` is authoritative for a row', () => {
+  const f = (title: string, over: Partial<TraceableFinding> = {}): TraceableFinding => ({
+    file: 'src/admin-endpoint.ts',
+    line: 4,
+    title,
+    severity: 'critical',
+    confidence: 95,
+    ...over,
+  }) as TraceableFinding;
+
+  it('reports a rendered finding as surfaced even when a same-keyed sibling was dropped', () => {
+    // mergewatch/fixtures#2597: the orchestrator dropped one instance as a
+    // duplicate; another survived, was renamed by FP-C, and aliased back to
+    // the same row. The row read `dropped` for a critical the reader SAW.
+    const t = new TraceRecorder();
+    const base = f('Missing authorization check for admin endpoint');
+    t.enter(base, 'security');
+    t.enter(base, 'bug');
+
+    t.record(base, 'dropped', 'orchestrator', { reason: 'duplicate of a stronger finding' });
+
+    const renamed = f('Missing authorization check for admin endpoint — and 6 related cross-agent concerns');
+    t.alias(outcomeKey(base), outcomeKey(renamed));
+    t.finalize([renamed]);
+
+    // Two instances, two fates, two rows — the drop keeps its reasoning and
+    // the rendered finding is recorded as what the reader saw.
+    const outs = t.outcomes();
+    expect(outs).toHaveLength(2);
+    const by = Object.fromEntries(outs.map((o) => [o.outcome, o]));
+    expect(by.surfaced).toBeTruthy();
+    expect(by.dropped.stage).toBe('orchestrator');
+    expect(by.dropped.reason).toBe('duplicate of a stronger finding');
+  });
+
+  it('still refuses to let one filter rewrite another filter\'s verdict', () => {
+    // Only `surfaced` is a fact about the published comment. Everything else
+    // is a stage's opinion and keeps first-verdict-wins.
+    const t = new TraceRecorder();
+    const finding = f('Missing authorization check for admin endpoint');
+    t.enter(finding, 'security');
+    t.record(finding, 'dropped', 'confidence-floor', { reason: 'below floor' });
+    t.record(finding, 'dropped', 'min-severity', { reason: 'under threshold' });
+
+    const outs = t.outcomes();
+    expect(outs[0].stage).toBe('confidence-floor');
+    expect(outs[0].reason).toBe('below floor');
+  });
+
+  it('does not let a later drop overwrite a surfaced row', () => {
+    const t = new TraceRecorder();
+    const finding = f('Missing authorization check for admin endpoint');
+    t.enter(finding, 'security');
+    t.record(finding, 'surfaced');
+    t.record(finding, 'dropped', 'min-severity', { reason: 'late' });
+
+    expect(t.outcomes()).toHaveLength(1);
+    expect(t.outcomes()[0].outcome).toBe('surfaced');
+  });
+});
