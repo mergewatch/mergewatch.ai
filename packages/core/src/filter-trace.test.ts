@@ -373,3 +373,77 @@ describe('isUsableOutcome / usableOutcomes (#482 review)', () => {
     expect(total).toBe(1);
   });
 });
+
+describe('#594 — a cross-agent representative is recorded as surfaced, not merged', () => {
+  const f = (title: string, over: Partial<TraceableFinding> = {}): TraceableFinding => ({
+    file: 'src/admin-endpoint.ts',
+    line: 4,
+    title,
+    severity: 'critical',
+    confidence: 95,
+    ...over,
+  }) as TraceableFinding;
+
+  it('does not spend a row\'s terminal verdict on a merge into itself', () => {
+    // The exact shape from mergewatch/fixtures#2550: three agents independently
+    // raise the SAME title, so enter() files them under one row. FP-C then
+    // merges them and hands back a renamed representative.
+    const t = new TraceRecorder();
+    const finding = f('Missing authorization check for admin endpoint');
+    for (const agent of ['security', 'bug', 'test-coverage']) t.enter(finding, agent);
+
+    const primaryAfter = f('Missing authorization check for admin endpoint — and 2 related cross-agent concerns');
+    const into = outcomeKey(primaryAfter);
+    t.alias(outcomeKey(finding), into);
+    // The absorbed sibling shares the representative's row by design.
+    t.record(finding, 'merged', 'fp-c-line-dedup', { mergedInto: into });
+
+    t.finalize([primaryAfter]);
+
+    const outs = t.outcomes();
+    expect(outs).toHaveLength(1);
+    // Before the fix this was 'merged': a finding the reader SAW, filed as
+    // merged away, with no way for a later stage to correct it.
+    expect(outs[0].outcome).toBe('surfaced');
+  });
+
+  it('still records a genuine absorption of a different finding', () => {
+    const t = new TraceRecorder();
+    const rep = f('Missing authorization check for admin endpoint');
+    const other = f('Admin endpoint lacks authorization check');
+    t.enter(rep, 'security');
+    t.enter(other, 'bug');
+
+    const primaryAfter = f('Missing authorization check for admin endpoint — and 1 related concern');
+    const into = outcomeKey(primaryAfter);
+    t.alias(outcomeKey(rep), into);
+    t.record(other, 'merged', 'fp-c-line-dedup', { mergedInto: into });
+    t.finalize([primaryAfter]);
+
+    const byTitle = Object.fromEntries(t.outcomes().map((o) => [o.title, o.outcome]));
+    expect(byTitle['Admin endpoint lacks authorization check']).toBe('merged');
+    expect(byTitle['Missing authorization check for admin endpoint']).toBe('surfaced');
+  });
+
+  it('lets a stage after the merge record that it dropped the representative', () => {
+    // The other half of the same defect: with the row's verdict spent on a
+    // self-merge, a later drop was unrecordable — so a critical could vanish
+    // between clustering and the comment with nothing in the ledger to explain it.
+    const t = new TraceRecorder();
+    const finding = f('Missing authorization check for admin endpoint');
+    t.enter(finding, 'security');
+    t.enter(finding, 'bug');
+
+    const primaryAfter = f('Missing authorization check for admin endpoint — and 1 related concern');
+    const into = outcomeKey(primaryAfter);
+    t.alias(outcomeKey(finding), into);
+    t.record(finding, 'merged', 'fp-c-line-dedup', { mergedInto: into });
+
+    t.record(primaryAfter, 'dropped', 'finding-verify', { reason: 'verifier refuted it' });
+
+    const outs = t.outcomes();
+    expect(outs).toHaveLength(1);
+    expect(outs[0].outcome).toBe('dropped');
+    expect(outs[0].stage).toBe('finding-verify');
+  });
+});
