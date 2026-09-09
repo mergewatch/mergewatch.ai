@@ -278,8 +278,30 @@ describe('release gate — the version is validated before anything is written',
   it('prepare and suite accept exactly the same spellings', () => {
     // If they diverge, a run can mutate main and then be rejected downstream
     // for the very input that mutation was based on.
-    const pattern = 'v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*';
-    expect(prep).toContain(pattern);
-    expect(suite).toContain(pattern);
+    // Compare the actual validation lines rather than a hand-escaped literal:
+    // the point is that the two are IDENTICAL, whatever they say.
+    const check = (job: any) =>
+      JSON.stringify(job).match(/=~ \^v\?[^"]*?\$/)?.[0];
+    expect(check(wf.jobs.prepare)).toBeTruthy();
+    expect(check(wf.jobs.prepare)).toBe(check(wf.jobs.suite));
+  });
+
+  it('rejects versions a `case` glob would have let through', () => {
+    // A glob is too loose to gate a mutation of main: `*` spans anything, so
+    // v1.2.3.4 and v1.2.3junk matched and would have produced a bad tag.
+    const re = /^v?[0-9]+\.[0-9]+\.[0-9]+$/;
+    for (const ok of ['v1.2.3', '0.6.2', 'v0.6.2', '10.20.30']) {
+      expect(re.test(ok), `${ok} should be accepted`).toBe(true);
+    }
+    for (const bad of ['v1.2.3.4', 'v1.2.3junk', 'v1..2', '1.2', 'vX.Y.Z', '', 'v1.2.3-rc1']) {
+      expect(re.test(bad), `${bad} should be rejected`).toBe(false);
+    }
+  });
+
+  it('uses an anchored regex, not a case glob, at both sites', () => {
+    for (const job of [prep, suite]) {
+      expect(job).toContain('=~ ^v?[0-9]+');
+      expect(job).not.toContain('v[0-9]*.[0-9]*.[0-9]*');
+    }
   });
 });

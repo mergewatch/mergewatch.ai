@@ -117,10 +117,14 @@ jobs:
           # `release.sh` strips a leading `v`, so this job accepted an input
           # `suite` would refuse. Validate first, and accept both spellings so
           # the two jobs cannot disagree again.
-          case "$VERSION" in
-            v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"; exit 1 ;;
-          esac
+          # A `case` glob is too loose to gate a mutation: `*` spans anything,
+          # so v1.2.3.4 and v1.2.3junk both matched and would have produced a
+          # bad tag. Anchored regex — optional `v`, exactly three numeric
+          # components, nothing else.
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"
+            exit 1
+          fi
 
           # Only `main` can be prepared: the bump commit is pushed there, and
           # pushing it while grading a different ref would tag a tree that was
@@ -203,10 +207,14 @@ jobs:
           # Same two spellings `prepare` accepts. If these ever diverge again,
           # a run can mutate main and then be rejected here for the input that
           # mutation was based on.
-          case "$VERSION" in
-            v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"; exit 1 ;;
-          esac
+          # A `case` glob is too loose to gate a mutation: `*` spans anything,
+          # so v1.2.3.4 and v1.2.3junk both matched and would have produced a
+          # bad tag. Anchored regex — optional `v`, exactly three numeric
+          # components, nothing else.
+          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3 or 1.2.3 (got '$VERSION')"
+            exit 1
+          fi
           echo "candidate: $REF"
           echo "version:   $VERSION"
 
