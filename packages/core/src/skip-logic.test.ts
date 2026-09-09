@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, SKIP_PATTERNS } from './skip-logic.js';
+import { shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, extractSkipPatterns, SKIP_PATTERNS } from './skip-logic.js';
 import { DEFAULT_RULES_CONFIG } from './config/defaults.js';
 import type { RulesConfig } from './config/defaults.js';
 
@@ -173,6 +173,52 @@ describe('shouldSkipPR', () => {
   it('omitted includePatterns argument falls back to default skip behaviour', () => {
     const result = shouldSkipPR(['README.md']);
     expect(result).not.toBeNull();
+  });
+
+  // ─── skipPatterns (user-configured trivial files) ───────────────────
+  it('skips a PR whose only file matches a configured skipPattern', () => {
+    const result = shouldSkipPR(['.mergewatch.yml'], [], ['.mergewatch.yml']);
+    expect(result).not.toBeNull();
+  });
+
+  it('reviews the same PR when skipPatterns is not configured', () => {
+    expect(shouldSkipPR(['.mergewatch.yml'])).toBeNull();
+  });
+
+  it('matches inside a dot-directory, which a bare glob would not', () => {
+    const result = shouldSkipPR(['.compound-engineering/config.json'], [], ['**/*.json']);
+    expect(result).not.toBeNull();
+  });
+
+  it('reviews a PR mixing a skipPattern file with real code', () => {
+    const result = shouldSkipPR(['skills/run.py', 'src/app.ts'], [], ['skills/**']);
+    expect(result).toBeNull();
+  });
+
+  it('includePatterns wins over skipPatterns for the same file', () => {
+    const result = shouldSkipPR(['skills/run.py'], ['skills/**'], ['skills/**']);
+    expect(result).toBeNull();
+  });
+
+  it('treats a lowercase pull_request_template as trivial', () => {
+    const result = shouldSkipPR(['.github/pull_request_template.md']);
+    expect(result).not.toBeNull();
+  });
+});
+
+describe('extractSkipPatterns', () => {
+  it('returns [] when yamlConfig is null or undefined', () => {
+    expect(extractSkipPatterns(null)).toEqual([]);
+    expect(extractSkipPatterns(undefined)).toEqual([]);
+  });
+
+  it('returns [] when skipPatterns is missing or not an array', () => {
+    expect(extractSkipPatterns({})).toEqual([]);
+    expect(extractSkipPatterns({ skipPatterns: 'skills/**' } as never)).toEqual([]);
+  });
+
+  it('drops non-string entries', () => {
+    expect(extractSkipPatterns({ skipPatterns: ['skills/**', 42, null] } as never)).toEqual(['skills/**']);
   });
 });
 

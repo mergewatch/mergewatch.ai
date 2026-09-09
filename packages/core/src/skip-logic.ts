@@ -67,6 +67,8 @@ export const SKIP_PATTERNS = [
   // repositories to review. See #455.
   '**/.github/ISSUE_TEMPLATE/**',
   '**/.github/PULL_REQUEST_TEMPLATE*',
+  // minimatch is case-sensitive; lowercase is the form `gh` scaffolds.
+  '**/.github/pull_request_template*',
   '**/.github/FUNDING.yml',
 ];
 
@@ -95,20 +97,32 @@ export function extractIncludePatterns(
   return raw.filter((p): p is string => typeof p === 'string');
 }
 
+/** Sanitized `skipPatterns` from a parsed YAML config. Mirrors {@link extractIncludePatterns}. */
+export function extractSkipPatterns(
+  yamlConfig: Partial<MergeWatchConfig> | null | undefined,
+): string[] {
+  const raw = (yamlConfig as { skipPatterns?: unknown } | null | undefined)?.skipPatterns;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((p): p is string => typeof p === 'string');
+}
+
 export function shouldSkipPR(
   files: string[],
   includePatterns: string[] = [],
+  skipPatterns: string[] = [],
 ): string | null {
   if (files.length === 0) return 'No changed files';
 
   const isForceIncluded = (file: string) =>
     includePatterns.some((pattern) => minimatch(file, pattern));
 
-  const nonTrivialFiles = files.filter(
-    (file) =>
-      isForceIncluded(file) ||
-      !SKIP_PATTERNS.some((pattern) => minimatch(file, pattern)),
-  );
+  // `dot: true` on the user list only: without it a configured `**/*.yml`
+  // cannot match `.github/workflows/ci.yml`.
+  const isTrivial = (file: string) =>
+    SKIP_PATTERNS.some((pattern) => minimatch(file, pattern)) ||
+    skipPatterns.some((pattern) => minimatch(file, pattern, { dot: true }));
+
+  const nonTrivialFiles = files.filter((file) => isForceIncluded(file) || !isTrivial(file));
 
   if (nonTrivialFiles.length === 0) {
     // Categorize what the PR contains for the skip reason

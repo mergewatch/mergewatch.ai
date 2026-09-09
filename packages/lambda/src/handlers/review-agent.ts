@@ -35,6 +35,7 @@ import {
   mergeConfig,
   shouldSkipPR,
   extractIncludePatterns,
+  extractSkipPatterns,
   shouldSkipByRules,
   isAutoReviewOff,
   filterDiff,
@@ -452,9 +453,10 @@ export async function handler(
   const prNumberCommitSha = `${prNumber}#${shortSha}`;
 
   const includePatterns = extractIncludePatterns(yamlConfig);
+  const skipPatterns = extractSkipPatterns(yamlConfig);
 
   // ── Smart skip — bypass when user explicitly requested a review via @mergewatch ────
-  const skipReason = event.mentionTriggered ? null : shouldSkipPR(prContext.files, includePatterns);
+  const skipReason = event.mentionTriggered ? null : shouldSkipPR(prContext.files, includePatterns, skipPatterns);
   if (skipReason) {
     console.log(`Skipping ${repoFullName}#${prNumber}: ${skipReason}`);
 
