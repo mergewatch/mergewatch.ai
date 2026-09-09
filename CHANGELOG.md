@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.2](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.1...v0.6.2) (2026-09-09)
+
+### Features
+- feat(docs): pre-release factual audit of every doc page against the codebase (#588) (aaa94f6)
+- feat(release): release notes say what changed, not just how it was tested (#550) (#580) (d639337)
+- feat(release): the gate bumps versions and the changelog (#549) (#578) (cb6204c)
+- feat(core): emit a machine-readable cost payload (#561, phase 2) (#574) (ba41837)
+- feat(core): cache_control breakpoints and verifier reorder (#490, phase B) (#568) (d9626a6)
+- feat(core): cache-aware token accounting and pricing (#490, phase A) (#567) (a9a6c11)
+- feat(core): reorder prompt segments so six agents share a cacheable prefix (#564) (#566) (98958e4)
+- feat(core): prompts become ordered segments with stability labels (#489) (#565) (8aaa02e)
+
+### Bug Fixes
+- fix(trace): a survivor that reached a decided row via an alias gets its own row (#598) (3aaf228)
+- fix(trace): a cross-agent representative is surfaced, not merged into itself (#595) (f2d65f4)
+- fix(deps): patch Next.js to 15.5.24 for two RCE advisories (#589) (93a7e0a)
+- fix(release): fail on a range that does not resolve (#580 review follow-up) (#581) (118e221)
+- docs: document the release process outside the workflow file (#552) (#579) (9327622)
+- feat(core): emit a machine-readable cost payload (#561, phase 2) (#574) (ba41837)
+- fix(billing): bill a re-review of the same commit (#563) (#573) (88c0b6a)
+- fix(bedrock): send cache breakpoints on the structured path too (#490) (#572) (ea4c4df)
+- fix(core): enforce maxFindings in code, not just in the prompt (#569) (#571) (b3a52da)
+- fix(core): handle check_suite.rerequested so the Re-run button works (#558) (#562) (6ce1f5a)
+- fix(release): grant actions:write so the gate can dispatch docker-publish (#559) (79016fa)
 ## [v0.6.1](https://github.com/mergewatch/mergewatch.ai/commits/v0.6.1) (2026-09-04)
 
 Backfilled — the release gate did not update the changelog at the time (#549). 12 commits.
