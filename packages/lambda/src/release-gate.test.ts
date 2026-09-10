@@ -365,11 +365,26 @@ describe('#592 — a dry run must be dry', () => {
   });
 
   it('summaries distinguish a dry run from a real preparation', () => {
-    // A dry run's output must not read like a cut. These are the two strings a
-    // human sees in the job summary.
+    // Asserting both strings merely EXIST would pass if they were swapped, or
+    // if both sat in the same branch. Check placement: the dry-run summary
+    // must be inside the guard (before `exit 0`), and the prepared summary
+    // after it — on the path a dry run never reaches.
     const run = prepareRun();
-    expect(run).toContain('## Dry run — nothing prepared');
-    expect(run).toContain('## Prepared for release');
+    const guardStart = run.indexOf('DRY_RUN');
+    const guardEnd = run.indexOf('exit 0');
+    expect(guardStart).toBeGreaterThan(-1);
+    expect(guardEnd).toBeGreaterThan(guardStart);
+
+    const dryAt = run.indexOf('## Dry run — nothing prepared');
+    const prepAt = run.indexOf('## Prepared for release');
+    expect(dryAt, 'dry-run summary missing').toBeGreaterThan(-1);
+    expect(prepAt, 'prepared summary missing').toBeGreaterThan(-1);
+
+    // dry-run summary lives INSIDE the guard
+    expect(dryAt).toBeGreaterThan(guardStart);
+    expect(dryAt).toBeLessThan(guardEnd);
+    // prepared summary lives AFTER the guard exits — unreachable on a dry run
+    expect(prepAt).toBeGreaterThan(guardEnd);
   });
 
   it('verify and release remain guarded, so a dry run still cuts no tag', () => {
