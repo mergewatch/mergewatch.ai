@@ -446,6 +446,39 @@ jobs:
       - name: Structural checks
         run: node scripts/check-docs-structure.mjs
 
+      # #601 — the App's subscribed events live in a settings UI with no API,
+      # so nothing in the repo can see them drift from what webhook.ts
+      # dispatches on. When they drift the handler is never reached: no error,
+      # no log. #558 shipped the check_suite handler inert for exactly this
+      # reason, and the Re-run button stayed dead in production.
+      #
+      # Reported, not blocking — same discipline as the docs audit. Drift means
+      # a feature is dead, which a human should see before cutting a release;
+      # it does not mean the release is wrong. Exit 2 (could not check) is also
+      # not a failure here, because a release must not hinge on an external API
+      # being reachable — but it is printed, so it cannot pass for a clean run.
+      - name: App subscription drift (#601)
+        continue-on-error: true
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-app-subscriptions.mjs --stage prod | tee /tmp/drift.txt || rc=$?
+          {
+            echo "## App subscription drift"
+            echo ""
+            case "$rc" in
+              0) echo "✅ Every event \`webhook.ts\` dispatches on is subscribed." ;;
+              1) echo "⚠️ **Drift.** Handlers exist for events the App will never receive — see below. Fix in the App settings UI; there is no API." ;;
+              *) echo "❓ **Could not check.** The subscriptions were NOT compared — this is not a pass." ;;
+            esac
+            echo ""
+            echo '```'
+            cat /tmp/drift.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Audit the docs against the codebase
         id: audit
         env:
