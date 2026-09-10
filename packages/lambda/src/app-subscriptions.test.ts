@@ -50,6 +50,31 @@ describe('subscription drift — the check reads LIVE state, not the repo', () =
   });
 });
 
+describe('subscription drift — review findings from #614', () => {
+  it('refuses a stage name that could escape the SSM path', () => {
+    // STAGE is interpolated into `/mergewatch/${STAGE}/github-app-id`.
+    const r = spawnSync('node', [SCRIPT, '--stage', '../../elsewhere'], { cwd: REPO, encoding: 'utf8' });
+    expect(r.status).toBe(2);
+    expect(`${r.stdout}${r.stderr}`).toMatch(/invalid stage name/i);
+  });
+
+  it('does not count a case label that appears inside a comment', () => {
+    // webhook.ts carries explanatory comments naming events. Counting one as
+    // dispatched would report drift for something nothing handles — a false
+    // drift report discredits the check as surely as a missed one.
+    expect(src).toMatch(/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\//);
+    expect(src).toContain("replace(/\\/\\/.*$/, '')");
+    const stripIdx = src.indexOf('const code = src');
+    const matchIdx = src.indexOf('code.matchAll');
+    expect(stripIdx).toBeGreaterThan(-1);
+    expect(stripIdx).toBeLessThan(matchIdx);
+  });
+
+  it('sends the App ID as a number in the JWT, as GitHub documents', () => {
+    expect(src).toContain('iss: Number(appId)');
+  });
+});
+
 describe('subscription drift — outcomes stay distinguishable', () => {
   it('exits 2 when it cannot check, and says that is not a pass', () => {
     const r = spawnSync('node', [SCRIPT, '--stage', 'definitely-not-a-stage'], {

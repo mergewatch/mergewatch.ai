@@ -31,6 +31,15 @@ const REPO = resolve(dirname(process.argv[1]), '..');
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(n); return i === -1 ? d : argv[i + 1]; };
 const STAGE = arg('--stage', 'prod');
+// STAGE is interpolated into an SSM parameter path, so an unconstrained value
+// (`../../something`) would read a parameter this script has no business
+// reading. Today every caller passes a literal, which is exactly when a guard
+// is cheap to add and nobody notices it is missing.
+if (!/^[a-z0-9-]+$/.test(STAGE)) {
+  console.error(`\n✗ COULD NOT CHECK — invalid stage name ${JSON.stringify(STAGE)}`);
+  console.error('  Expected something like "prod" or "dev".');
+  process.exit(2);
+}
 
 const cannotCheck = (msg) => {
   console.error(`\n✗ COULD NOT CHECK — ${msg}`);
@@ -42,7 +51,17 @@ const cannotCheck = (msg) => {
 const WEBHOOK = resolve(REPO, 'packages/lambda/src/handlers/webhook.ts');
 let src;
 try { src = readFileSync(WEBHOOK, 'utf8'); } catch { cannotCheck(`cannot read ${WEBHOOK}`); }
-const dispatched = [...new Set([...src.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]))].sort();
+// Strip comments first. A `case "check_suite":` written inside a comment —
+// including the explanatory ones in webhook.ts about which events exist —
+// would otherwise be counted as dispatched, and the check would report drift
+// for an event nothing handles. A false drift report is as corrosive here as
+// a missed one: both teach people to disregard the output.
+const code = src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n')
+  .map((l) => l.replace(/\/\/.*$/, ''))
+  .join('\n');
+const dispatched = [...new Set([...code.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]))].sort();
 if (!dispatched.length) cannotCheck('no dispatch cases found — has the switch been refactored?');
 
 /* ── side B: what GitHub will actually deliver ───────────────────────────── */
@@ -64,7 +83,9 @@ try {
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const now = Math.floor(Date.now() / 1000);
 const head = b64({ alg: 'RS256', typ: 'JWT' });
-const body = b64({ iat: now - 60, exp: now + 540, iss: appId });
+// `iss` is the App ID; GitHub documents it as a number. A string works today,
+// which is the kind of thing that quietly stops working.
+const body = b64({ iat: now - 60, exp: now + 540, iss: Number(appId) });
 const jwt = `${head}.${body}.${createSign('RSA-SHA256').update(`${head}.${body}`).sign(pem, 'base64url')}`;
 
 let app;
