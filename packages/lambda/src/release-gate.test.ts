@@ -312,3 +312,83 @@ describe('release gate — the version is validated before anything is written',
     }
   });
 });
+
+describe('#592 — a dry run must be dry', () => {
+  const prepareRun = () => {
+    const step = wf.jobs.prepare.steps.find((s: any) => s.id === 'commit');
+    expect(step, "no step with id 'commit' in the prepare job").toBeTruthy();
+    // Comments in this block describe the ordering they enforce, so an
+    // indexOf over the raw text matches prose. Compare executable lines only.
+    return (step.run as string)
+      .split('\n')
+      .filter((l: string) => !/^\s*#/.test(l))
+      .join('\n');
+  };
+
+  it('receives dry_run at all — the guard cannot fire without it', () => {
+    // The original defect was not a wrong branch; it was that this job never
+    // saw the input. `verify` and `release` had the guard, `prepare` did not.
+    const step = wf.jobs.prepare.steps.find((s: any) => s.id === 'commit');
+    expect(JSON.stringify(step.env)).toContain('inputs.dry_run');
+  });
+
+  it('bails out before release.sh edits anything', () => {
+    const run = prepareRun();
+    const at = run.indexOf('DRY_RUN');
+    // Assert PRESENCE first. Without the guard indexOf returns -1, and
+    // -1 < anything holds — the ordering assertion would pass on the very
+    // code it exists to reject.
+    expect(at, 'the prepare step never mentions DRY_RUN').toBeGreaterThan(-1);
+    expect(at).toBeLessThan(run.indexOf('scripts/release.sh'));
+  });
+
+  it('bails out before the push — main must stay byte-identical', () => {
+    const run = prepareRun();
+    const at = run.indexOf('DRY_RUN');
+    expect(at, 'the prepare step never mentions DRY_RUN').toBeGreaterThan(-1);
+    expect(at).toBeLessThan(run.indexOf('git push'));
+  });
+
+  it('still hands downstream a SHA, so suite and audit grade the candidate', () => {
+    // Exiting without an output would leave `suite` grading an empty string —
+    // the gate would go green having checked nothing, which is worse than the
+    // bug being fixed.
+    const run = prepareRun();
+    const guard = run.slice(run.indexOf('DRY_RUN'), run.indexOf('git config'));
+    expect(guard).toContain('sha=$SHA');
+    expect(guard).toContain('exit 0');
+  });
+
+  it('suite and audit still depend on prepare, so the SHA is actually used', () => {
+    expect(wf.jobs.suite.needs).toBe('prepare');
+    expect(wf.jobs.audit.needs).toBe('prepare');
+  });
+
+  it('summaries distinguish a dry run from a real preparation', () => {
+    // Asserting both strings merely EXIST would pass if they were swapped, or
+    // if both sat in the same branch. Check placement: the dry-run summary
+    // must be inside the guard (before `exit 0`), and the prepared summary
+    // after it — on the path a dry run never reaches.
+    const run = prepareRun();
+    const guardStart = run.indexOf('DRY_RUN');
+    const guardEnd = run.indexOf('exit 0');
+    expect(guardStart).toBeGreaterThan(-1);
+    expect(guardEnd).toBeGreaterThan(guardStart);
+
+    const dryAt = run.indexOf('## Dry run — nothing prepared');
+    const prepAt = run.indexOf('## Prepared for release');
+    expect(dryAt, 'dry-run summary missing').toBeGreaterThan(-1);
+    expect(prepAt, 'prepared summary missing').toBeGreaterThan(-1);
+
+    // dry-run summary lives INSIDE the guard
+    expect(dryAt).toBeGreaterThan(guardStart);
+    expect(dryAt).toBeLessThan(guardEnd);
+    // prepared summary lives AFTER the guard exits — unreachable on a dry run
+    expect(prepAt).toBeGreaterThan(guardEnd);
+  });
+
+  it('verify and release remain guarded, so a dry run still cuts no tag', () => {
+    expect(JSON.stringify(wf.jobs.verify.if)).toContain('dry_run');
+    expect(JSON.stringify(wf.jobs.release.if)).toContain('dry_run');
+  });
+});

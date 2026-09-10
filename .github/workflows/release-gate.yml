@@ -101,6 +101,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           REF: ${{ inputs.candidate_ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           # -e matters here. Without it a failed `git push` does NOT abort:
           # execution continues, SHA is captured from a local-only commit, the
@@ -132,6 +133,33 @@ jobs:
           if [ "$REF" != "main" ]; then
             echo "::error::candidate_ref must be 'main' to prepare a release (got '$REF')"
             exit 1
+          fi
+
+          # #592 — a dry run must be DRY. `dry_run` guarded `verify` and
+          # `release`, but not this job, so a dry run bumped every
+          # package.json, wrote a CHANGELOG section, committed and PUSHED to
+          # main — then skipped the jobs that would have turned that into a
+          # release. main was left claiming a version that was never tagged:
+          # the inverse of the v0.6.0 defect #549 fixed.
+          #
+          # Bail out BEFORE release.sh touches anything, and hand downstream
+          # the SHA main already has, so `suite` and `audit` still grade the
+          # real candidate rather than being skipped.
+          if [ "$DRY_RUN" = "true" ]; then
+            SHA="$(git rev-parse HEAD)"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+            echo "dry run — nothing prepared; grading main as-is at $SHA"
+            {
+              echo "## Dry run — nothing prepared"
+              echo ""
+              echo "- Requested version: \`$VERSION\` (**not** applied)"
+              echo "- Grading: \`$SHA\` — main as it stands"
+              echo ""
+              echo "No version bump, no CHANGELOG entry, no commit, no push. The suite and"
+              echo "the documentation audit run against the candidate; \`verify\` and"
+              echo "\`release\` are skipped, so no tag is cut."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
           git config user.name  "mergewatch-release-gate"
@@ -167,7 +195,7 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "prepared $VERSION at $SHA"
           {
-            echo "## Prepared"
+            echo "## Prepared for release"
             echo ""
             echo "- Version: \`$VERSION\`"
             echo "- Commit: \`$SHA\`"
