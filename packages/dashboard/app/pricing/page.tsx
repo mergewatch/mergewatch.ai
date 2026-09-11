@@ -42,6 +42,12 @@ export default function PricingPage() {
             Pricing
           </Link>
           <Link
+            href="/blog"
+            className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
+          >
+            Blog
+          </Link>
+          <Link
             href="/open-source"
             className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
           >

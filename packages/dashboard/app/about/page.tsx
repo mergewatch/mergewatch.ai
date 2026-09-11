@@ -56,23 +56,12 @@ export default function AboutPage() {
         keeps running.
       </p>
 
-      <h2>Who builds it</h2>
+      <h2>Why it exists</h2>
       <p>
-        MergeWatch is built and maintained by{" "}
-        <a
-          href="https://github.com/santthosh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Santthosh
-        </a>
-        , a software engineer who has spent the last decade-plus building and
-        shipping developer tooling, web infrastructure, and SaaS products at
-        small startups and large platform teams. MergeWatch is an opinionated
-        response to a recurring frustration: every code review tool on the
-        market either locks you into a closed model, prices per seat so that
-        growing teams pay more for the same thing, or ships as a thin wrapper
-        around a single LLM vendor.
+        MergeWatch is an opinionated response to a recurring frustration:
+        every code review tool on the market either locks you into a closed
+        model, prices per seat so that growing teams pay more for the same
+        thing, or ships as a thin wrapper around a single LLM vendor.
       </p>
       <p>
         The project is developed in public. Every design decision, prompt
