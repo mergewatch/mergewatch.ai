@@ -142,6 +142,12 @@ export default async function LandingPage() {
             Pricing
           </Link>
           <Link
+            href="/blog"
+            className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
+          >
+            Blog
+          </Link>
+          <Link
             href="/open-source"
             className="hidden text-sm text-primer-muted transition hover:text-fg-primary sm:inline"
           >
@@ -755,6 +761,14 @@ export default async function LandingPage() {
                 </Link>
               </li>
               <li>
+                <Link
+                  href="/blog"
+                  className="transition hover:text-fg-primary"
+                >
+                  Blog
+                </Link>
+              </li>
+              <li>
                 <a
                   href="https://github.com/mergewatch/mergewatch.ai"
                   target="_blank"
@@ -809,16 +823,7 @@ export default async function LandingPage() {
           </div>
         </div>
         <p className="mt-8 text-center text-xs text-primer-muted">
-          Built by{" "}
-          <a
-            href="https://github.com/santthosh"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="transition hover:text-fg-primary"
-          >
-            Santthosh
-          </a>{" "}
-          &middot; Open source under AGPL-3.0 &copy; {new Date().getFullYear()}{" "}
+            Open source under AGPL-3.0 &copy; {new Date().getFullYear()}{" "}
           mergewatch.ai
         </p>
       </footer>

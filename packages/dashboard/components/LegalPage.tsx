@@ -20,6 +20,9 @@ export function LegalPage({
           <Link href="/pricing" className="transition hover:text-fg-primary">
             Pricing
           </Link>
+          <Link href="/blog" className="transition hover:text-fg-primary">
+            Blog
+          </Link>
           <Link href="/signin" className="transition hover:text-fg-primary">
             Sign in
           </Link>
@@ -46,6 +49,9 @@ export function LegalPage({
           <Link href="/about" className="hover:text-fg-primary">
             About
           </Link>
+          <Link href="/blog" className="hover:text-fg-primary">
+            Blog
+          </Link>
           <Link href="/privacy" className="hover:text-fg-primary">
             Privacy
           </Link>
@@ -62,16 +68,7 @@ export function LegalPage({
           </a>
         </div>
         <p className="mt-4">
-          Built by{" "}
-          <a
-            href="https://github.com/santthosh"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-fg-primary"
-          >
-            Santthosh
-          </a>{" "}
-          &middot; Open source under AGPL-3.0 &copy; {new Date().getFullYear()}{" "}
+            Open source under AGPL-3.0 &copy; {new Date().getFullYear()}{" "}
           mergewatch.ai
         </p>
       </footer>
