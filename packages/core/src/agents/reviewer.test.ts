@@ -19,6 +19,7 @@ import {
   runOrchestratorAgent,
   runDeltaCaptionAgent,
   runReviewPipeline,
+  stripDanglingQuote,
   extractFindingIdentifiers,
   groundFinding,
   describesAbsence,
@@ -2328,6 +2329,31 @@ describe('test-coverage findings are held back from W10 when no harness is decla
     expect(
       result.findings.some((f) => /no test harness|test-coverage findings suppressed/i.test(f.title)),
     ).toBe(true);
+  });
+});
+
+describe('stripDanglingQuote (#617)', () => {
+  it('drops a trailing quote the JSON salvage left behind', () => {
+    // Observed verbatim in production, in the most-read line of the product.
+    expect(stripDanglingQuote('Review recommended before merging."'))
+      .toBe('Review recommended before merging.');
+  });
+
+  it('preserves a reason that legitimately quotes an identifier', () => {
+    // Even count — balanced, so the trailing quote is real content. Stripping
+    // blind would corrupt this, which is why the rule is parity, not suffix.
+    const reason = 'The parameter is named "dir"';
+    expect(stripDanglingQuote(reason)).toBe(reason);
+  });
+
+  it('handles an odd count that is not a simple suffix', () => {
+    expect(stripDanglingQuote('He called it "safe to merge"" '))
+      .toBe('He called it "safe to merge"');
+  });
+
+  it('leaves an empty or quote-free reason untouched', () => {
+    expect(stripDanglingQuote('')).toBe('');
+    expect(stripDanglingQuote('No issues.')).toBe('No issues.');
   });
 });
 

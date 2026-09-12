@@ -1560,8 +1560,27 @@ export async function runOrchestratorAgent(
   return {
     findings: parsed.findings,
     mergeScore: Math.max(1, Math.min(5, mergeScore)),
-    mergeScoreReason: parsed.mergeScoreReason ?? '',
+    mergeScoreReason: stripDanglingQuote(parsed.mergeScoreReason ?? ''),
   };
+}
+
+/**
+ * #617 — drop a trailing `"` the JSON salvage path left behind.
+ *
+ * Observed verbatim on a real review, in the single most-read line of the
+ * product: `… Review recommended before merging."`. The reason survives
+ * truncation repair as a string value whose closing quote ends up inside the
+ * text rather than terminating it.
+ *
+ * Only an ODD number of quotes is unbalanced. A reason that legitimately
+ * quotes an identifier — `the "foo" parameter` — has an even count and is left
+ * exactly as written; stripping blind would corrupt it.
+ */
+export function stripDanglingQuote(reason: string): string {
+  const trimmed = reason.trimEnd();
+  if (!trimmed.endsWith('"')) return reason;
+  const quoteCount = (trimmed.match(/"/g) ?? []).length;
+  return quoteCount % 2 === 1 ? trimmed.slice(0, -1).trimEnd() : reason;
 }
 
 // ─── Full pipeline ─────────────────────────────────────────────────────────
