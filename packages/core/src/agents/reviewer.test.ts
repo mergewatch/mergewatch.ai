@@ -2249,6 +2249,88 @@ describe('FP-C reinstatement when the orchestrator drops a representative (#600)
   });
 });
 
+// ─── #600 follow-up — W10 must not absorb a finding W11 will suppress ───────
+
+describe('test-coverage findings are held back from W10 when no harness is declared', () => {
+  const allAgents: ReviewPipelineOptions['enabledAgents'] = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+
+  it('keeps the "lacks test coverage" wording out of a cluster audit trail (E2E-27)', async () => {
+    // Caught by the E2E gate on #621. W11 collapses test-coverage findings into
+    // one info note when the conventions declare no harness — but if W10
+    // absorbed one first it was no longer top-level, W11 never saw it, and its
+    // wording still rendered inside the representative's "Related concerns"
+    // block. E2E-27 asserts that wording is absent, and it failed.
+    const securityResponse = validFindingsJson([{
+      line: 2, severity: 'critical', confidence: 90,
+      title: 'Path traversal risk in migration directory parameter',
+      description: 'The dir parameter accepts arbitrary directory paths.',
+    }]);
+    // Same region and a shared significant token ("migration"), so W10 would
+    // absorb this into the critical above if it were allowed to.
+    const testCoverageResponse = validFindingsJson([{
+      line: 3, severity: 'warning', confidence: 80,
+      title: 'Migration startup function lacks test coverage',
+      description: 'The migration bootstrap path has no test coverage.',
+    }]);
+    const empty = validFindingsJson([]);
+
+    const llm = createMockLLM([
+      securityResponse, empty, empty,         // security, bug, style
+      empty, testCoverageResponse, empty,     // errorHandling, testCoverage, commentAccuracy
+      JSON.stringify({ summary: 'Adds migrations.' }),
+      '%% overview\nflowchart TD\n  A-->B',
+      JSON.stringify({
+        findings: [
+          {
+            file: 'foo.ts', line: 2, severity: 'critical', category: 'security',
+            title: 'Path traversal risk in migration directory parameter',
+            description: 'The dir parameter accepts arbitrary directory paths.',
+            suggestion: 'Validate the path.',
+          },
+          {
+            file: 'foo.ts', line: 3, severity: 'warning', category: 'test-coverage',
+            title: 'Migration startup function lacks test coverage',
+            description: 'The migration bootstrap path has no test coverage.',
+            suggestion: 'Add a test.',
+          },
+        ],
+        mergeScore: 1,
+        mergeScoreReason: 'Critical.',
+      }),
+    ]);
+
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        enabledAgents: allAgents,
+        // W11 only fires on an explicit declaration.
+        conventions: 'This project has no unit test suite currently.',
+      },
+      { llm },
+    );
+
+    // The assertion E2E-27 makes, against the same surface: the nag wording
+    // must not appear anywhere the reader can see it — including inside
+    // another finding's clustered audit trail.
+    const rendered = result.findings
+      .map((f) => `${f.title}\n${f.description ?? ''}`)
+      .join('\n');
+    expect(rendered).not.toContain('lacks test coverage');
+
+    // And W11 actually ran rather than the finding simply vanishing.
+    expect(
+      result.findings.some((f) => /no test harness|test-coverage findings suppressed/i.test(f.title)),
+    ).toBe(true);
+  });
+});
+
 describe('agentAuthored flag', () => {
   const allAgentsEnabled: ReviewPipelineOptions['enabledAgents'] = {
     security: true,
