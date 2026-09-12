@@ -74,6 +74,35 @@ W3's `partitionDisputed` runs **after** the orchestrator. So the orchestrator ha
 **Code targets:** `packages/core/src/agents/reviewer.ts` (`runReviewPipeline` orchestrator setup) + reuse `packages/core/src/finding-clustering.ts`.
 **E2E target:** [E2E-32](./../e2e/RUNBOOK.md#e2e-32-fp-c--pre-orchestrator-cross-agent-dedup-target).
 
+**Amended by #600 — a merge must not make findings share a fate.** As shipped, a
+representative that the orchestrator dropped took every sibling merged into it.
+The orchestrator judges the representative's *text*; FP-C had already collapsed
+the siblings, so it never saw them, and its verdict was being applied to
+findings it had not read.
+
+The effect was inverted: convergence is what puts a finding into a cluster, and
+being in a cluster is what made it vanish — so **the more agents independently
+agreed, the more likely the finding was to disappear.** On
+`mergewatch/fixtures#2699` five findings merged into *"Missing authorization
+check for admin endpoint"*; the representative was dropped, all six went with
+it, and the review rendered a confident "No issues found in the diff" over an
+unauthenticated admin endpoint.
+
+Now the `merged` verdicts are **deferred**: FP-C still aliases the renamed
+survivor immediately (later stages resolve through it), but siblings are
+recorded as merged only once the representative is known to have survived the
+orchestrator. When it did not, they re-enter the pipeline and earn their own
+terminal outcome like any unmerged finding.
+
+Survival is key match **or** same `(file, line)`. Findings carry no fingerprint
+until after the orchestrator, so `outcomeKey` is the title form and a rename
+changes it — matching on key alone would read every rename as a drop and
+resurrect siblings under a representative that is still there.
+
+**Cost:** a cluster the orchestrator meant to reject wholesale can return. That
+is bounded rather than eliminated — `capFindings` (`max-findings`) runs
+downstream, so reinstated siblings are still capped.
+
 ---
 
 ### FP-D — Diagram path validation  ✅ SHIPPED

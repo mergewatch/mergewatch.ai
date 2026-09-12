@@ -3173,14 +3173,9 @@ export async function runReviewPipeline(
         tokens: extractSignificantTokens(`${m.primaryAfter.title} ${m.primaryAfter.description}`),
       });
     }
-    const into = outcomeKey(m.primaryAfter);
-    trace.alias(outcomeKey(m.primaryBefore), into);
-    for (const a of m.absorbed) {
-      trace.record(a, 'merged', 'fp-c-line-dedup', {
-        mergedInto: into,
-        reason: 'same file and line as a stronger finding, with overlapping wording',
-      });
-    }
+    // The alias must land NOW — later stages resolve through it. Only the
+    // `merged` verdicts on the absorbed siblings are deferred (#600, below).
+    trace.alias(outcomeKey(m.primaryBefore), outcomeKey(m.primaryAfter));
   }
   if (fpCResult.dedupedCount > 0) {
     console.warn(
@@ -3202,15 +3197,100 @@ export async function runReviewPipeline(
   );
 
   // #470 — the orchestrator is an LLM: it returns a new set, so what it
-  // dropped is only knowable by difference. It cannot explain itself without a
-  // schema change and extra output tokens (#473), so these record with a stage
-  // and no reason — attributable, but not explained. A finding whose title the
+  // dropped is only knowable by difference. A finding whose title the
   // orchestrator reworded reads here as a drop plus a new entry; that is what
   // is actually observable, and inventing a link would be a guess.
+  //
+  // #600 — these used to record with no reason at all, on the grounds that the
+  // orchestrator cannot explain itself without a schema change (#473). True,
+  // but it left the one stage that can delete six findings as the only stage
+  // exempt from saying anything. The reason below does not invent a rationale:
+  // it states what IS known — that the finding was absent from the returned
+  // set, and why no finer reason exists — which is strictly more than silence.
+  // Where a drop sent siblings back, it says that too, because that is the
+  // reader's only clue that one verdict moved more than one finding.
+  // #600 — a dropped FP-C representative used to take its absorbed siblings
+  // with it. FP-C merges same-(file,line) cross-agent findings into one
+  // representative; the orchestrator then judges that representative's TEXT. It
+  // never sees the siblings, so treating its verdict as a judgement on all of
+  // them attributes an opinion it did not form.
+  //
+  // The effect was inverted: convergence is what puts a finding into a cluster,
+  // and being in a cluster is what made it vanish — the more agents agreed, the
+  // more certain the finding was to disappear. On mergewatch/fixtures#2699 five
+  // findings were merged into "Missing authorization check for admin endpoint";
+  // the orchestrator dropped the representative and all six went, including a
+  // critical raised at confidence 95 by three independent agents. The review
+  // rendered "No issues found in the diff".
+  //
+  // So the siblings come back and earn their own terminal outcome. This is the
+  // issue's Option 1; Option 2 (forbid the drop) constrains the stage whose
+  // whole purpose is that judgement, and keeps a representative the
+  // orchestrator explicitly rejected.
+  //
+  // Cost, stated rather than waved at: a cluster the orchestrator meant to
+  // reject wholesale can return. It is bounded, not eliminated — capFindings
+  // ('max-findings', below) runs downstream, so reinstated siblings are still
+  // capped and cannot flood a review.
+  //
+  // Survival is key match OR same (file, line). Findings carry no fingerprint
+  // until after the orchestrator, so outcomeKey is the title form and a rename
+  // changes it; matching on key alone would read every rename as a drop and
+  // resurrect siblings under a representative that actually survived. The union
+  // is deliberately conservative about resurrecting.
+  /** #600 — representative key → how many siblings its drop sent back. */
+  const reinstatedFromRep = new Map<string, number>();
+  {
+    const survivingKeys = new Set(orchestratorResult.findings.map(outcomeKey));
+    const survivingSites = new Set(
+      orchestratorResult.findings.map((f) => `${f.file}:${f.line}`),
+    );
+    const reinstated: OrchestratedFinding[] = [];
+    for (const m of fpCResult.merges) {
+      if (!m.absorbed.length) continue;
+      const rep = m.primaryAfter;
+      const survived =
+        survivingKeys.has(outcomeKey(rep)) || survivingSites.has(`${rep.file}:${rep.line}`);
+      if (survived) {
+        // Deferred from FP-C: only now is the merge known to have held.
+        const into = outcomeKey(rep);
+        for (const a of m.absorbed as OrchestratedFinding[]) {
+          trace.record(a, 'merged', 'fp-c-line-dedup', {
+            mergedInto: into,
+            reason: 'same file and line as a stronger finding, with overlapping wording',
+          });
+        }
+        continue;
+      }
+      // Representative gone. The siblings were never judged, so they are not
+      // recorded here at all — they re-enter the pipeline and pick up whatever
+      // verdict a later stage gives them, exactly like any unmerged finding.
+      reinstatedFromRep.set(
+        outcomeKey(rep),
+        (reinstatedFromRep.get(outcomeKey(rep)) ?? 0) + m.absorbed.length,
+      );
+      reinstated.push(...(m.absorbed as OrchestratedFinding[]));
+    }
+    if (reinstated.length) {
+      console.warn(
+        '[fp-c] reinstated %d finding%s whose merge representative the orchestrator dropped',
+        reinstated.length,
+        reinstated.length === 1 ? '' : 's',
+      );
+      orchestratorResult.findings = [...orchestratorResult.findings, ...reinstated];
+    }
+  }
+
   recordDrops(
     dedupedTaggedFindings.flatMap((t) => (t.findings ?? []) as OrchestratedFinding[]),
     orchestratorResult.findings,
     'orchestrator',
+    (f) => {
+      const sent = reinstatedFromRep.get(outcomeKey(f));
+      return sent
+        ? `not in the orchestrator's returned set; the ${sent} finding${sent === 1 ? '' : 's'} merged into it ${sent === 1 ? 'was' : 'were'} reinstated`
+        : "not in the orchestrator's returned set (it does not emit per-finding reasons — #473)";
+    },
   );
 
   // #385 — W10 runs BEFORE the deleting filters below.
