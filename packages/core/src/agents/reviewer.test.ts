@@ -2110,6 +2110,145 @@ describe('runReviewPipeline', () => {
 
 // ─── agentAuthored flag (AGENT_MODE_SUFFIX injection) ───────────────
 
+// ─── #600 — a dropped FP-C representative must not take its siblings ────────
+
+describe('FP-C reinstatement when the orchestrator drops a representative (#600)', () => {
+  const allAgents: ReviewPipelineOptions['enabledAgents'] = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+
+  // Two agents independently raise the SAME (file, line) with overlapping
+  // wording — the convergence signal. FP-C merges them into one
+  // representative before the orchestrator ever sees them.
+  const converging = {
+    security: validFindingsJson([{
+      line: 2, severity: 'critical', confidence: 95,
+      title: 'Missing authorization check for admin endpoint',
+      description: 'The admin endpoint performs no authorization check.',
+    }]),
+    bug: validFindingsJson([{
+      line: 2, severity: 'critical', confidence: 95,
+      title: 'Missing authorization check for admin endpoint',
+      description: 'Admin endpoint missing an authorization check before use.',
+    }]),
+  };
+
+  const empty = validFindingsJson([]);
+  const summaryResponse = JSON.stringify({ summary: 'Adds an admin endpoint.' });
+  const diagramResponse = '%% overview\nflowchart TD\n  A-->B';
+
+  function pipelineWith(orchestratorResponse: string) {
+    return createMockLLM([
+      converging.security, converging.bug, empty, // security, bug, style
+      empty, empty, empty,                        // errorHandling, testCoverage, commentAccuracy
+      summaryResponse, diagramResponse, orchestratorResponse,
+    ]);
+  }
+
+  const run = (llm: ReturnType<typeof createMockLLM>) =>
+    runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        enabledAgents: allAgents,
+      },
+      { llm },
+    );
+
+  it('returns the absorbed siblings when the representative is dropped', async () => {
+    // The orchestrator returns nothing. Before #600 every merged finding went
+    // with the representative and the review rendered "No issues found in the
+    // diff" — on a diff with an unauthenticated admin endpoint, raised at
+    // confidence 95 by two independent agents.
+    const result = await run(pipelineWith(JSON.stringify({
+      findings: [], mergeScore: 5, mergeScoreReason: 'No issues.',
+    })));
+
+    expect(result.findings.length).toBeGreaterThan(0);
+    expect(result.findings.some((f) => /authorization/i.test(f.title))).toBe(true);
+  });
+
+  it('does not duplicate the siblings when the representative survives', async () => {
+    // The merge held, so the siblings stay merged — reinstating here would
+    // render the same defect twice.
+    const result = await run(pipelineWith(JSON.stringify({
+      findings: [{
+        file: 'foo.ts', line: 2, severity: 'critical', category: 'security',
+        title: 'Missing authorization check for admin endpoint',
+        description: 'The admin endpoint performs no authorization check.',
+        suggestion: 'Add an authorization check.',
+      }],
+      mergeScore: 1,
+      mergeScoreReason: 'Critical.',
+    })));
+
+    const auth = result.findings.filter((f) => /authorization/i.test(f.title));
+    expect(auth).toHaveLength(1);
+  });
+
+  it('treats a renamed representative as surviving, not dropped', async () => {
+    // Findings carry no fingerprint this early, so outcomeKey is the title
+    // form and an orchestrator rename changes it. Matching on key alone would
+    // read this as a drop and resurrect the siblings underneath a
+    // representative that is still there.
+    const result = await run(pipelineWith(JSON.stringify({
+      findings: [{
+        file: 'foo.ts', line: 2, severity: 'critical', category: 'security',
+        title: 'Admin endpoint is reachable without authorization',
+        description: 'Reworded by the orchestrator, same defect and same line.',
+        suggestion: 'Add an authorization check.',
+      }],
+      mergeScore: 1,
+      mergeScoreReason: 'Critical.',
+    })));
+
+    const auth = result.findings.filter((f) => /authoriz/i.test(f.title));
+    expect(auth).toHaveLength(1);
+  });
+
+  it('gives a reinstated sibling its own terminal outcome, not "merged"', async () => {
+    // The ledger must not still claim the finding was merged away when the
+    // reader can see it — the failure #594 exists to prevent, arriving by a
+    // different route.
+    const result = await run(pipelineWith(JSON.stringify({
+      findings: [], mergeScore: 5, mergeScoreReason: 'No issues.',
+    })));
+
+    const surfacedTitles = new Set(result.findings.map((f) => f.title));
+    // Assert the population is non-empty BEFORE looping over it. Without this
+    // the checks below pass vacuously on a build where nothing is reinstated —
+    // which is exactly the broken state, so the test would have certified it.
+    const surfacedRows = result.filterOutcomes.filter(
+      (o) => /authorization/i.test(o.title) && surfacedTitles.has(o.title),
+    );
+    expect(surfacedRows.length).toBeGreaterThan(0);
+    for (const row of surfacedRows) {
+      expect(row.outcome).toBeDefined();
+      expect(row.outcome).not.toBe('merged');
+    }
+  });
+
+  it('explains an orchestrator drop instead of recording a bare stage', async () => {
+    // #600 — the one stage that can delete six findings was the only stage
+    // exempt from saying anything.
+    const result = await run(pipelineWith(JSON.stringify({
+      findings: [], mergeScore: 5, mergeScoreReason: 'No issues.',
+    })));
+
+    const drops = result.filterOutcomes.filter(
+      (o) => o.outcome === 'dropped' && o.stage === 'orchestrator',
+    );
+    for (const d of drops) {
+      expect(d.reason).toBeTruthy();
+      expect(d.reason).toContain("orchestrator's returned set");
+    }
+  });
+});
+
 describe('agentAuthored flag', () => {
   const allAgentsEnabled: ReviewPipelineOptions['enabledAgents'] = {
     security: true,
@@ -4163,9 +4302,17 @@ describe('filter outcome ledger (#470)', () => {
     expect(result.filterOutcomes.filter((o) => o.outcome === 'surfaced')).toHaveLength(1);
   });
 
-  it('attributes an orchestrator drop to its stage, with no reason', async () => {
-    // #473 would let the orchestrator explain itself; until then its drops are
-    // attributable but not explained, and the ledger should not invent a reason.
+  it('attributes an orchestrator drop to its stage AND says what is known (#600)', async () => {
+    // This asserted `reason` was undefined, on the #473 grounds that the
+    // orchestrator cannot explain itself and the ledger should not invent a
+    // rationale. The second half still holds; the first did not survive #600,
+    // where a silent orchestrator drop deleted five findings merged into one
+    // representative and the review rendered "No issues found in the diff".
+    //
+    // The reason below invents nothing. It states what IS observable — the
+    // finding was absent from the returned set — and names why nothing finer
+    // exists. That is strictly more than silence, and it is the difference
+    // between a drop a reader can interrogate and one they cannot see.
     const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
     const result = await run([
       twoFindings, empty, empty, empty, empty, empty,
@@ -4176,7 +4323,9 @@ describe('filter outcome ledger (#470)', () => {
     expect(dropped).toHaveLength(2);
     for (const o of dropped) {
       expect(o.stage).toBe('orchestrator');
-      expect(o.reason).toBeUndefined();
+      expect(o.reason).toContain("orchestrator's returned set");
+      // Still no invented rationale: it cites #473 rather than guessing why.
+      expect(o.reason).toContain('#473');
     }
   });
 
