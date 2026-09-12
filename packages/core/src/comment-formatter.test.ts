@@ -433,6 +433,47 @@ describe('formatReviewComment', () => {
   });
 
   // ─── FP-J L3 — dispute-rate disclosure ─────────────────────────────────
+  describe('#617 — a multi-paragraph reason stays inside the verdict blockquote', () => {
+    // FP-L appends a staleness note after a blank line when the orchestrator's
+    // prose names more findings than render. The verdict renders inside a
+    // `> ` blockquote, where a blank line ends the quote — so the note landed
+    // as detached body text below the verdict, severed from the enumeration it
+    // was correcting.
+    const reason =
+      'Three substantive warnings present — one on React key uniqueness, one on error-handling opacity, and one on missing test coverage.\n\n' +
+      'Note: 2 findings were dropped or clustered by post-orchestrator filtering — the rendered list is authoritative.';
+
+    it('keeps the note attached to the verdict line', () => {
+      const result = formatReviewComment(baseOptions({ mergeScore: 3, mergeScoreReason: reason }));
+      const noteLine = result
+        .split('\n')
+        .find((l) => l.includes('rendered list is authoritative'));
+      expect(noteLine).toBeDefined();
+      // The assertion that actually bites: the note must be quoted. Before
+      // this fix it rendered as a bare line, which is the whole defect.
+      expect(noteLine!.startsWith('>')).toBe(true);
+    });
+
+    it('keeps the verdict sentence itself on the badge line', () => {
+      const result = formatReviewComment(baseOptions({ mergeScore: 3, mergeScoreReason: reason }));
+      const badge = result.split('\n').find((l) => l.includes('3/5'))!;
+      expect(badge).toContain('Three substantive warnings present');
+      // …and the note must NOT be jammed onto the badge line, which would be
+      // the other way to "fix" this and would bury the caveat mid-sentence.
+      expect(badge).not.toContain('rendered list is authoritative');
+    });
+
+    it('leaves an ordinary single-paragraph reason unchanged', () => {
+      const result = formatReviewComment(baseOptions({
+        mergeScore: 3,
+        mergeScoreReason: 'Several warnings need attention',
+      }));
+      const badge = result.split('\n').find((l) => l.includes('3/5'))!;
+      expect(badge).toContain('Several warnings need attention');
+      expect(result).not.toContain('<sub>Several warnings');
+    });
+  });
+
   describe('FP-J L3 disputeDisclosure', () => {
     it('renders the disclosure as a quieter sub-line beneath the merge-score badge', () => {
       const result = formatReviewComment(baseOptions({

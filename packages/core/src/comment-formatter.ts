@@ -306,6 +306,21 @@ export function mergeScoreMeta(
 export const REVIEW_SCOPE_NOTE =
   'Reviewed the diff only — MergeWatch does not build, run tests, or read other checks.';
 
+/**
+ * Split a merge-score reason into its verdict sentence and any trailing notes.
+ *
+ * #617 — reasons are single-paragraph in the common case. FP-L appends a
+ * staleness note after a blank line, and the verdict renders inside a
+ * blockquote, where a blank line silently ends the quote.
+ */
+function splitReasonParagraphs(reason: string | undefined): string[] {
+  if (!reason) return [];
+  return reason
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
 /** Render the merge score as a prominent badge line. */
 function renderMergeScore(score: number, hasNotes: boolean): string {
   const { emoji, label, score: clamped } = mergeScoreMeta(score, hasNotes);
@@ -710,8 +725,22 @@ export function formatReviewComment(options: FormatOptions): string {
     // happened to the ones there were.
     const hasNotes = findings.length > 0 || Boolean(mergeScoreReason);
     const scoreDisplay = renderMergeScore(mergeScore, hasNotes);
-    const reasonSuffix = mergeScoreReason ? ` \u2014 ${mergeScoreReason}` : '';
+    // #617 — the reason can carry trailing paragraphs: FP-L's narrative
+    // staleness note is appended after a blank line when the orchestrator's
+    // prose names more findings than render. Interpolating that straight into
+    // a `> ` line ends the blockquote at the blank line, so the note landed as
+    // detached body text underneath the verdict — a correction severed from
+    // the claim it corrects, which reads as unrelated prose rather than as a
+    // caveat on the enumeration directly above it.
+    //
+    // First paragraph stays the verdict sentence; the rest render as quoted
+    // sub-lines, the same shape the dispute disclosure below already uses.
+    const [verdictSentence, ...reasonNotes] = splitReasonParagraphs(mergeScoreReason);
+    const reasonSuffix = verdictSentence ? ` — ${verdictSentence}` : '';
     score.push(`> ${scoreDisplay}${reasonSuffix}`);
+    for (const note of reasonNotes) {
+      score.push(`> <sub>${note}</sub>`);
+    }
     // FP-J L3 \u2014 dispute-rate disclosure renders as a quieter sub-line so the
     // primary verdict stays the most visible signal. Only emitted when the
     // reconcile pass identified at least one action finding from a
