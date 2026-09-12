@@ -2355,6 +2355,17 @@ describe('stripDanglingQuote (#617)', () => {
     expect(stripDanglingQuote('')).toBe('');
     expect(stripDanglingQuote('No issues.')).toBe('No issues.');
   });
+
+  it('normalises trailing whitespace on every path, not just the stripping one', () => {
+    // Review finding on #623. The odd branch returned the trimmed string while
+    // the other two returned the original, so the result depended on which
+    // branch ran rather than on the quote parity this function exists to
+    // decide. Harmless today because the formatter re-normalises downstream —
+    // which is exactly how an inconsistency survives long enough to matter.
+    expect(stripDanglingQuote('foo "bar"  ')).toBe('foo "bar"');   // even
+    expect(stripDanglingQuote('plain text  ')).toBe('plain text'); // no quotes
+    expect(stripDanglingQuote('ends dangling."  ')).toBe('ends dangling.'); // odd
+  });
 });
 
 describe('agentAuthored flag', () => {
