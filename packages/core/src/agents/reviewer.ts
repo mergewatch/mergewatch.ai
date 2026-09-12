@@ -3315,9 +3315,31 @@ export async function runReviewPipeline(
   // and a cluster-size cap keep over-clustering risk low. The absorbed
   // count rolls into the downstream suppressedCount math.
   {
-    const { findings: clustered, clusteredCount, merges } = clusterFindings(
-      orchestratorResult.findings,
-    );
+    // #600 follow-up — W11 (below) collapses every test-coverage finding into
+    // one info note when the repo's conventions declare no test harness. If
+    // W10 absorbs one FIRST it stops being a top-level finding, W11 never sees
+    // it, and its "lacks coverage" wording still renders inside the
+    // representative's audit trail. E2E-27 asserts exactly that wording is
+    // absent, and it caught this.
+    //
+    // This is the same shape as the bug #600 fixed: a merge making findings
+    // share a fate, so a downstream stage can no longer act on the absorbed
+    // ones. Reinstatement widened the exposure by putting more findings in
+    // front of W10, but the hole predates it — any test-coverage finding W10
+    // happened to absorb escaped W11 the same way.
+    //
+    // Held out rather than reordering the pipeline: #385 put W10 ahead of the
+    // deleting filters deliberately, so a region-spread cluster could not be
+    // dismantled by the confidence floor before consolidation saw it. That
+    // reasoning is about confidence, not category, and still holds.
+    const holdForW11 = detectNoTestHarness(conventions);
+    const clusterInput = holdForW11
+      ? orchestratorResult.findings.filter((f) => f.category !== 'test-coverage')
+      : orchestratorResult.findings;
+    const heldTestCoverage = holdForW11
+      ? orchestratorResult.findings.filter((f) => f.category === 'test-coverage')
+      : [];
+    const { findings: clustered, clusteredCount, merges } = clusterFindings(clusterInput);
     for (const m of merges) {
       const into = outcomeKey(m.primaryAfter);
       trace.alias(outcomeKey(m.primaryBefore), into);
@@ -3334,7 +3356,10 @@ export async function runReviewPipeline(
         clusteredCount,
         clusteredCount === 1 ? '' : 's',
       );
-      orchestratorResult.findings = clustered;
+      // Held findings rejoin here; W11 collapses them into its single note a
+      // few stages down. When nothing clustered, `orchestratorResult.findings`
+      // is left untouched and already contains them.
+      orchestratorResult.findings = [...clustered, ...heldTestCoverage];
     }
   }
 
