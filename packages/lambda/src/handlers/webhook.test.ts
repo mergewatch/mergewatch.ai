@@ -72,7 +72,7 @@ vi.mock('../github-auth-ssm.js', () => ({
   getWebhookSecret: () => Promise.resolve('test-secret'),
 }));
 
-import { verifySignature, parseReviewMode, shouldHandleReviewCommentEvent, isMergeWatchCheckRun, handler } from './webhook.js';
+import { verifySignature, parseReviewMode, shouldHandleReviewCommentEvent, reviewCommentGateRejection, isMergeWatchCheckRun, handler } from './webhook.js';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME } from '@mergewatch/core';
 import type { PullRequestReviewCommentEvent, PullRequestEvent, CheckRunEvent, CheckSuiteEvent } from '@mergewatch/core';
 
@@ -207,6 +207,69 @@ describe('shouldHandleReviewCommentEvent', () => {
       ...overrides,
     };
   }
+
+  // #602 — each gate returned false silently, so a declined reply and an
+  // undelivered one looked identical in the logs. These assert the gate is
+  // NAMED, because that is the whole point of the change.
+  describe('reviewCommentGateRejection names the gate that declined', () => {
+    it('returns null when the event should be handled', () => {
+      expect(reviewCommentGateRejection(makeEvent())).toBeNull();
+    });
+
+    it('names a non-created action', () => {
+      expect(reviewCommentGateRejection(makeEvent({ action: 'edited' })))
+        .toContain('action is "edited"');
+    });
+
+    it('distinguishes a bot SENDER from a bot comment author', () => {
+      // The combined check could not say which actor looked like a bot, and
+      // "a bot replied" is a different investigation from "our own App replied
+      // to itself".
+      const botSender = reviewCommentGateRejection(makeEvent({
+        sender: { login: 'mergewatch[bot]', id: 9, avatar_url: '', type: 'Bot' },
+      }));
+      expect(botSender).toContain('sender is a bot');
+      expect(botSender).toContain('mergewatch[bot]');
+
+      const e = makeEvent();
+      const botAuthor = reviewCommentGateRejection({
+        ...e,
+        comment: { ...e.comment, user: { login: 'dependabot[bot]', id: 8, avatar_url: '', type: 'Bot' } },
+      });
+      expect(botAuthor).toContain('comment author is a bot');
+      expect(botAuthor).toContain('dependabot[bot]');
+    });
+
+    it('names a missing in_reply_to_id — the gate #602 suspected', () => {
+      const e = makeEvent();
+      // The type is `number | undefined`; GitHub sends `null` on the wire for a
+      // top-level comment. The production check is `== null`, which covers both
+      // — so this uses `undefined` to satisfy the declared type without
+      // weakening what is being tested.
+      const r = reviewCommentGateRejection({
+        ...e,
+        comment: { ...e.comment, in_reply_to_id: undefined },
+      });
+      expect(r).toContain('in_reply_to_id');
+    });
+
+    it('names a missing installation id', () => {
+      expect(reviewCommentGateRejection(makeEvent({ installation: undefined })))
+        .toContain('installation id');
+    });
+
+    it('stays in step with the boolean predicate', () => {
+      // Two functions encoding one rule drift. This pins them together.
+      const cases = [
+        makeEvent(),
+        makeEvent({ action: 'deleted' }),
+        makeEvent({ installation: undefined }),
+      ];
+      for (const c of cases) {
+        expect(shouldHandleReviewCommentEvent(c)).toBe(reviewCommentGateRejection(c) === null);
+      }
+    });
+  });
 
   it('returns true for a valid human reply with installation id', () => {
     expect(shouldHandleReviewCommentEvent(makeEvent())).toBe(true);

@@ -425,11 +425,44 @@ async function handleIssueCommentEvent(
 export function shouldHandleReviewCommentEvent(
   event: PullRequestReviewCommentEvent,
 ): boolean {
-  if (event.action !== 'created') return false;
-  if (isBotActor(event.sender) || isBotActor(event.comment.user)) return false;
-  if (event.comment.in_reply_to_id == null) return false;
-  if (!event.installation?.id) return false;
-  return true;
+  return reviewCommentGateRejection(event) === null;
+}
+
+/**
+ * Why this event was declined, or `null` when it should be handled.
+ *
+ * #602 — every gate above returned `false` silently, so a reply that MergeWatch
+ * declined to act on was indistinguishable from one it never received. That
+ * cost a fixture and a manual investigation to narrow, and the answer was still
+ * "either it did not arrive, or one of four gates rejected it".
+ *
+ * `/mergewatch reject` is how a developer tells the product it was wrong. A
+ * predicate guarding that cannot be the quietest thing in the pipeline.
+ *
+ * The bot check is split across sender and comment author here, deliberately:
+ * the combined form could not say WHICH actor looked like a bot, and "a bot
+ * replied" is a very different investigation from "our own App replied to
+ * itself".
+ */
+export function reviewCommentGateRejection(
+  event: PullRequestReviewCommentEvent,
+): string | null {
+  if (event.action !== 'created') {
+    return `action is "${event.action}" — only "created" is handled`;
+  }
+  if (isBotActor(event.sender)) {
+    return `sender is a bot (${event.sender?.login ?? 'unknown'})`;
+  }
+  if (isBotActor(event.comment.user)) {
+    return `comment author is a bot (${event.comment.user?.login ?? 'unknown'})`;
+  }
+  if (event.comment.in_reply_to_id == null) {
+    return 'not a threaded reply — in_reply_to_id is absent (a top-level inline comment, or a reply GitHub did not thread)';
+  }
+  if (!event.installation?.id) {
+    return 'no installation id on the payload';
+  }
+  return null;
 }
 
 /**
@@ -439,7 +472,17 @@ export function shouldHandleReviewCommentEvent(
 async function handleReviewCommentEvent(
   event: PullRequestReviewCommentEvent,
 ): Promise<void> {
-  if (!shouldHandleReviewCommentEvent(event)) return;
+  const rejection = reviewCommentGateRejection(event);
+  if (rejection) {
+    // #602 — say which gate, and name the comment, so the next occurrence is a
+    // log search rather than a fixture run.
+    console.log(
+      `Ignoring review comment ${event.comment?.id ?? 'unknown'} on ` +
+      `${event.repository?.owner?.login}/${event.repository?.name}` +
+      `#${event.pull_request?.number}: ${rejection}`,
+    );
+    return;
+  }
   const installationId = event.installation!.id;
 
   const payload: ReviewJobPayload = {
