@@ -114,6 +114,19 @@ if (!subscribed.length) cannotCheck('GET /app returned no events — refusing to
 // works. It is an exemption, not a mute button.
 const OTHER_CHANNEL = new Map([
   ['marketplace_purchase', 'Marketplace listing webhook (#596) — ping confirmed reaching prod'],
+  // #601 — App LIFECYCLE events are not subscribable. `installation` never
+  // appears in `GET /app` `events[]` because GitHub does not offer it in
+  // "Subscribe to events"; it is delivered to every App unconditionally.
+  //
+  // Evidence, not assumption: `GET /app/hook/deliveries` on prod shows three
+  // `installation` deliveries at 2026-09-14T16:23–16:24Z, all `status=200`,
+  // `action=new_permissions_accepted` — fired by accepting the permission
+  // change made while subscribing to `check_suite`.
+  //
+  // Without this entry the check reports drift that no amount of clicking can
+  // clear, which is the "always red" failure the note above warns about. It
+  // sent someone to the settings UI looking for a checkbox that does not exist.
+  ['installation', 'App lifecycle event — always delivered, not subscribable (#601); 3 deliveries confirmed on prod, all 200'],
 ]);
 
 /* ── compare ─────────────────────────────────────────────────────────────── */
