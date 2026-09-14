@@ -49,7 +49,7 @@ import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
-import { detectNoTestHarness, suppressTestCoverageFindings } from '../scope-awareness.js';
+import { detectNoTestHarness, isTestCoverageNag, suppressTestCoverageFindings } from '../scope-awareness.js';
 import { clusterFindings, dedupeCrossAgentByLine, extractSignificantTokens } from '../finding-clustering.js';
 import type { FindingEvidence } from '../types/db.js';
 import { TraceRecorder, outcomeKey, type FindingOutcome } from '../filter-trace.js';
@@ -3353,10 +3353,10 @@ export async function runReviewPipeline(
     // reasoning is about confidence, not category, and still holds.
     const holdForW11 = detectNoTestHarness(conventions);
     const clusterInput = holdForW11
-      ? orchestratorResult.findings.filter((f) => f.category !== 'test-coverage')
+      ? orchestratorResult.findings.filter((f) => !isTestCoverageNag(f))
       : orchestratorResult.findings;
     const heldTestCoverage = holdForW11
-      ? orchestratorResult.findings.filter((f) => f.category === 'test-coverage')
+      ? orchestratorResult.findings.filter((f) => isTestCoverageNag(f))
       : [];
     const { findings: clustered, clusteredCount, merges } = clusterFindings(clusterInput);
     for (const m of merges) {

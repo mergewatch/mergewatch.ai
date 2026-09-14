@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentFinding } from './agents/reviewer.js';
-import { detectNoTestHarness, suppressTestCoverageFindings } from './scope-awareness.js';
+import { detectNoTestHarness, isTestCoverageNag, suppressTestCoverageFindings } from './scope-awareness.js';
 
 describe('detectNoTestHarness', () => {
   it('matches the canonical phrases used by the example repos in the plan', () => {
@@ -93,5 +93,55 @@ describe('suppressTestCoverageFindings', () => {
     const note = out[out.length - 1];
     expect(note.file).toBe('packages/voice-bot/src/kb-migrate.ts');
     expect(note.line).toBe(1);
+  });
+});
+
+describe('isTestCoverageNag — coverage nags the orchestrator mislabelled', () => {
+  // W11 keyed on the category alone, which assumes every coverage nag is
+  // labelled `test-coverage`. mergewatch/fixtures#3164 disproved that: the
+  // nag arrived under another category, W11 suppressed nothing, W10 absorbed
+  // it into an unrelated critical, and its wording rendered in that finding's
+  // audit trail — on a repo whose AGENTS.md declares no test suite.
+  it('matches the labelled case', () => {
+    expect(isTestCoverageNag({ category: 'test-coverage', title: 'anything' })).toBe(true);
+  });
+
+  it('matches coverage wording under another category', () => {
+    expect(isTestCoverageNag({
+      category: 'bug',
+      title: 'Postgres startup function lacks test coverage for high-consequence path',
+    })).toBe(true);
+    expect(isTestCoverageNag({ category: 'security', title: 'Missing test coverage for auth path' })).toBe(true);
+  });
+
+  it('does not match a finding that merely mentions tests', () => {
+    // False positives here suppress real findings, so the pattern requires the
+    // words "test coverage" rather than any mention of testing.
+    expect(isTestCoverageNag({ category: 'bug', title: 'The test helper swallows errors' })).toBe(false);
+    expect(isTestCoverageNag({ category: 'bug', title: 'Race condition in the coverage reporter' })).toBe(false);
+    expect(isTestCoverageNag({ category: 'security', title: 'SQL injection in query builder' })).toBe(false);
+  });
+
+  it('handles a missing title', () => {
+    expect(isTestCoverageNag({ category: 'bug' })).toBe(false);
+    expect(isTestCoverageNag({})).toBe(false);
+  });
+});
+
+describe('suppressTestCoverageFindings collapses mislabelled nags too', () => {
+  it('rolls up a coverage nag carrying a non-test-coverage category', () => {
+    const findings = [
+      { file: 'm.ts', line: 2, severity: 'critical', category: 'security',
+        title: 'Path traversal risk', description: 'd', suggestion: 's' },
+      { file: 'm.ts', line: 5, severity: 'warning', category: 'bug',
+        title: 'Postgres startup function lacks test coverage', description: 'd', suggestion: 's' },
+    ] as unknown as (AgentFinding & { category?: string })[];
+
+    const { findings: out, suppressedCount } = suppressTestCoverageFindings(findings);
+    expect(suppressedCount).toBe(1);
+    const rendered = out.map((f) => `${f.title} ${f.description ?? ''}`).join('\n');
+    expect(rendered).not.toContain('lacks test coverage');
+    // The real finding is untouched.
+    expect(out.some((f) => f.title === 'Path traversal risk')).toBe(true);
   });
 });

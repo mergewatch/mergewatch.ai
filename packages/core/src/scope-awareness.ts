@@ -57,13 +57,37 @@ export function detectNoTestHarness(conventions: string | undefined): boolean {
  * No-op when there are zero test-coverage findings — never emits a note
  * just for the sake of it.
  */
+/**
+ * Coverage-nag wording the model emits under a category that is NOT
+ * `test-coverage`.
+ *
+ * W11 keyed on the category alone, which assumes the orchestrator labels every
+ * coverage nag correctly. It does not: on mergewatch/fixtures#3164 a finding
+ * titled "Postgres startup function lacks test coverage for high-consequence
+ * path" arrived under another category, so W11 suppressed nothing, W10 absorbed
+ * it into an unrelated critical, and its wording rendered in that finding's
+ * audit trail — on a repo whose AGENTS.md declares no test suite.
+ *
+ * Matched only when the repo has explicitly declared no harness, so the cost of
+ * a false positive is suppressing a coverage complaint on a repo that already
+ * said coverage complaints are not actionable. Deliberately narrow: it requires
+ * the words *test coverage*, not a passing mention of "tests".
+ */
+const COVERAGE_NAG_TITLE = /\b(lacks?|missing|no|without|insufficient|inadequate)\b[^.]{0,40}\btest coverage\b/i;
+
+/** Is this a per-function coverage nag, however the orchestrator labelled it? */
+export function isTestCoverageNag(f: { category?: string; title?: string }): boolean {
+  if (f.category === 'test-coverage') return true;
+  return COVERAGE_NAG_TITLE.test(f.title ?? '');
+}
+
 export function suppressTestCoverageFindings<T extends AgentFinding & { category?: string }>(
   findings: T[],
 ): { findings: T[]; suppressedCount: number } {
-  const testCoverage = findings.filter((f) => f.category === 'test-coverage');
+  const testCoverage = findings.filter((f) => isTestCoverageNag(f));
   if (testCoverage.length === 0) return { findings, suppressedCount: 0 };
 
-  const others = findings.filter((f) => f.category !== 'test-coverage');
+  const others = findings.filter((f) => !isTestCoverageNag(f));
   const anchor = testCoverage[0];
   const note = {
     ...anchor,

@@ -2258,6 +2258,63 @@ describe('test-coverage findings are held back from W10 when no harness is decla
     errorHandling: true, testCoverage: true, commentAccuracy: true,
   };
 
+  it('holds back a coverage nag the orchestrator labelled something else', async () => {
+    // fixtures#3164: the same E2E-27 failure recurred AFTER #622, because both
+    // W11 and the W10 hold keyed on `category === "test-coverage"`. The nag
+    // arrived under another category, so neither saw it and W10 buried it in an
+    // unrelated critical's audit trail.
+    const securityResponse = validFindingsJson([{
+      line: 2, severity: 'critical', confidence: 90,
+      title: 'Path traversal risk in migration directory parameter',
+      description: 'The dir parameter accepts arbitrary migration paths.',
+    }]);
+    const empty = validFindingsJson([]);
+
+    const llm = createMockLLM([
+      securityResponse, empty, empty,
+      empty, empty, empty,
+      JSON.stringify({ summary: 'Adds migrations.' }),
+      '%% overview\nflowchart TD\n  A-->B',
+      JSON.stringify({
+        findings: [
+          {
+            file: 'foo.ts', line: 2, severity: 'critical', category: 'security',
+            title: 'Path traversal risk in migration directory parameter',
+            description: 'The dir parameter accepts arbitrary migration paths.',
+            suggestion: 'Validate the path.',
+          },
+          {
+            // NOT category test-coverage — this is the whole point.
+            file: 'foo.ts', line: 3, severity: 'warning', category: 'bug',
+            title: 'Postgres migration startup function lacks test coverage',
+            description: 'The migration bootstrap path lacks test coverage.',
+            suggestion: 'Add a test.',
+          },
+        ],
+        mergeScore: 1,
+        mergeScoreReason: 'Critical.',
+      }),
+    ]);
+
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff,
+        context: sampleContext,
+        modelId: 'heavy-model',
+        lightModelId: 'light-model',
+        maxFindings: 25,
+        enabledAgents: allAgents,
+        conventions: 'No unit test suite currently — tests are deferred until Phase 2.',
+      },
+      { llm },
+    );
+
+    const rendered = result.findings
+      .map((f) => `${f.title}\n${f.description ?? ''}`)
+      .join('\n');
+    expect(rendered).not.toContain('lacks test coverage');
+  });
+
   it('keeps the "lacks test coverage" wording out of a cluster audit trail (E2E-27)', async () => {
     // Caught by the E2E gate on #621. W11 collapses test-coverage findings into
     // one info note when the conventions declare no harness — but if W10
