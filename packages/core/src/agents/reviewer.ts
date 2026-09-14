@@ -1578,9 +1578,14 @@ export async function runOrchestratorAgent(
  */
 export function stripDanglingQuote(reason: string): string {
   const trimmed = reason.trimEnd();
-  if (!trimmed.endsWith('"')) return reason;
+  if (!trimmed.endsWith('"')) return trimmed;
   const quoteCount = (trimmed.match(/"/g) ?? []).length;
-  return quoteCount % 2 === 1 ? trimmed.slice(0, -1).trimEnd() : reason;
+  // Review finding on #623: the odd branch returned `trimmed`, the others
+  // returned the original `reason`, so identical inputs differing only in
+  // trailing whitespace left by the same function in different states. Always
+  // returning `trimmed` makes the result depend on the quote parity alone,
+  // which is the only thing this function is deciding.
+  return quoteCount % 2 === 1 ? trimmed.slice(0, -1).trimEnd() : trimmed;
 }
 
 // ─── Full pipeline ─────────────────────────────────────────────────────────
