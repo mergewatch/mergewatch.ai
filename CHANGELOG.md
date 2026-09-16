@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.3](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.2...v0.6.3) (2026-09-16)
+
+### Features
+- feat(site): add Blog to navigation, drop the personal attribution (#619) (64ad834)
+- feat(release): fail loudly when the App's subscriptions drift from the code (#614) (6d63ba6)
+- feat(core): let a repo declare which of its files are not worth reviewing (#603) (40dd5f5)
+
+### Bug Fixes
+- fix(drift-check): installation is an App lifecycle event, not a subscribable one (#628) (fb2ab0c)
+- fix(webhook): name the gate that declines a review-comment event (#627) (1964275)
+- fix(core): make stripDanglingQuote depend on quote parity alone (#624) (1020950)
+- fix(core): suppress coverage nags by content, not just by category label (#625) (75b4fee)
+- fix(core): attach the staleness note to the verdict, and drop a dangling quote (#623) (45fc2c3)
+- fix(core): keep test-coverage findings out of W10 so W11 can still suppress them (#622) (3a925d2)
+- fix(core): a dropped FP-C representative no longer takes its siblings with it (#621) (ad49e7e)
+- fix(deps): clear all 17 open Dependabot alerts (#620) (3d6b368)
+- fix(seo): list the blog sitemap in robots.txt (#616) (810bd58)
+- fix(drift-check): address the #614 review findings I merged past (#615) (e59a2ce)
+- fix(release): make dry_run actually dry — prepare must not push (#612) (ceb29ef)
+
+### Other Changes
+- Revert "chore: release v0.6.3" (#629) (25070b3)
 ## [0.6.2](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.1...v0.6.2) (2026-09-09)
 
 ### Features
