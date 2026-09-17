@@ -35,10 +35,13 @@ describe('formatReviewComment', () => {
   });
 
   // Zero findings
-  it('shows all-clear message when there are zero findings', () => {
+  it('shows the clean message when there are zero findings', () => {
     const result = formatReviewComment(baseOptions());
     expect(result).toContain('Looks good to me!');
-    expect(result).toContain('Looks good to me!');
+    // The second half carried its own coverage before #626: it asserted the
+    // trailing sentence, which used to be 'looks good to go'. Asserting the
+    // same string twice would silently drop that.
+    expect(result).toContain('I didn\u2019t find anything worth raising in this diff.');
   });
 
   // Custom footer
