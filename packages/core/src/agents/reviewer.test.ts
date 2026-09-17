@@ -1,5 +1,6 @@
 import { renderPrompt, type PromptInput } from '../llm/prompt-segment.js';
 import { describe, it, expect, vi } from 'vitest';
+import { blockingCriticalAgents } from '../org-agents.js';
 import type { ILLMProvider } from '../llm/types.js';
 import type { CustomAgentDef } from '../config/defaults.js';
 import { mergeScoreToReviewEvent } from '../github/client.js';
@@ -16,6 +17,7 @@ import {
   runTestCoverageAgent,
   runCommentAccuracyAgent,
   runCustomAgent,
+  maxSeverity,
   runOrchestratorAgent,
   runDeltaCaptionAgent,
   runReviewPipeline,
@@ -912,6 +914,115 @@ describe('runCustomAgent', () => {
     const findings = await runCustomAgent(agentDef, sampleDiff, sampleContext, 'model-1', llm);
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe('info');
+  });
+
+  // #543 — the configured severity is a FLOOR, not a fallback. An org agent set
+  // to critical + blocking emitted whatever the model chose (usually `info`),
+  // and the blocking gate fires only on `critical` — so an admin could not make
+  // a blocking agent block.
+  it('does not let the model de-escalate below the configured severity', async () => {
+    const agentDef: CustomAgentDef = {
+      name: 'security-policy',
+      prompt: 'Enforce the org security policy.',
+      severityDefault: 'critical',
+      enabled: true,
+    };
+    // The model says `info`. Pre-#543 this won, and the blocking gate never fired.
+    const response = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 1, severity: 'info', title: 'Policy violation', description: 'd', suggestion: 's' },
+      ],
+    });
+    const llm = createMockLLM([response]);
+    const findings = await runCustomAgent(agentDef, sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings[0].severity).toBe('critical');
+  });
+
+  it('lets the model ESCALATE above the configured severity', async () => {
+    // The floor is one-directional on purpose: the model read the code, and a
+    // warning-level agent that finds something genuinely critical should say so.
+    const agentDef: CustomAgentDef = {
+      name: 'style-agent',
+      prompt: 'Check style.',
+      severityDefault: 'warning',
+      enabled: true,
+    };
+    const response = JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 1, severity: 'critical', title: 'Hardcoded secret', description: 'd', suggestion: 's' },
+      ],
+    });
+    const llm = createMockLLM([response]);
+    const findings = await runCustomAgent(agentDef, sampleDiff, sampleContext, 'model-1', llm);
+    expect(findings[0].severity).toBe('critical');
+  });
+});
+
+describe('a blocking org agent actually blocks (#543)', () => {
+  // The bug end-to-end: agent configured critical + blocking, model returns
+  // `info`, so blockingCriticalAgents sees no critical and the gate never
+  // fires. Observed on a deployed stage as `5/5 — 2 findings (no blocking
+  // critical)` with review state APPROVED.
+  //
+  // Asserts the two halves TOGETHER — the severity floor is only interesting
+  // because it is what makes the gate fire.
+  it('fires the gate when the model would have de-escalated', async () => {
+    const agentDef: CustomAgentDef = {
+      name: 'security-policy',
+      prompt: 'Enforce the org security policy.',
+      severityDefault: 'critical',
+      enabled: true,
+    };
+    const llm = createMockLLM([JSON.stringify({
+      findings: [
+        { file: 'foo.ts', line: 1, severity: 'info', title: 'Policy violation', description: 'd', suggestion: 's' },
+      ],
+    })]);
+    const findings = await runCustomAgent(agentDef, sampleDiff, sampleContext, 'model-1', llm);
+
+    // The gate keys on (severity, category) where category is the agent name.
+    const gateInput = findings.map((f) => ({ severity: f.severity, category: agentDef.name }));
+    const orgAgent = {
+      id: '1', name: 'security-policy', prompt: 'p', severityDefault: 'critical' as const,
+      enabled: true, enforcement: 'blocking' as const, repoScope: 'all' as const,
+      repos: [], paths: [], languages: [], createdAt: '', updatedAt: '',
+    };
+    expect(blockingCriticalAgents([orgAgent as never], gateInput)).toEqual(['security-policy']);
+  });
+
+  it('still does not fire for an advisory agent, whatever the severity', async () => {
+    // The floor raises severity; it must not turn advisory agents into blockers.
+    const orgAgent = {
+      id: '1', name: 'style-policy', prompt: 'p', severityDefault: 'critical' as const,
+      enabled: true, enforcement: 'advisory' as const, repoScope: 'all' as const,
+      repos: [], paths: [], languages: [], createdAt: '', updatedAt: '',
+    };
+    expect(blockingCriticalAgents([orgAgent as never], [
+      { severity: 'critical', category: 'style-policy' },
+    ])).toEqual([]);
+  });
+});
+
+describe('maxSeverity (#543)', () => {
+  it('returns the stronger of the two', () => {
+    expect(maxSeverity('info', 'critical')).toBe('critical');
+    expect(maxSeverity('critical', 'info')).toBe('critical');
+    expect(maxSeverity('warning', 'info')).toBe('warning');
+    expect(maxSeverity('info', 'warning')).toBe('warning');
+    expect(maxSeverity('warning', 'warning')).toBe('warning');
+  });
+
+  it('falls back to the configured severity when the model gives none', () => {
+    // Preserves the pre-#543 behaviour for the case the old code was written
+    // for — an omitted severity — so that path is unchanged.
+    expect(maxSeverity(undefined, 'warning')).toBe('warning');
+    expect(maxSeverity('' as never, 'critical')).toBe('critical');
+  });
+
+  it('falls back when the model returns an unrecognised severity', () => {
+    // A model emitting "blocker" or "high" must not rank as absent-and-therefore
+    // -weakest, nor crash the lookup.
+    expect(maxSeverity('blocker' as never, 'warning')).toBe('warning');
   });
 });
 

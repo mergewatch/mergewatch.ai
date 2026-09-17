@@ -1046,7 +1046,14 @@ export async function processReviewJob(
     // advisory everywhere else (W7 clamps the score, FP-L renders them under
     // "Unverified concerns"); the check must agree instead of going red on a
     // critical the review event refuses to block on.
-    const blockingCriticalCount = countBlockingCriticals(result.findings);
+    // #543 — advisory org agents must not fail the check. Their findings are
+    // now reliably at the configured severity (the floor), so without this an
+    // advisory `critical` agent would fail every check while deliberately NOT
+    // setting the "Blocked by org agent" title — advisory in name only.
+    const advisoryOrgAgentNames = selectedOrgAgents
+      .filter((a) => a.enforcement !== 'blocking')
+      .map((a) => a.name);
+    const blockingCriticalCount = countBlockingCriticals(result.findings, advisoryOrgAgentNames);
     const unverifiedCriticalCount = criticalCount - blockingCriticalCount;
     const hasCritical = blockingCriticalCount > 0;
     const checkConclusion = (hasCritical || orgBlocked) ? 'failure' as const : 'success' as const;
