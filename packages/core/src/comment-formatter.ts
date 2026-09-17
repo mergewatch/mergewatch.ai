@@ -104,7 +104,7 @@ export function buildCheckTitle(input: {
   /**
    * #516 — findings raised and then dropped by post-orchestrator filtering.
    * Without it a review that found six things and filtered all six reads
-   * "No issues found" in the Checks tab, identically to one that found none.
+   * "Looks good to me" in the Checks tab, identically to one that found none.
    * Optional: callers that do not pass it get exactly today's wording.
    */
   suppressedCount?: number;
@@ -123,7 +123,7 @@ export function buildCheckTitle(input: {
   if ((suppressedCount ?? 0) > 0) {
     return `${prefix}No issues surfaced (${suppressedCount} filtered)`;
   }
-  return `${prefix}No issues found`;
+  return `${prefix}Looks good to me`;
 }
 
 interface FormatOptions {
@@ -233,7 +233,7 @@ const SEVERITY_META: Record<Finding['severity'], { emoji: string; label: string;
 // "Needs fixes", "Do not merge" — and assert nothing about merge-safety that
 // the review did not establish.
 const MERGE_SCORE_META: Record<number, { emoji: string; label: string }> = {
-  5: { emoji: '\uD83D\uDFE2', label: 'No issues found in the diff' },
+  5: { emoji: '\uD83D\uDFE2', label: 'Looks good to me' },
   4: { emoji: '\uD83D\uDFE2', label: 'Generally safe' },
   3: { emoji: '\uD83D\uDFE1', label: 'Review recommended' },
   2: { emoji: '\uD83D\uDFE0', label: 'Needs fixes' },
@@ -275,7 +275,7 @@ export function mergeScoreMeta(
   /**
    * #516 — does this review have anything to report? A 5/5 fires both for a
    * review that found nothing and for one whose findings are all
-   * informational, and "No issues found in the diff" contradicts the notes
+   * informational, and a clean "Looks good to me" contradicts the notes
    * rendered directly below it in the second case. Only score 5 varies.
    */
   hasNotes = false,
@@ -797,17 +797,17 @@ export function formatReviewComment(options: FormatOptions): string {
     } else if (findings.length === 0 && (mergeScore ?? 5) <= 3) {
       // #385 \u2014 an empty finding list is not always a clean bill of health. When
       // every finding the orchestrator raised was filtered away, the verdict is
-      // clamped to advisory and its subtitle says so; celebrating "All clear!"
-      // four lines under that subtitle contradicts it, and a reader who skims
+        // clamped to advisory and its subtitle says so; a cheerful "Looks good
+        // to me" four lines under that subtitle contradicts it, and a reader who skims
       // to the body merges on the strength of the wrong half. Defer to the
       // verdict line rather than talking over it.
       action.push('Nothing rendered \u2014 see the verdict above before merging.');
       action.push('');
     } else if (ux?.allClearMessage !== false) {
-      action.push('\uD83C\uDF89 **All clear!** No issues found \u2014 this PR looks good to go.');
+      action.push('\uD83D\uDC4D **Looks good to me!** I didn\u2019t find anything worth raising in this diff.');
       action.push('');
     } else {
-      action.push('No issues found \u2014 looking good! \u2705');
+      action.push('Looks good to me \u2014 nothing raised. \uD83D\uDC4D');
     }
   };
 

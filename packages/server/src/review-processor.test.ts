@@ -396,7 +396,7 @@ describe('processReviewJob — check runs', () => {
       });
     });
 
-    it('shows "No issues found" when no findings', async () => {
+    it('shows the clean check title when no findings', async () => {
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
@@ -405,7 +405,7 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4]).toMatchObject({
         status: 'completed',
         conclusion: 'success',
-        title: '5/5 — No issues found',
+        title: '5/5 — Looks good to me',
         summary: 'No issues detected in this PR.',
       });
     });
