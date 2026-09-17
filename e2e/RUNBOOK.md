@@ -188,7 +188,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | ID | Behavior tested | Setup time | Wait | Verifies PR # | Tags |
 |---|---|---|---|---|---|
 | [E2E-01](#e2e-01-clean-pr--full-review) | Happy path: clean PR → 5/5 + APPROVE + empty review body | 1m | 60s | #132 | `output`, `review-core`, `correctness` |
-| [E2E-02](#e2e-02-info-only-findings) | Info-only findings → 5/5, "All clear" + Info collapsible | 1m | 60s | #134 | `output`, `review-core`, `correctness` |
+| [E2E-02](#e2e-02-info-only-findings) | Info-only findings → 5/5, "Looks good to me" + Info collapsible | 1m | 60s | #134 | `output`, `review-core`, `correctness` |
 | [E2E-03](#e2e-03-critical-finding--inline-comment) | Critical finding → inline comment + REQUEST_CHANGES | 1m | 60s | core | `agents`, `review-core`, `correctness` |
 | [E2E-04](#e2e-04-autoreview-off--silent) | `autoReview: false` → zero PR trace | 1m | 30s | #136 | `config`, `skip`, `correctness` |
 | [E2E-05](#e2e-05-autoreview-off--mergewatch-override) | `autoReview: false` + `@mergewatch review` → review runs | 1m | 60s | #136 | `config`, `skip`, `triggers`, `correctness` |
@@ -295,7 +295,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 
 ### E2E-01: Clean PR → full review
 
-**Behavior**: a PR with no issues should produce 5/5 "Safe to merge", an APPROVE on the formal PR review (with empty body — verdict block removed in #132), and a summary comment with "All clear!".
+**Behavior**: a PR with no issues should produce 5/5 "Looks good to me", an APPROVE on the formal PR review (with empty body — verdict block removed in #132), and a summary comment with "Looks good to me!". (The label read "Safe to merge" pre-#134 and "No issues found in the diff" pre-#626; both claimed more than the review establishes.)
 
 **Setup**
 
@@ -323,8 +323,8 @@ agent has signal that `add` is pre-existing and covered.
 - [ ] In-progress check run titled "Review in progress" appears
 - [ ] Summary comment posted with:
   - [ ] MergeWatch wordmark image at top (~48px tall)
-  - [ ] `🟢 5/5 — Safe to merge` verdict line
-  - [ ] `🎉 All clear! No issues found` action-items section
+  - [ ] `🟢 5/5 — Looks good to me` verdict line
+  - [ ] `👍 Looks good to me!` action-items section
   - [ ] No "Requires your attention" table (zero critical + zero warning)
 - [ ] Formal PR review submitted with state = **Approved**
 - [ ] **The Approved review has NO body text** (only the verdict state — #132 dropped the verdict body)
@@ -364,14 +364,14 @@ No `.mergewatch.yml` needed.
 
 **Expected outcomes**
 
-- [ ] Summary comment with `🟢 5/5 — Safe to merge` (NOT 3/5 or 4/5)
+- [ ] Summary comment with `🟢 5/5 — Looks good to me` (NOT 3/5 or 4/5)
 - [ ] Verdict reason line says something like "No action items — only informational notes" (NOT "Multiple warnings")
-- [ ] Action-items section reads `🎉 All clear! No issues found`
+- [ ] Action-items section reads `👍 Looks good to me!`
 - [ ] An "Info (N)" collapsible section IS present below with at least 1 finding
 - [ ] Formal PR review state = **Approved** (not Comment, not Request changes)
 
 **Failure modes**
-- ❌ Score shows 3/5 or 4/5 with "All clear!" — that's the bug #134 fixed reappearing
+- ❌ Score shows 3/5 or 4/5 with "Looks good to me!" — that's the bug #134 fixed reappearing
 - ❌ "Requires your attention" table appears — only action items (critical/warning) should populate it
 
 ---
@@ -810,7 +810,7 @@ No `.mergewatch.yml` needed.
 
 ### E2E-18: Delta-aware verdict on security improvement
 
-**Behavior**: a PR that resolves critical findings from a prior review without introducing new criticals should produce a green verdict (≥4/5 "Generally safe" / "Safe to merge"), not the same orange "Needs fixes" face the original buggy commit got. Verifies the reconciliation rule added with the grounding fix.
+**Behavior**: a PR that resolves critical findings from a prior review without introducing new criticals should produce a green verdict (≥4/5 "Generally safe" / "Looks good to me"), not the same orange "Needs fixes" face the original buggy commit got. Verifies the reconciliation rule added with the grounding fix.
 
 User feedback motivating this: "PR #18 had real exploitable issues, PR #19 closed them — both landed at 2/5. When a PR is a security improvement, the verdict should reflect that."
 
@@ -894,7 +894,7 @@ Push to the same branch. MergeWatch will re-review with the fix-commit context.
 **Expected outcomes (on the second review)**
 
 - [ ] The "📎 Previously reported findings" section shows the ≥1 criticals from step 1 marked as **✅ Resolved**
-- [ ] Verdict line shows `🟢 4/5 — Generally safe` or `🟢 5/5 — Safe to merge` — NOT red/orange
+- [ ] Verdict line shows `🟢 4/5 — Generally safe` or `🟢 5/5 — Looks good to me` — NOT red/orange
 - [ ] If for some reason the LLM flags 1-2 new minor concerns on the fix, the verdict should land on **🟡 3/5** at worst (net-improvement tier — `resolvedCriticals > newCriticals` keeps it yellow, not red)
 - [ ] Verdict reason mentions resolved criticals: `Resolved N critical issues from prior review, no new criticals introduced.` (pure) OR `Resolved N critical issues from prior review; introduced M new — net improvement, but review the new findings.` (net)
 - [ ] Formal PR review state = **Approved** (empty body) on green; **Comment** on yellow

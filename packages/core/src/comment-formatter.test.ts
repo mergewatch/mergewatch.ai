@@ -37,8 +37,8 @@ describe('formatReviewComment', () => {
   // Zero findings
   it('shows all-clear message when there are zero findings', () => {
     const result = formatReviewComment(baseOptions());
-    expect(result).toContain('All clear!');
-    expect(result).toContain('looks good to go');
+    expect(result).toContain('Looks good to me!');
+    expect(result).toContain('Looks good to me!');
   });
 
   // Custom footer
@@ -115,7 +115,7 @@ describe('formatReviewComment', () => {
     // PR that did not compile.
     const result = formatReviewComment(baseOptions({ mergeScore: 5 }));
     expect(result).toContain('5/5');
-    expect(result).toContain('No issues found in the diff');
+    expect(result).toContain('Looks good to me');
     expect(result).not.toContain('Safe to merge');
   });
 
@@ -126,10 +126,10 @@ describe('formatReviewComment', () => {
     const info: Finding = { severity: 'info', title: 'A note', description: 'd', file: 'a.ts', line: 1, category: 'style', suggestion: '' };
     const withInfo = formatReviewComment(baseOptions({ mergeScore: 5, findings: [info] }));
     expect(withInfo).toContain('No action items in the diff');
-    expect(withInfo).not.toContain('No issues found in the diff');
+    expect(withInfo).not.toContain('5/5 \u2014 Looks good to me');
 
     const clean = formatReviewComment(baseOptions({ mergeScore: 5, findings: [] }));
-    expect(clean).toContain('No issues found in the diff');
+    expect(clean).toContain('Looks good to me');
   });
 
   it('states the review scope on clean verdicts, and not on blocking ones', () => {
@@ -149,12 +149,12 @@ describe('formatReviewComment', () => {
     // "No issues found" in the Checks tab, identically to one that found none.
     // #510 is a confirmed case of that filtering dropping a real finding.
     expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0 }))
-      .toBe('5/5 — No issues found');
+      .toBe('5/5 — Looks good to me');
     expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0, suppressedCount: 6 }))
       .toBe('5/5 — No issues surfaced (6 filtered)');
     // Back-compat: callers that do not pass the count get exactly today's text.
     expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0, suppressedCount: 0 }))
-      .toBe('5/5 — No issues found');
+      .toBe('5/5 — Looks good to me');
   });
 
   it('renders merge score badge with score 1 as do-not-merge', () => {
@@ -583,16 +583,16 @@ describe('formatReviewComment — criticals dropped by filtering (#385)', () => 
         '1 critical finding was flagged by the orchestrator and then dropped by post-orchestrator '
         + 'filtering, leaving nothing to render. This is an advisory verdict, NOT a clean-PR result.',
     }));
-    expect(result).not.toContain('All clear!');
+    expect(result).not.toContain('Looks good to me!');
     expect(result).not.toContain('looks good to go');
     expect(result).toContain('Nothing rendered — see the verdict above before merging.');
     // The verdict itself must still be present and unaltered.
     expect(result).toContain('NOT a clean-PR result');
   });
 
-  it('still celebrates a genuinely clean 5/5 review', () => {
+  it('still reassures on a genuinely clean 5/5 review', () => {
     const result = formatReviewComment(baseOptions({ findings: [], mergeScore: 5 }));
-    expect(result).toContain('All clear!');
+    expect(result).toContain('Looks good to me!');
     expect(result).not.toContain('Nothing rendered');
   });
 
@@ -614,7 +614,7 @@ describe('formatReviewComment — unverified-only criticals (#240)', () => {
   it('never shows "All clear!" alongside an "Unverified concerns" section', () => {
     const result = formatReviewComment(baseOptions({ findings: [unverifiedCritical()] }));
     expect(result).toContain('Unverified concerns (1)');
-    expect(result).not.toContain('All clear!');
+    expect(result).not.toContain('Looks good to me!');
     expect(result).toContain('No blocking issues — see unverified concerns below.');
   });
 
@@ -627,17 +627,17 @@ describe('formatReviewComment — unverified-only criticals (#240)', () => {
     expect(result).toContain('No blocking issues — see unverified concerns below.');
   });
 
-  it('keeps "All clear!" for a genuinely clean review', () => {
+  it('keeps the friendly clean message for a genuinely clean review', () => {
     const result = formatReviewComment(baseOptions());
-    expect(result).toContain('All clear!');
+    expect(result).toContain('Looks good to me!');
     expect(result).not.toContain('No blocking issues');
   });
 
-  it('keeps "All clear!" when only info findings exist (no unverified criticals)', () => {
+  it('keeps the friendly clean message when only info findings exist (no unverified criticals)', () => {
     const result = formatReviewComment(baseOptions({
       findings: [makeFinding({ severity: 'info', title: 'Nit' })],
     }));
-    expect(result).toContain('All clear!');
+    expect(result).toContain('Looks good to me!');
   });
 
   it('a verified critical still renders the attention table, never all-clear', () => {
@@ -645,7 +645,7 @@ describe('formatReviewComment — unverified-only criticals (#240)', () => {
       findings: [makeFinding({ verification: 'verified' })],
     }));
     expect(result).toContain('Requires your attention');
-    expect(result).not.toContain('All clear!');
+    expect(result).not.toContain('Looks good to me!');
   });
 });
 
@@ -741,7 +741,7 @@ describe('parse-failure disclosure (#382)', () => {
 describe('buildCheckTitle', () => {
   it('leads every title with the merge score', () => {
     expect(buildCheckTitle({ mergeScore: 5, findingCount: 0, blockingCriticalCount: 0 }))
-      .toBe('5/5 \u2014 No issues found');
+      .toBe('5/5 \u2014 Looks good to me');
     expect(buildCheckTitle({ mergeScore: 3, findingCount: 1, blockingCriticalCount: 0 }))
       .toBe('3/5 \u2014 1 finding (no blocking critical)');
     expect(buildCheckTitle({ mergeScore: 4, findingCount: 2, blockingCriticalCount: 0 }))
@@ -759,14 +759,14 @@ describe('buildCheckTitle', () => {
 
   it('clamps out-of-range scores like the comment verdict does', () => {
     expect(buildCheckTitle({ mergeScore: 7, findingCount: 0, blockingCriticalCount: 0 }))
-      .toBe('5/5 \u2014 No issues found');
+      .toBe('5/5 \u2014 Looks good to me');
     expect(buildCheckTitle({ mergeScore: 0, findingCount: 0, blockingCriticalCount: 0 }))
-      .toBe('1/5 \u2014 No issues found');
+      .toBe('1/5 \u2014 Looks good to me');
   });
 
   it('falls back to the unprefixed pre-#380 title when no score exists', () => {
     expect(buildCheckTitle({ findingCount: 0, blockingCriticalCount: 0 }))
-      .toBe('No issues found');
+      .toBe('Looks good to me');
     expect(buildCheckTitle({ findingCount: 1, blockingCriticalCount: 1 }))
       .toBe('1 critical issue found');
   });
