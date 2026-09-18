@@ -663,6 +663,36 @@ describe('countBlockingCriticals (#240)', () => {
       makeFinding({ severity: 'warning' }),
     ])).toBe(2);
   });
+
+  // #543 — advisory org agents must not fail the check.
+  //
+  // Before the severity floor this held by ACCIDENT: `severityDefault` was a
+  // fallback the model overrode, so a `critical` advisory agent emitted `info`
+  // and never reached this count. Making severity authoritative removes the
+  // accident, and without this filter "advisory" would mean "fails the check,
+  // but without saying why" — the inverse of the bug #543 fixes.
+  it('does not count criticals from an advisory org agent', () => {
+    const findings = [
+      makeFinding({ verification: 'verified', category: 'no-todo' }),
+      makeFinding({ verification: 'verified', category: 'security' }),
+    ];
+    expect(countBlockingCriticals(findings)).toBe(2);              // no org context
+    expect(countBlockingCriticals(findings, ['no-todo'])).toBe(1); // advisory excluded
+  });
+
+  it('still counts criticals from a BLOCKING org agent', () => {
+    // Only advisory names are passed in; a blocking agent is absent from the
+    // list and must keep failing the check.
+    const findings = [makeFinding({ verification: 'verified', category: 'security-policy' })];
+    expect(countBlockingCriticals(findings, ['no-todo'])).toBe(1);
+  });
+
+  it('is unchanged when no advisory names are supplied', () => {
+    // Back-compat for every non-org caller.
+    const findings = [makeFinding({ verification: 'verified', category: 'anything' })];
+    expect(countBlockingCriticals(findings, [])).toBe(1);
+    expect(countBlockingCriticals(findings)).toBe(1);
+  });
 });
 
 // ─── #369 — commentHeader/footer injection is escaped ────────────────────────

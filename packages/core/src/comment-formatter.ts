@@ -78,10 +78,31 @@ export function escapeUserContent(text: string): string {
  * blocking (unchanged behavior).
  */
 export function countBlockingCriticals(
-  findings: ReadonlyArray<Pick<Finding, 'severity' | 'verification'>>,
+  findings: ReadonlyArray<Pick<Finding, 'severity' | 'verification' | 'category'>>,
+  /**
+   * #543 — names of org custom agents whose `enforcement` is `advisory`.
+   *
+   * An advisory agent's findings must not fail the check. That contract was
+   * previously satisfied only by accident: `severityDefault` was a fallback the
+   * model overrode, so a `critical` advisory agent emitted `info` and never
+   * reached this count. Making severity a floor removes the accident and would
+   * otherwise turn "advisory" into "blocks, but without saying so" — the exact
+   * inverse of the bug #543 set out to fix.
+   *
+   * Findings carry the agent name in `category`, which is how
+   * `blockingCriticalAgents` matches them too.
+   *
+   * Absent → count every verified critical, which is the pre-#543 behaviour and
+   * what every non-org caller wants.
+   */
+  advisoryAgentNames?: ReadonlyArray<string>,
 ): number {
+  const advisory = new Set(advisoryAgentNames ?? []);
   return findings.filter(
-    (f) => f.severity === 'critical' && f.verification !== 'unverified',
+    (f) =>
+      f.severity === 'critical' &&
+      f.verification !== 'unverified' &&
+      !(f.category !== undefined && advisory.has(f.category)),
   ).length;
 }
 

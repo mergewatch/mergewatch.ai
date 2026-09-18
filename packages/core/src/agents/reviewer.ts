@@ -1325,6 +1325,27 @@ export async function runDeltaCaptionAgent(
 
 // ─── Custom agents ──────────────────────────────────────────────────────────
 
+/** info < warning < critical. */
+const SEVERITY_RANK: Record<'info' | 'warning' | 'critical', number> = {
+  info: 0,
+  warning: 1,
+  critical: 2,
+};
+
+/**
+ * The stronger of the model's severity and the one the agent was configured
+ * with (#543). An absent or unrecognised model severity yields the configured
+ * one, which preserves the old fallback behaviour for that case.
+ */
+export function maxSeverity(
+  modelSeverity: 'info' | 'warning' | 'critical' | undefined,
+  configured: 'info' | 'warning' | 'critical',
+): 'info' | 'warning' | 'critical' {
+  if (!modelSeverity || !(modelSeverity in SEVERITY_RANK)) return configured;
+  return SEVERITY_RANK[modelSeverity] >= SEVERITY_RANK[configured] ? modelSeverity : configured;
+}
+
+
 /** Run a user-defined custom review agent. */
 export async function runCustomAgent(
   agentDef: CustomAgentDef,
@@ -1341,10 +1362,25 @@ export async function runCustomAgent(
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
   const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
   const findings = parseAgentFindings(raw, diag);
-  // Apply default severity if agent didn't specify
+  // #543 — the configured severity is a FLOOR, not a fallback.
+  //
+  // This was `f.severity || agentDef.severityDefault`, which applied the admin's
+  // setting only when the model omitted one. The model almost always supplies
+  // one, so an agent configured `critical` + `blocking` emitted whatever the
+  // model felt like — usually `info` — and the blocking gate
+  // (`blockingCriticalAgents`, org-agents.ts:180) fires only on `critical`. Net
+  // effect: an admin could not make a blocking agent block. Observed on a
+  // deployed stage — `5/5 — 2 findings (no blocking critical)`, APPROVED, both
+  // findings `info`, on an agent set to critical + blocking.
+  //
+  // A floor rather than a hard override: the model may ESCALATE above the
+  // configured level (it read the code; a warning-level agent finding something
+  // genuinely critical should say so), but never de-escalate below what the
+  // admin set. `enforcement: blocking` only means something if severity is
+  // predictable, and "unless the model disagrees" is not a policy.
   return findings.map((f) => ({
     ...f,
-    severity: f.severity || agentDef.severityDefault,
+    severity: maxSeverity(f.severity, agentDef.severityDefault),
   }));
 }
 
