@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.3...v0.6.4) (2026-09-20)
+
+### Bug Fixes
+- fix(diagram): say what the diagram covers, and let the agent look (#638) (6d3ce52)
+- fix(orchestrator): stop a missing diff being read as a clean PR (#635) (2b75171)
+- fix(org-agents): make a blocking org agent actually block (#633) (29f92be)
+- fix(comment): say "Looks good to me" instead of claiming absence (#631) (1d2eb00)
 ## [0.6.3](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.2...v0.6.3) (2026-09-16)
 
 ### Features

@@ -113,7 +113,7 @@ async function main() {
 
     res.status(statusCode).json({
       status,
-      version: '0.6.3',
+      version: '0.6.4',
       db: dbStatus,
       llmProvider: process.env.LLM_PROVIDER || 'anthropic',
     });
