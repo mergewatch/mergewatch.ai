@@ -663,20 +663,16 @@ export const ORCHESTRATOR_PROMPT = `${SHARED_PREAMBLE}
 You receive findings from multiple review agents (security, bugs, style, error-handling, test-coverage, comment-accuracy).
 Your job:
 1. Deduplicate — if two agents flagged the same issue, keep the richer one.
-2. Verify each finding against the diff — if the code already contains a guard, null check, validation, memoization, or other mitigation that addresses the finding, remove it as a false positive.
-3. Verify factual accuracy — if a finding claims something is "missing" or "wrong", check whether the diff actually supports that claim. Drop findings that misread or misquote the code. Common false positive patterns to watch for:
-   - Claiming an await is missing when it exists on a different line or in a wrapper function
-   - Claiming a comment is outdated when the new text is right there in the diff
-   - Claiming a variable is unused when it is referenced elsewhere in the same diff
-   - Claiming error handling is missing when a try/catch exists in a surrounding scope
-4. Verify that each finding's "line" points to an actually changed line (a line with "+" prefix in the diff). If a finding points to an unchanged context line, either adjust its line to the nearest changed line, or drop it if it is unrelated to the actual changes.
+2. Judge each finding on its own text. You are given the FINDINGS, not the diff — you cannot open the code, and you are not expected to. Do not ask for the diff, and do not treat its absence as a reason to doubt the findings or to score the PR clean. Correctness against source is verified downstream against the actual file contents.
+3. Drop a finding whose own text contradicts it — one that calls a check "missing" while quoting that check, or that names a line it also describes as unchanged. Judge only what the finding itself asserts.
+4. Drop findings that speculate about code you were not shown ("this might be called elsewhere", "if this is ever passed untrusted input").
 5. Drop any finding with confidence below 75.
 6. Anti-pedantry pass — for each finding, ask: "If a thoughtful senior engineer were doing this review by hand, would they actually leave this comment, or would they let it slide as not worth a round-trip?" If the answer is "let it slide", DROP the finding. Specifically drop:
    - "Consider extracting <helper>" / "Magic number could be a constant" / "Consider consolidating <JSDoc / comments>" / "Could be DRYer" / "Consider renaming X for clarity" — these are refactor suggestions, not defects.
    - "Missing test for <trivial getter / passthrough / type change>" — only keep missing-test findings for high-consequence paths (auth, authz, data integrity, security, public API contract, migrations).
    - "Comment could be more descriptive" / "consider adding documentation" — documentation gaps are not defects.
    - "This could be more idiomatic" / "could use a more standard pattern" — preference, not defect.
-   - Findings on pre-existing patterns the diff merely touches without making worse — out of scope for the PR.
+   - Findings the description itself frames as pre-existing rather than introduced here — out of scope for the PR.
    Apply this pass aggressively. A clean review of 0-3 substantive findings beats a 6-finding review with 4 nits — nits train the author to ignore the bot.
 7. Rank by severity: critical > warning > info.
 8. Within the same severity, rank by confidence and impact.
@@ -686,7 +682,7 @@ Your job:
 ${PREVIOUS_FINDINGS_PLACEHOLDER}
 
 Also assess the overall merge readiness of the PR on a 1–5 scale:
-- 5 = No issues, clean PR — safe to merge
+- 5 = Nothing in these findings is worth raising
 - 4 = Minor info-level findings only — generally safe
 - 3 = Warnings present — review recommended before merging
 - 2 = Multiple warnings or critical issues — needs fixes

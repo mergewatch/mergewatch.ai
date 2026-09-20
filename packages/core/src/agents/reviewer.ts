@@ -2738,6 +2738,32 @@ const DISPUTE_RATE_HIGH_THRESHOLD = 0.75;
  * about WHY the verdict looks the way it does, without auto-suppressing
  * the findings themselves.
  */
+/**
+ * #634 — the orchestrator disclaiming its own input rather than judging it.
+ *
+ * `ORCHESTRATOR_PROMPT` used to instruct "verify each finding against the diff"
+ * six times while `runOrchestratorAgent` never passed a diff — it receives the
+ * FINDINGS. On mergewatch/fixtures#3572 the model said so plainly ("No diff
+ * provided to review. Cannot assess code changes…") and, on that basis, scored
+ * 5/5 over an unauthenticated admin endpoint its own agents had flagged eight
+ * times.
+ *
+ * The prompt is fixed, so this should not recur. It stays as defence in depth,
+ * because the failure is silent and lands on the most consequential verdict the
+ * product renders — and #382 is precedent that this stage must never fail OPEN.
+ *
+ * Deliberately narrow. It matches a disclaimer about the INPUT, not any hedge:
+ * an orchestrator saying "the findings are low-confidence" is doing its job.
+ * Dropping findings is also its job, so the clamp below additionally requires
+ * that agents actually produced something actionable.
+ */
+export function disclaimsItsInput(reason: string): boolean {
+  if (!reason) return false;
+  return /\bno\s+(diff|code|changes?|content)\s+(was\s+)?(provided|supplied|given|included|available)\b/i.test(reason)
+    || /\bcannot\s+(assess|review|evaluate|analyze|analyse)\b[^.]{0,40}\bwithout\s+(seeing|the)\b/i.test(reason)
+    || /\b(did\s+not|didn't|was\s+not|wasn't)\s+(receive|given|provided)\b[^.]{0,30}\b(diff|code|changes?)\b/i.test(reason);
+}
+
 export function reconcileMergeScore(input: {
   filteredFindings: OrchestratedFinding[];
   previousFindings: PreviousFinding[] | undefined;
@@ -2771,11 +2797,18 @@ export function reconcileMergeScore(input: {
   // `hasFullOrchestratorCounts` guard below).
   orchestratorCriticalsCount?: number;
   orchestratorWarningsCount?: number;
+  /**
+   * #634 — how many critical/warning findings the AGENTS produced, before the
+   * orchestrator ran. Only used to tell "the orchestrator judged these and
+   * found nothing actionable" (normal, and the anti-pedantry pass exists for
+   * it) apart from "the orchestrator never engaged with them" (the bug).
+   */
+  agentActionableCount?: number;
 }): { mergeScore: number; mergeScoreReason: string; disputeDisclosure?: string } {
   const {
     filteredFindings, previousFindings, orchestratorScore, orchestratorReason,
     categoryDisputeRates,
-    orchestratorCriticalsCount, orchestratorWarningsCount,
+    orchestratorCriticalsCount, orchestratorWarningsCount, agentActionableCount,
   } = input;
 
   const actionFindings = filteredFindings.filter(
@@ -2820,6 +2853,29 @@ export function reconcileMergeScore(input: {
   const disputeDisclosure = highDisputeActionCount > 0
     ? `${highDisputeActionCount} of ${actionFindings.length} action finding${actionFindings.length === 1 ? '' : 's'} ${highDisputeActionCount === 1 ? 'is' : 'are'} from a category disputed ≥ ${Math.round(DISPUTE_RATE_HIGH_THRESHOLD * 100)}% of the time in this org's recent reviews — the verdict tier reflects that historical accuracy.`
     : undefined;
+
+  // #634 — refuse a clean verdict when the orchestrator disclaimed its input.
+  //
+  // Not the same as the orchestrator judging findings unworthy: that is its job
+  // and the anti-pedantry pass exists for it. This fires only when its own
+  // reason says it could not engage with what it was given, AND the agents
+  // produced something actionable. On fixtures#3572 that combination rendered
+  // 🟢 5/5 over an unauthenticated admin endpoint flagged eight times.
+  //
+  // 3/5 advisory rather than blocking: we do not know the findings are real —
+  // only that nothing competent judged them. Same tier the #385 and W7 clamps
+  // use for "cannot vouch for this either way".
+  if (
+    disclaimsItsInput(orchestratorReason) &&
+    (agentActionableCount ?? 0) > 0 &&
+    orchestratorScore >= 4
+  ) {
+    const n = agentActionableCount!;
+    return {
+      mergeScore: 3,
+      mergeScoreReason: `The ranking stage reported that it could not assess the changes, then returned a clean verdict — so ${n} finding${n === 1 ? '' : 's'} from the review agents ${n === 1 ? 'was' : 'were'} never judged. This is an advisory verdict, NOT a clean-PR result — re-run the review or inspect the diff manually before merging.`,
+    };
+  }
 
   // #385 — "nothing to render" is only a clean PR when nothing was taken
   // away. When the orchestrator scored blocking on criticals and every one of
@@ -3816,6 +3872,12 @@ export async function runReviewPipeline(
     categoryDisputeRates: options.categoryDisputeRates,
     orchestratorCriticalsCount,
     orchestratorWarningsCount,
+    // #634 — what the AGENTS produced, so the clamp can tell a judged set
+    // from an unjudged one.
+    agentActionableCount: dedupedTaggedFindings
+      .flatMap((t) => (t.findings ?? []) as OrchestratedFinding[])
+      .filter((f) => f.severity === 'critical' || f.severity === 'warning')
+      .length,
   });
 
   // #231 — when a model isn't priced, cost shows as "unpriced" everywhere (PR

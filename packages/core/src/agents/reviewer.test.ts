@@ -18,6 +18,7 @@ import {
   runCommentAccuracyAgent,
   runCustomAgent,
   maxSeverity,
+  disclaimsItsInput,
   runOrchestratorAgent,
   runDeltaCaptionAgent,
   runReviewPipeline,
@@ -1000,6 +1001,71 @@ describe('a blocking org agent actually blocks (#543)', () => {
     expect(blockingCriticalAgents([orgAgent as never], [
       { severity: 'critical', category: 'style-policy' },
     ])).toEqual([]);
+  });
+});
+
+describe('orchestrator disclaiming its input (#634)', () => {
+  const finding = {
+    file: 'src/admin-endpoint.ts', line: 4, severity: 'warning', category: 'security',
+    title: 'x', description: 'd', suggestion: 's',
+  } as never;
+
+  it('recognises the verdict that shipped on fixtures#3572', () => {
+    // Verbatim from the review that scored 5/5 over an unauthenticated admin
+    // endpoint its own agents had flagged eight times.
+    expect(disclaimsItsInput(
+      'No diff provided to review. Cannot assess code changes without seeing the actual modifications to the files.',
+    )).toBe(true);
+  });
+
+  it('does not fire on an orchestrator doing its job', () => {
+    // Dropping findings IS the job. A hedge about the FINDINGS is not a
+    // disclaimer about the INPUT, and treating it as one would clamp most
+    // healthy reviews to advisory.
+    expect(disclaimsItsInput('Only informational notes.')).toBe(false);
+    expect(disclaimsItsInput('The findings are low-confidence and speculative.')).toBe(false);
+    expect(disclaimsItsInput('No issues found — clean PR.')).toBe(false);
+    expect(disclaimsItsInput('Multiple warnings present regarding error handling.')).toBe(false);
+    expect(disclaimsItsInput('')).toBe(false);
+  });
+
+  it('clamps a clean verdict to advisory when the input was disclaimed', () => {
+    const r = reconcileMergeScore({
+      filteredFindings: [],
+      previousFindings: undefined,
+      orchestratorScore: 5,
+      orchestratorReason: 'No diff provided to review. Cannot assess code changes without seeing the modifications.',
+      agentActionableCount: 8,
+    });
+    expect(r.mergeScore).toBe(3);
+    expect(r.mergeScoreReason).toContain('never judged');
+    expect(r.mergeScoreReason).toContain('NOT a clean-PR result');
+  });
+
+  it('does NOT clamp when the agents produced nothing actionable', () => {
+    // A genuinely empty review that also disclaimed its input is still empty —
+    // there is nothing unjudged to warn about, and clamping would invent doubt.
+    const r = reconcileMergeScore({
+      filteredFindings: [],
+      previousFindings: undefined,
+      orchestratorScore: 5,
+      orchestratorReason: 'No diff provided to review.',
+      agentActionableCount: 0,
+    });
+    expect(r.mergeScore).toBe(5);
+  });
+
+  it('does NOT clamp a verdict that was already blocking', () => {
+    // Only a CLEAN verdict is dangerous here. A 1/5 already tells the reader to
+    // stop, and softening it would be the opposite of the fix.
+    const r = reconcileMergeScore({
+      filteredFindings: [finding],
+      previousFindings: undefined,
+      orchestratorScore: 1,
+      orchestratorReason: 'No diff provided to review.',
+      agentActionableCount: 8,
+    });
+    expect(r.mergeScore).toBe(1);
   });
 });
 
