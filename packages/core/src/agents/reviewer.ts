@@ -10,7 +10,7 @@
  * injected ILLMProvider interface.
  */
 
-import type { ILLMProvider } from '../llm/types.js';
+import type { ILLMProvider, LLMSamplingConfig } from '../llm/types.js';
 import { normalizeLLMResult, StructuredOutputUnsupportedError } from '../llm/types.js';
 import { TokenAccumulator, TrackingLLMProvider } from '../llm/token-accumulator.js';
 import type { PromptSegment, PromptInput } from '../llm/prompt-segment.js';
@@ -590,9 +590,11 @@ async function invokeAgentText(
   modelId: string,
   prompt: PromptInput,
   fileFetchOptions?: FileFetchOptions,
+  /** #518 — preserved across the fetch path; see invokeWithFileFetching. */
+  sampling?: LLMSamplingConfig,
 ): Promise<string> {
   if (fileFetchOptions) {
-    const result = await invokeWithFileFetching(llm, modelId, prompt, fileFetchOptions);
+    const result = await invokeWithFileFetching(llm, modelId, prompt, fileFetchOptions, undefined, sampling);
     if (result.roundsUsed > 1) {
       const fileCount = Object.keys(result.fetchedFiles).length;
       console.log(
@@ -601,7 +603,7 @@ async function invokeAgentText(
     }
     return result.response;
   }
-  return normalizeLLMResult(await llm.invoke(modelId, prompt)).text;
+  return normalizeLLMResult(await llm.invoke(modelId, prompt, undefined, sampling)).text;
 }
 
 /**
@@ -730,6 +732,18 @@ export async function runDiagramAgent(
   llm: ILLMProvider,
   previousDiagram?: string,
   changedFiles?: string[],
+  /**
+   * #518 — the diagram agent had NO file access at all, less than any finding
+   * agent, while its output carries more visual authority than theirs. Every
+   * node and edge was generated from the diff alone, so a `→ require_auth`
+   * edge asserted a security property nothing had checked (shiftlog#78).
+   *
+   * This does not yet make the edges verified — that is #636 (do not draw an
+   * unconfirmed control edge) and #637 (ground every edge). It gives the agent
+   * the ability to look, which is what turns those from instructions into
+   * checks.
+   */
+  fileFetchOptions?: FileFetchOptions,
 ): Promise<DiagramResult> {
   // Inject previous diagram for consistency or strip the placeholder.
   // When previousDiagram exists and is non-empty, replaces PREVIOUS_DIAGRAM_PLACEHOLDER
@@ -749,12 +763,13 @@ ${previousDiagram}
   } else {
     diagramPrompt = diagramPrompt.replace(PREVIOUS_DIAGRAM_PLACEHOLDER, '');
   }
-  const prompt = buildPrompt(diagramPrompt, diff, context, false);
+  const prompt = buildPrompt(diagramPrompt, diff, context, !!fileFetchOptions);
   // Slight temperature so Mermaid diagrams don't read as a carbon copy across
   // re-reviews of the same PR. Still low enough that structure is stable.
-  const raw = normalizeLLMResult(
-    await llm.invoke(modelId, prompt, undefined, { temperature: 0.2 }),
-  ).text;
+  // #518 — routed through invokeAgentText so the agent can request files; the
+  // sampling is threaded through rather than dropped, which the plain fetch
+  // path would otherwise do silently.
+  const raw = await invokeAgentText(llm, modelId, prompt, fileFetchOptions, { temperature: 0.2 });
   return parseDiagramResponse(raw, changedFiles);
 }
 
@@ -3185,7 +3200,7 @@ export async function runReviewPipeline(
       ? runSummaryAgent(diff, context, lightModelId, llm, conventions, agentAuthored)
       : Promise.resolve(''),
     () => enabledAgents.diagram
-      ? runDiagramAgent(diff, context, lightModelId, llm, previousDiagram, changedFiles)
+      ? runDiagramAgent(diff, context, lightModelId, llm, previousDiagram, changedFiles, fileFetchOptions)
       : Promise.resolve({ diagram: '', caption: '' } as DiagramResult),
   ], AGENT_CONCURRENCY) as [
     AgentFinding[], AgentFinding[], AgentFinding[],

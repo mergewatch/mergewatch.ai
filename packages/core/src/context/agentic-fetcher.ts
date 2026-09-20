@@ -1,4 +1,5 @@
 import type { PromptInput } from '../llm/prompt-segment.js';
+import type { LLMSamplingConfig } from '../llm/types.js';
 /**
  * Agentic file fetching — lets LLM agents request files they need.
  *
@@ -116,6 +117,15 @@ export async function invokeWithFileFetching(
   basePrompt: PromptInput,
   fetchOptions: FileFetchOptions,
   maxTokens?: number,
+  /**
+   * #518 — sampling for every round, not just the first. The diagram agent runs
+   * at temperature 0.2 so re-reviews do not read as carbon copies; routing it
+   * through this helper without threading that through would silently drop it
+   * and change behaviour the caller deliberately chose.
+   *
+   * Omitted by every other caller, which keeps provider defaults (temperature 0).
+   */
+  sampling?: LLMSamplingConfig,
 ): Promise<AgenticInvokeResult> {
   const allFetchedFiles: Record<string, string> = {};
   let currentPrompt: PromptInput = basePrompt;
@@ -124,7 +134,7 @@ export async function invokeWithFileFetching(
   for (let round = 0; round < fetchOptions.maxRounds; round++) {
     let response: string;
     try {
-      response = normalizeLLMResult(await llm.invoke(modelId, currentPrompt, maxTokens)).text;
+      response = normalizeLLMResult(await llm.invoke(modelId, currentPrompt, maxTokens, sampling)).text;
     } catch (err) {
       console.warn('LLM invocation failed during agentic file fetching, falling back to no-context analysis:', err);
       // Fall back to a simple invoke without file fetching context
@@ -148,7 +158,7 @@ export async function invokeWithFileFetching(
       // Model requested files we already have — re-invoke without file request instruction
       // to force analysis output
       const forcePrompt = currentPrompt + '\n\nAll requested files have already been provided above. Please proceed with your analysis now.';
-      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, forcePrompt, maxTokens)).text;
+      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, forcePrompt, maxTokens, sampling)).text;
       roundsUsed++;
       return { response: finalResponse, fetchedFiles: allFetchedFiles, roundsUsed };
     }
@@ -161,7 +171,7 @@ export async function invokeWithFileFetching(
     if (remainingKB <= 0) {
       // Budget exhausted — re-invoke asking for analysis
       const budgetPrompt = currentPrompt + '\n\nContext budget exhausted. Please proceed with your analysis using the context already provided.';
-      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, budgetPrompt, maxTokens)).text;
+      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, budgetPrompt, maxTokens, sampling)).text;
       roundsUsed++;
       return { response: finalResponse, fetchedFiles: allFetchedFiles, roundsUsed };
     }
@@ -185,7 +195,7 @@ export async function invokeWithFileFetching(
       console.warn(`None of the ${newFiles.length} requested file(s) could be fetched: ${newFiles.join(', ')}`);
       // No files fetched — force analysis without additional context
       const noFilesPrompt = currentPrompt + '\n\nThe requested files could not be fetched. Please proceed with your analysis using only the diff.';
-      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, noFilesPrompt, maxTokens)).text;
+      const finalResponse = normalizeLLMResult(await llm.invoke(modelId, noFilesPrompt, maxTokens, sampling)).text;
       roundsUsed++;
       return { response: finalResponse, fetchedFiles: allFetchedFiles, roundsUsed };
     }
@@ -211,7 +221,7 @@ export async function invokeWithFileFetching(
   }
 
   // Max rounds reached — do a final invoke forcing analysis
-  const finalResponse = normalizeLLMResult(await llm.invoke(modelId, currentPrompt, maxTokens)).text;
+  const finalResponse = normalizeLLMResult(await llm.invoke(modelId, currentPrompt, maxTokens, sampling)).text;
   roundsUsed++;
   return { response: finalResponse, fetchedFiles: allFetchedFiles, roundsUsed };
 }
