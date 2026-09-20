@@ -397,6 +397,45 @@ describe('runSummaryAgent', () => {
 // ─── runDiagramAgent ────────────────────────────────────────────────────────
 
 describe('runDiagramAgent', () => {
+  // #518 — the diagram agent had NO file access, less than any finding agent,
+  // while its output carries more visual authority than theirs. Every node and
+  // edge was generated from the diff alone.
+  it('keeps its deliberate sampling when no fetch is configured', async () => {
+    // temperature 0.2 exists so re-reviews do not produce carbon-copy diagrams.
+    // Routing through the fetch helper must not silently drop it.
+    const calls: Array<{ sampling?: unknown }> = [];
+    const llm = {
+      async invoke(_m: string, _p: unknown, _t?: number, sampling?: unknown) {
+        calls.push({ sampling });
+        return '%% overview\nflowchart TD\n  A-->B';
+      },
+    } as never;
+    await runDiagramAgent(sampleDiff, sampleContext, 'model-1', llm);
+    expect(calls[0].sampling).toEqual({ temperature: 0.2 });
+  });
+
+  it('passes the grounding fetch through, still with its sampling', async () => {
+    const calls: Array<{ sampling?: unknown }> = [];
+    const llm = {
+      async invoke(_m: string, _p: unknown, _t?: number, sampling?: unknown) {
+        calls.push({ sampling });
+        return '%% overview\nflowchart TD\n  A-->B';
+      },
+    } as never;
+    const fetchOptions = {
+      octokit: { repos: { getContent: async () => ({ data: {} }) } },
+      owner: 'o', repo: 'r', ref: 'sha', maxRounds: 2, maxFiles: 3, maxBytes: 1000,
+    } as never;
+    const result = await runDiagramAgent(
+      sampleDiff, sampleContext, 'model-1', llm, undefined, undefined, fetchOptions,
+    );
+    // The point is that the fetch path is reachable AND does not cost the
+    // sampling the caller chose — dropping it would be silent.
+    expect(calls[0].sampling).toEqual({ temperature: 0.2 });
+    expect(isValidMermaidDiagram(result.diagram)).toBe(true);
+  });
+
+
   it('#394 — heals an edge label broken across lines (raw newline inside |…|)', async () => {
     const mermaid = '%% Flow\nflowchart TD\n  A -->|fallback on\nUnsupportedError| B\n  B --> C';
     const llm = createMockLLM([mermaid]);

@@ -324,6 +324,23 @@ export function mergeScoreMeta(
  * so the note would be noise on exactly the PRs where nobody is inferring
  * merge-safety anyway.
  */
+/**
+ * What the diagram covers (#518).
+ *
+ * `validateDiagramPaths` (FP-D) confines the diagram to files in the PR's
+ * changed set, so it is a picture of the DIFF rendered as though it were a
+ * picture of the system. On shiftlog#78 it drew one route through
+ * `require_auth` and omitted the route with no guard — not missed, structurally
+ * excluded, because that file was never touched. The reader concluded auth
+ * coverage had been verified.
+ *
+ * Nothing in the diagram was false. The wrong inference came from its apparent
+ * completeness, which is a property of presentation — so it is fixed in
+ * presentation.
+ */
+export const DIAGRAM_SCOPE_NOTE =
+  'Covers files changed in this PR — not the whole system.';
+
 export const REVIEW_SCOPE_NOTE =
   'Reviewed the diff only — MergeWatch does not build, run tests, or read other checks.';
 
@@ -790,6 +807,9 @@ export function formatReviewComment(options: FormatOptions): string {
     diagramSec.push('```mermaid');
     diagramSec.push(diagram);
     diagramSec.push('```');
+    // #518 — directly beneath the diagram, not in a footer. The inference it
+    // corrects is made while looking at the picture.
+    diagramSec.push(`<sub>${DIAGRAM_SCOPE_NOTE}</sub>`);
     diagramSec.push('');
   }
 
@@ -816,12 +836,12 @@ export function formatReviewComment(options: FormatOptions): string {
       action.push('');
     // `?? 5` keeps callers that omit mergeScore on the pre-#385 behavior.
     } else if (findings.length === 0 && (mergeScore ?? 5) <= 3) {
-      // #385 \u2014 an empty finding list is not always a clean bill of health. When
-      // every finding the orchestrator raised was filtered away, the verdict is
-        // clamped to advisory and its subtitle says so; a cheerful "Looks good
-        // to me" four lines under that subtitle contradicts it, and a reader who skims
-      // to the body merges on the strength of the wrong half. Defer to the
-      // verdict line rather than talking over it.
+      // #385 \u2014 an empty finding list is not always a clean bill of health.
+      // When every finding the orchestrator raised was filtered away, the
+      // verdict is clamped to advisory and its subtitle says so; a cheerful
+      // "Looks good to me" four lines under that subtitle contradicts it, and
+      // a reader who skims to the body merges on the strength of the wrong
+      // half. Defer to the verdict line rather than talking over it.
       action.push('Nothing rendered \u2014 see the verdict above before merging.');
       action.push('');
     } else if (ux?.allClearMessage !== false) {

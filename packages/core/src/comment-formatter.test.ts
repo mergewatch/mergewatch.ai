@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, buildReviewDetailUrl, REVIEW_SCOPE_NOTE, type Finding } from './comment-formatter.js';
+import { formatReviewComment, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent, COMMENT_BODY_BUDGET, mergeScoreMeta, buildReviewDetailUrl, REVIEW_SCOPE_NOTE, DIAGRAM_SCOPE_NOTE, type Finding } from './comment-formatter.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -436,6 +436,43 @@ describe('formatReviewComment', () => {
   });
 
   // ─── FP-J L3 — dispute-rate disclosure ─────────────────────────────────
+  describe('#518 — the diagram says what it covers', () => {
+    const diagram = 'graph LR\n  A --> B';
+
+    it('renders the scope note directly beneath the diagram', () => {
+      // shiftlog#78: the diagram drew one route through require_auth and omitted
+      // the route with no guard — structurally, because that file was not in the
+      // diff. The reader inferred auth coverage. Nothing in the diagram was
+      // false; the inference came from its apparent completeness.
+      const result = formatReviewComment(baseOptions({ diagram, showDiagram: true }));
+      const lines = result.split('\n');
+      const fence = lines.lastIndexOf('```');
+      const note = lines.findIndex((l) => l.includes(DIAGRAM_SCOPE_NOTE));
+      expect(note).toBeGreaterThan(-1);
+      // Beneath the picture, not in a footer — the inference is made while
+      // looking at it.
+      expect(note).toBe(fence + 1);
+      expect(lines[note].startsWith('<sub>')).toBe(true);
+    });
+
+    it('says what it covers and what it does not', () => {
+      // A note that only said "covers changed files" still invites the reader to
+      // assume the rest was checked and found fine.
+      expect(DIAGRAM_SCOPE_NOTE).toContain('changed in this PR');
+      expect(DIAGRAM_SCOPE_NOTE).toContain('not the whole system');
+    });
+
+    it('does not render the note when there is no diagram', () => {
+      const result = formatReviewComment(baseOptions({ showDiagram: true }));
+      expect(result).not.toContain(DIAGRAM_SCOPE_NOTE);
+    });
+
+    it('does not render the note when diagrams are turned off', () => {
+      const result = formatReviewComment(baseOptions({ diagram, showDiagram: false }));
+      expect(result).not.toContain(DIAGRAM_SCOPE_NOTE);
+    });
+  });
+
   describe('#617 — a multi-paragraph reason stays inside the verdict blockquote', () => {
     // FP-L appends a staleness note after a blank line when the orchestrator's
     // prose names more findings than render. The verdict renders inside a
