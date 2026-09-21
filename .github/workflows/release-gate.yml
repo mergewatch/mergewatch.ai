@@ -694,7 +694,12 @@ jobs:
             | jq -r --arg ver "$VERSION" \
                 '[.[] | select(.title == $ver)] | .[0].number // empty' 2>/dev/null || true)"
           if [ -n "$MS_NUM" ]; then
-            ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$VERSION" \
+            # Query by the resolved NUMBER, not the title. `--milestone`
+            # accepts either, and title matching is case-insensitive, so two
+            # milestones differing only in case would be indistinguishable
+            # here. The number was already resolved above; using the title
+            # again discards that precision for nothing.
+            ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$MS_NUM" \
               --state closed --limit 100 --json number,title \
               --jq '.[] | "- #\(.number) — \(.title)"' 2>/dev/null || true)"
           fi
