@@ -667,41 +667,50 @@ jobs:
             echo "::error::changelog-section.sh failed (rc=$gen_rc) — refusing to publish notes that omit what changed"
             exit 1
           fi
-          # #641 — cite the ISSUES, not only the PRs.
+          # #642 — cite the ISSUES, not only the PRs.
           #
-          # changelog-section.sh reads merge commits, so a reader sees
+          # changelog-section.sh reads merge commits, so a reader saw
           # "fix(diagram): say what the diagram covers (#638)" — the PR. The
           # reason the change exists lives on the issue (#518), and the release
-          # milestone already carries exactly that list, maintained by hand as
-          # the release is planned.
+          # milestone already carries exactly that list.
           #
-          # Degrades LOUDLY. A missing milestone prints a line saying so rather
-          # than dropping the section, because notes that quietly omit a section
-          # look complete — the same failure v0.6.1 shipped when it said nothing
-          # about its eight fixes.
+          # THREE outcomes, kept distinguishable. An earlier draft collapsed
+          # them with `2>/dev/null || true`, so a rate-limited or network-blipped
+          # lookup rendered "No milestone titled vX.Y.Z" — asserting the
+          # milestone does not exist when the truth was that we never found out.
+          # That is the same defect this change exists to remove, so it does not
+          # get to live in the fix for it.
           ISSUES=""
-          # $VERSION reaches jq as DATA, never as program text. Interpolating
-          # it into the filter string (`select(.title == "$VERSION")`) would
-          # let a version containing a quote or backslash malform the program.
-          # `prepare` validates the format already, so this is defence in
-          # depth rather than a live hole — but that validation lives in a
-          # different job, and a guard depending on a distant one is the kind
-          # that quietly stops holding.
-          #
-          # `gh api --jq` takes a single query string and has no --arg, so the
-          # value has to be bound by piping to jq itself.
-          MS_NUM="$(gh api "repos/$GITHUB_REPOSITORY/milestones?state=all&per_page=100" 2>/dev/null \
-            | jq -r --arg ver "$VERSION" \
-                '[.[] | select(.title == $ver)] | .[0].number // empty' 2>/dev/null || true)"
-          if [ -n "$MS_NUM" ]; then
-            # Query by the resolved NUMBER, not the title. `--milestone`
-            # accepts either, and title matching is case-insensitive, so two
-            # milestones differing only in case would be indistinguishable
-            # here. The number was already resolved above; using the title
-            # again discards that precision for nothing.
-            ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$MS_NUM" \
-              --state closed --limit 100 --json number,title \
-              --jq '.[] | "- #\(.number) — \(.title)"' 2>/dev/null || true)"
+          ISSUES_NOTE=""
+          ms_rc=0
+          MS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/milestones?state=all&per_page=100")" || ms_rc=$?
+          if [ "$ms_rc" -ne 0 ]; then
+            ISSUES_NOTE="_Milestone lookup failed (\`gh api\` exited $ms_rc). The issue list is omitted because it could not be read — this is a tooling failure, not an empty milestone._"
+          else
+            # $VERSION reaches jq as DATA, never as program text. Interpolating it
+            # into the filter (`select(.title == "$VERSION")`) would let a version
+            # containing a quote redirect the predicate: with `v1.2.3" or true or "`
+            # it matched EVERY milestone and returned the first one. `prepare`
+            # validates the format, but that guard lives in another job.
+            MS_NUM="$(printf '%s' "$MS_JSON" \
+              | jq -r --arg ver "$VERSION" '[.[] | select(.title == $ver)] | .[0].number // empty')"
+            if [ -z "$MS_NUM" ]; then
+              ISSUES_NOTE="_No milestone titled \`$VERSION\`._"
+            else
+              # By resolved NUMBER, not title: `--milestone` accepts either, and
+              # title matching is case-insensitive, so two milestones differing
+              # only in case are indistinguishable here.
+              iss_rc=0
+              ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$MS_NUM" \
+                --state closed --limit 100 --json number,title \
+                --jq '.[] | "- #\(.number) — \(.title)"')" || iss_rc=$?
+              if [ "$iss_rc" -ne 0 ]; then
+                ISSUES=""
+                ISSUES_NOTE="_Issue lookup for milestone $MS_NUM failed (\`gh issue list\` exited $iss_rc). The list is omitted because it could not be read._"
+              elif [ -z "$ISSUES" ]; then
+                ISSUES_NOTE="_Milestone \`$VERSION\` carried no closed issues._"
+              fi
+            fi
           fi
           {
             printf '## What changed\n'
@@ -709,13 +718,13 @@ jobs:
             if [ -n "$ISSUES" ]; then
               printf '\n### Issues closed\n\n%s\n' "$ISSUES"
             else
-              printf '\n### Issues closed\n\n_No milestone titled `%s`, or it carried no closed issues._\n' "$VERSION"
+              printf '\n### Issues closed\n\n%s\n' "$ISSUES_NOTE"
             fi
             printf '\n---\n\n'
             printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
             printf 'Graded fixture suite:\n\n'
             printf '%s\n%s\n%s\n\n' "$fence" "$GRADED" "$fence"
-            # #641 — this used to read "Manual fixtures verified and approved".
+            # #642 — this used to read "Manual fixtures verified and approved".
             # It printed unconditionally, so it asserted a verification the
             # gate never observed: nothing here knows which manual fixtures
             # were walked, and the NOT VERIFIED line two paragraphs above
