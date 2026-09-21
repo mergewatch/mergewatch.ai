@@ -680,8 +680,19 @@ jobs:
           # look complete — the same failure v0.6.1 shipped when it said nothing
           # about its eight fixes.
           ISSUES=""
-          MS_NUM="$(gh api "repos/$GITHUB_REPOSITORY/milestones?state=all&per_page=100" \
-            --jq "[.[] | select(.title == \"$VERSION\")] | .[0].number // empty" 2>/dev/null || true)"
+          # $VERSION reaches jq as DATA, never as program text. Interpolating
+          # it into the filter string (`select(.title == "$VERSION")`) would
+          # let a version containing a quote or backslash malform the program.
+          # `prepare` validates the format already, so this is defence in
+          # depth rather than a live hole — but that validation lives in a
+          # different job, and a guard depending on a distant one is the kind
+          # that quietly stops holding.
+          #
+          # `gh api --jq` takes a single query string and has no --arg, so the
+          # value has to be bound by piping to jq itself.
+          MS_NUM="$(gh api "repos/$GITHUB_REPOSITORY/milestones?state=all&per_page=100" 2>/dev/null \
+            | jq -r --arg ver "$VERSION" \
+                '[.[] | select(.title == $ver)] | .[0].number // empty' 2>/dev/null || true)"
           if [ -n "$MS_NUM" ]; then
             ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$VERSION" \
               --state closed --limit 100 --json number,title \
