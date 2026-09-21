@@ -667,14 +667,47 @@ jobs:
             echo "::error::changelog-section.sh failed (rc=$gen_rc) — refusing to publish notes that omit what changed"
             exit 1
           fi
+          # #641 — cite the ISSUES, not only the PRs.
+          #
+          # changelog-section.sh reads merge commits, so a reader sees
+          # "fix(diagram): say what the diagram covers (#638)" — the PR. The
+          # reason the change exists lives on the issue (#518), and the release
+          # milestone already carries exactly that list, maintained by hand as
+          # the release is planned.
+          #
+          # Degrades LOUDLY. A missing milestone prints a line saying so rather
+          # than dropping the section, because notes that quietly omit a section
+          # look complete — the same failure v0.6.1 shipped when it said nothing
+          # about its eight fixes.
+          ISSUES=""
+          MS_NUM="$(gh api "repos/$GITHUB_REPOSITORY/milestones?state=all&per_page=100" \
+            --jq "[.[] | select(.title == \"$VERSION\")] | .[0].number // empty" 2>/dev/null || true)"
+          if [ -n "$MS_NUM" ]; then
+            ISSUES="$(gh issue list --repo "$GITHUB_REPOSITORY" --milestone "$VERSION" \
+              --state closed --limit 100 --json number,title \
+              --jq '.[] | "- #\(.number) — \(.title)"' 2>/dev/null || true)"
+          fi
           {
             printf '## What changed\n'
             printf '%s\n' "$CHANGES"
+            if [ -n "$ISSUES" ]; then
+              printf '\n### Issues closed\n\n%s\n' "$ISSUES"
+            else
+              printf '\n### Issues closed\n\n_No milestone titled `%s`, or it carried no closed issues._\n' "$VERSION"
+            fi
             printf '\n---\n\n'
             printf 'Released from `%s` (commit `%s`) via the release gate (#505).\n\n' "$REF" "$SHA"
             printf 'Graded fixture suite:\n\n'
             printf '%s\n%s\n%s\n\n' "$fence" "$GRADED" "$fence"
-            printf 'Manual fixtures verified and approved by @%s.\n' "$ACTOR"
+            # #641 — this used to read "Manual fixtures verified and approved".
+            # It printed unconditionally, so it asserted a verification the
+            # gate never observed: nothing here knows which manual fixtures
+            # were walked, and the NOT VERIFIED line two paragraphs above
+            # often contradicted it outright. A self-hoster reads these notes
+            # to decide whether to upgrade, so the claim has to match what
+            # was actually checked.
+            printf 'Release approved by @%s.\n\n' "$ACTOR"
+            printf 'Approval records that a human accepted this release. It does **not** assert that every manual fixture was walked — the manual set counted in the NOT VERIFIED line above is not covered by this run. Manual results, where walked, are recorded on the fixture PRs; see `e2e/MANUAL-VERIFICATION.md`.\n'
           } > /tmp/notes.md
           test -s /tmp/notes.md || { echo "::error::release notes came out empty — refusing to tag"; exit 1; }
 
