@@ -97,7 +97,7 @@ The Lambda execution role follows least-privilege IAM policy design.
 ## Frequently asked questions
 
 <Accordion title="Can MergeWatch modify my code?">
-  No. MergeWatch has `contents: read` only. It cannot push commits, create branches, or modify any file. The only write operations are posting review comments (`pull_requests: read & write`) and creating check runs (`checks: read & write`).
+  No. MergeWatch requests `contents: read & write`, but the write half is used for exactly one thing — resolving and unresolving review threads MergeWatch itself created. It cannot push commits, create branches, or modify any file. The other write operations are posting review comments (`pull_requests: read & write`) and creating check runs (`checks: read & write`). Declining the contents write permission is supported; only thread tidying is lost.
 </Accordion>
 
 <Accordion title="Does MergeWatch store my source code?">
