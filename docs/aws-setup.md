@@ -225,7 +225,7 @@ You should see output like:
    - **Webhook secret**: Generate a strong secret (`openssl rand -hex 32`)
 3. Set permissions:
    - **Pull requests**: Read & Write
-   - **Contents**: Read-only
+   - **Contents**: Read & Write (write is used only to resolve review threads; grant Read-only instead if you prefer, and thread resolution is skipped)
    - **Metadata**: Read-only
 4. Subscribe to events:
    - **Pull request**

@@ -44,7 +44,7 @@ description: Dedicated multi-agent PR reviewer you can self-host vs GitHub's bun
 - You already pay for Copilot Business or Enterprise org-wide and want zero additional setup — Copilot review is already on.
 - Your team relies on deep IDE integration across VS Code, Visual Studio, JetBrains, and Xcode, and wants review in the same surface as inline completion.
 - You want reviews to complete "in less than 30 seconds" on small PRs without managing LLM provider accounts.
-- You have strict GitHub-sole-vendor policies and can't introduce new third-party apps with `contents: read`.
+- You have strict GitHub-sole-vendor policies and can't introduce new third-party apps with `contents: read & write` (MergeWatch uses the write half only to resolve review threads it created, and works without it).
 
 ## Cross-links
 
