@@ -1,0 +1,93 @@
+# Dependabot configuration — #661
+#
+# WHY THIS FILE EXISTS
+#
+# #587 arrived as a single grouped security PR carrying two unauthenticated
+# Next.js RCE patches (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4) AND the
+# vitest 4 → 5 major. That major breaks coverage collection — every file
+# reports 0% and the threshold fails (#590) — so the PR was red, and a red
+# security PR reads as "the patch broke something". The RCE fix stayed blocked
+# until it was split out by hand (#589), during a release cut.
+#
+# Nothing here was configured before: with no dependabot.yml, security updates
+# were grouped by the repository-level "Grouped security updates" setting,
+# which has no way to know that vitest is the one dependency whose upgrade
+# should never ride along with a security patch.
+#
+# THE MECHANISM, AND THE TWO ALTERNATIVES THAT DO NOT WORK
+#
+# Verified against GitHub's Dependabot options reference on 2026-09-26.
+#
+#   - NOT an `ignore` rule. The `## ignore` section is badged for BOTH
+#     "Version updates" and "Security updates" (an option that applies to one
+#     kind only is badged "Version updates only", as `open-pull-requests-limit`
+#     and `schedule` are). So an ignore rule filters security updates too, and
+#     ignoring vitest majors would silently suppress a vitest security fix that
+#     ships only in a major. Wrong trade: we want vitest unbundled, not
+#     unpatched.
+#
+#   - NOT `update-types` inside the group. The docs say "`update-types` only
+#     affects _version_ updates, not _security updates_" — but that sentence
+#     documents `allow.update-types`, not the `groups.update-types` used here.
+#     `### update-types (groups)` says nothing about security updates either
+#     way, so relying on it means relying on undocumented behavior. Excluding
+#     by name needs no such guarantee.
+#
+#   - THIS: one security-updates group covering everything EXCEPT vitest.
+#     Security patches still arrive batched; a vitest security update arrives
+#     in its own PR, where it can go red on its own without holding an RCE fix
+#     hostage. Nothing is delayed or suppressed — only unbundled.
+#
+# WHY `open-pull-requests-limit: 0`
+#
+# Version updates only happen when a config file exists, so this repo has never
+# had routine dependency-bump PRs. Adding this file would switch them on across
+# all 13 manifests at once. The zero keeps today's behavior ("You can
+# temporarily disable version updates for a package manager by setting this
+# option to zero"), and it is safe for the security updates this file is FOR:
+# "_Security update_ pull requests are not subject to this limit and do not
+# count toward it."
+#
+# WHY A `/packages/*` GLOB RATHER THAN THE TWO DIRECTORIES FROM #587
+#
+# #587 spanned `/` and `/packages/dashboard`, but listing only those would
+# leave the bug live elsewhere: "Dependabot will only group across those
+# directories not configured in your `dependabot.yml` if the setting for
+# grouped security updates at the organization or repository level is also
+# enabled." An unlisted directory therefore keeps the old repo-setting
+# grouping. vitest is currently declared in `/`, `/packages/core`,
+# `/packages/dashboard` and `/packages/mcp`, and the glob covers any package
+# that picks it up later.
+#
+# REVISIT WHEN #590 LANDS
+#
+# This exclusion is not a permanent opinion about vitest. It exists because
+# vitest 5 breaks coverage collection. When #590 is fixed and vitest 5 is on
+# `main`, delete the `exclude-patterns` below — see the checkbox on #590.
+#
+# VERIFICATION LIMIT
+#
+# `packages/lambda/src/dependabot-config.test.ts` asserts the structure of this
+# file. It cannot observe Dependabot's grouping behavior, which is only visible
+# when the next grouped security advisory lands.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - "/"
+      - "/packages/*"
+    # Required by the schema even though version updates are disabled below.
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          # Both spellings: `vitest` alone would leave `@vitest/coverage-v8` —
+          # the package that actually carries the coverage provider — free to be
+          # bundled, reproducing #590 by another route.
+          - "vitest"
+          - "@vitest/*"
