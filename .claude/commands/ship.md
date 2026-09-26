@@ -22,6 +22,8 @@ If `$ARGUMENTS` is empty, ask what to ship and stop.
 - [ ] A **detailed task list exists** (via the Task tools) and is **mirrored onto the issue** as a living checklist, kept in sync as work progresses (boxes ticked, PRs linked).
 - [ ] `pnpm run build` and `pnpm run typecheck` pass across the workspace.
 - [ ] `pnpm run test` passes, and the new/changed behavior has **solid unit tests** covering the happy path **and** edge cases (null/empty, error paths, back-compat), mirroring the existing test style in neighboring files.
+- [ ] **Each new test is demonstrated failing before the fix.** Stash or revert the change, run the test, and keep the real failure output for the PR body. A test that passes both before and after is not observing the bug — either rewrite it, or disclose it explicitly as a pin/regression guard rather than counting it as coverage. This is the repo's signature defect (#626, #634, #640, #643): a check that cannot fail reads exactly like a check that passed.
+- [ ] **`pnpm run typecheck` was run separately from the tests.** vitest does not typecheck, so a green suite can sit on a broken build. Use `TURBO_FORCE=true` when the result is being used as evidence — a cached pass proves nothing about the current tree.
 - [ ] If the DB schema changed: an **idempotent** Drizzle migration is generated and `migrations:check` passes.
 - [ ] Changes **match existing conventions** and stay **scoped** — no unrelated refactors, renames, reformatting, or drive-by edits.
 - [ ] Docs/RUNBOOK updated where the repo expects (e.g. `e2e/RUNBOOK.md` scenarios, `docs/`, a `docs/pending/*` feature note when one fits the pattern).
@@ -35,7 +37,9 @@ If `$ARGUMENTS` is empty, ask what to ship and stop.
 
 ## Workflow
 
-1. **Understand.** If the target is a GitHub issue (URL or `#number`), read it with `gh issue view <n> --repo <owner/repo>` and extract the acceptance criteria; restate the scope in one line. Resolve genuinely blocking ambiguity before coding; otherwise pick sensible defaults and proceed. Study how similar features are already wired in this repo before designing.
+1. **Understand — and verify the issue before trusting it.** Read it with `gh issue view <n> --repo <owner/repo> --comments`. **The comments usually carry the corrections, the acceptance criteria, and the resolved investigations; the body is often the oldest and least accurate part of the ticket.** Restate the scope in one line. Study how similar features are already wired here before designing.
+
+   **Then trace the issue's causal claim to code before accepting it.** Issues age; code moves. An issue that says "nothing re-reads HEAD" or "the retry is blocked" is a claim, not a fact — open the file and check. Report any stale claim on the issue rather than silently working around it, and do not write acceptance criteria until the trace is done. Criteria written on an unverified premise have to be retracted in public, and a criterion can turn out to be unsatisfiable (no tier exists that can set the value it asserts on).
 
 2. **Plan + publish the task list.** This is mandatory, not optional:
    - **Build a detailed local task list** with the Task tools (`TaskCreate`) — decompose the work into concrete, verifiable steps. Set dependencies where they matter.
@@ -142,9 +146,33 @@ When you choose a stack:
 - Only the **final** PR carries `Closes #N`; earlier PRs reference the issue (`Part of #N`).
 - After each merge: sync `main`, tick that phase ✅ in the tracking comment, and proceed.
 
+## Verify before you publish, not after
+
+Draft locally, check, then post once. Publishing a conclusion and then correcting it costs the same learning and burns the reader's review cycles.
+
+**1. Positive control before any absence claim.** Before reporting that a value is missing, a counter did not move, or a feature did nothing, prove the probe can return a present. Query a known-good row first. Without a positive control you do not have a result, you have an untested probe. Real examples, each of which nearly became a filed bug:
+
+| probe | result | actual cause |
+|---|---|---|
+| the documented composite `pk` | `[]` | the doc was wrong; the key is bare |
+| reaction on the triggering comment | `0` | the reaction goes on the **PR** |
+| counters read immediately after reacting | unchanged | GitHub emits **no webhook for reactions** — they move on the next review |
+| `estimatedCostUsd` | "no rows" | the attribute is `costUsd` |
+
+**2. Parse; do not eyeball prettified output.** When exactness matters, read raw bytes or use a real parser:
+- `sed 's/^/  /'` display prefixes inflate apparent indentation and break the next patch. Read the exact line with `python3 -c "print(repr(lines[n]))"` before editing.
+- `date -jf "%Y-%m-%dT%H:%M:%SZ"` parses a `Z` timestamp as **local** and will confidently print the wrong day. Convert explicitly.
+- `aws logs filter-log-events --query 'length(events)'` returns a count **per page**, not a total. Sum it.
+- Range-limited greps (`sed -n '/X/,/^$/p'`) truncate at the first blank line and can hide findings that are actually present. Scan the whole body.
+
+**3. Report the four gate outcomes distinctly** — success, failure, skipped, 0-selected — and never let a `skipped` or degraded selection be written up as a pass. Read the review **verdict line**, not just the check status: a green check can carry a 3/5 with live findings.
+
+**4. Adversarially verify anything going into the tracker.** A second pass whose job is to *refute* the first catches what review does not. It has caught a subagent fabricating an acceptance criterion and quoting it as real, and it catches tests that cannot fail. Cheap relative to a wrong issue someone else then works from.
+
 ## Quality bar
 
 - Prefer the **smallest change that fully solves the ask** — no speculative abstractions, no handling for cases that can't occur.
 - **Faithfully report outcomes.** If a test fails or a step was skipped, say so with the evidence; only state "done and verified" when you've actually verified it.
+- **Distinguish "instrumented" from "exercised."** A fixture that exists but has never run, or a check that has never gone red, is not coverage yet. Say which it is; do not close an issue on the former.
 - Keep each diff reviewable: feature-only staging (don't sweep in `.DS_Store`, build artifacts, or unrelated files).
 - This command already produces a phased task list + stacked PRs for non-trivial work. Reach for the **`ship-feature`** skill only when you also want a checked-in `docs/feat/*` plan doc and a heavier graduation workflow.
