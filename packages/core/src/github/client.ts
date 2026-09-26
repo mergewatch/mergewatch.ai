@@ -522,7 +522,7 @@ async function findRunByKey(
   headSha: string,
   name: string,
   key: string,
-): Promise<{ id: number } | undefined> {
+): Promise<{ outcome: 'found'; id: number } | { outcome: 'absent' } | { outcome: 'unknown' }> {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const { data } = await octokit.checks.listForRef({
@@ -533,20 +533,25 @@ async function findRunByKey(
         filter: 'all',
         per_page: 100,
       });
-      return data.check_runs.find(
+      const hit = data.check_runs.find(
         (run: { external_id?: string | null }) => run.external_id === key,
       ) as { id: number } | undefined;
+      return hit ? { outcome: 'found', id: hit.id } : { outcome: 'absent' };
     } catch (err) {
       if (attempt === 2) {
         console.warn(
           'Keyed check-run lookup failed twice for %s/%s@%s (key=%s):',
           owner, repo, headSha, key, err,
         );
-        return undefined;
+        // 'unknown', NOT 'absent'. Returning the same value for "there is no
+        // such run" and "I could not find out" is what let a transient
+        // listForRef failure CREATE a second check run for a key that already
+        // had one — a duplicate on the exact surface branch protection reads.
+        return { outcome: 'unknown' };
       }
     }
   }
-  return undefined;
+  return { outcome: 'unknown' };
 }
 
 /**
@@ -604,7 +609,20 @@ export async function createCheckRun(
 
     if (key) {
       const target = await findRunByKey(octokit, owner, repo, headSha, name, key);
-      if (target) {
+      // On 'unknown' we deliberately fall through to create. A duplicate run is
+      // visible and recoverable; skipping the write leaves branch protection
+      // reading a STALE run, which is the defect #639 exists to remove. This
+      // matches the unkeyed path's documented rule — "a transient list failure
+      // must not skip the write" — and the log below makes a duplicate born this
+      // way diagnosable rather than mysterious.
+      if (target.outcome === 'unknown') {
+        console.warn(
+          '[check-run] lookup UNKNOWN for key=%s on %s/%s@%s — creating anyway; '
+          + 'if a run already existed for this key there are now two, and this line is why',
+          key, owner, repo, headSha,
+        );
+      }
+      if (target.outcome === 'found') {
         await octokit.checks.update({ owner, repo, check_run_id: target.id, name, ...body });
         console.log(
           '[check-run] update id=%d key=%s %s/%s@%s status=%s',

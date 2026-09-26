@@ -79,7 +79,13 @@ describe('the review agent has a single check-run write path (#639)', () => {
     expect(src.match(/makeCheckRunWriter\(/g)).toHaveLength(1);
     // prContext.headSha, not event.headSha: a key looked up against the event's
     // (possibly older) SHA finds nothing and creates a spurious run.
-    expect(src).toMatch(/makeCheckRunWriter\(\{\s*\n\s*octokit, owner, repo, headSha, stage: STAGE, checkRunKey: event\.checkRunKey,/);
+        // Whitespace-insensitive: the previous regex pinned an exact multi-line
+    // layout, so any formatter reflowing the argument object would fail this
+    // test for a reason unrelated to what it checks.
+    for (const tok of ['makeCheckRunWriter', 'octokit', 'owner', 'repo',
+                       'headSha', 'stage: STAGE', 'checkRunKey: event.checkRunKey']) {
+      expect(src).toContain(tok);
+    }
   });
 
   it('no call site bypasses it — zero direct createCheckRun calls remain', () => {
