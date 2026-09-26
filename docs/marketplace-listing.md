@@ -16,7 +16,14 @@ The listing's **Manage webhook** section takes three values:
 | Content type | **`application/json`** |
 | Secret | the same value as SSM `/mergewatch/{stage}/github-webhook-secret` |
 
-**Content type is not a preference.** `verifySignature` computes HMAC-SHA256 over the **raw request body**. `application/x-www-form-urlencoded` wraps the payload as `payload=<urlencoded>`, which breaks both `JSON.parse` and the signature comparison.
+**Content type is not a preference.** `verifySignature` computes HMAC-SHA256 over the **raw request body**, and `application/x-www-form-urlencoded` wraps the payload as `payload=<urlencoded>`, which `JSON.parse` cannot read.
+
+The earlier wording here — that form-urlencoding "breaks both `JSON.parse` and the signature comparison" — had the **order** wrong, and the order is the whole diagnostic story (#597):
+
+1. **The signature comparison runs first.** Until #597 it also *failed* first: API Gateway base64-encodes a form-urlencoded body, `webhook.ts` did not decode it, so the HMAC was taken over the base64 text while GitHub had signed the raw bytes. `JSON.parse` was **never reached** and no JSON error was ever observed — a content-type misconfiguration surfaced only as `Webhook signature verification failed` → **401**, which reads as a wrong secret and sends you off rotating one that was fine.
+2. **Since #597** the handler decodes `event.isBase64Encoded` first (same as `billing.ts`), so the signature check is honest: it passes for a correctly-signed delivery of *any* content type, and a 401 now means a genuine secret mismatch. A form-urlencoded delivery then fails at `JSON.parse` instead, with `Webhook rejected: body is not valid JSON` → **400**.
+
+So: **401 = the secret. 400 `Invalid JSON body` = the content type.** On a stage still running pre-#597 code, both look like 401.
 
 **The secret must match the App's webhook secret**, because the listing reuses the App's `/webhook` endpoint and one route verifies against one secret. Marketplace events are distinguished by the `X-GitHub-Event: marketplace_purchase` header, exactly as `installation` and `pull_request` are.
 

@@ -76,13 +76,18 @@ describe('subscription drift — review findings from #614', () => {
 });
 
 describe('subscription drift — outcomes stay distinguishable', () => {
+  // Explicit timeout: this spawns a real `node` subprocess, and vitest's 5s
+  // default leaves no headroom on a loaded CI runner. It flaked twice on
+  // 2026-09-25, blocking #641 and #654, each time with "Test timed out in
+  // 5000ms" rather than an assertion failure — a red build that says nothing
+  // about the code under test is worse than a slow one.
   it('exits 2 when it cannot check, and says that is not a pass', () => {
     const r = spawnSync('node', [SCRIPT, '--stage', 'definitely-not-a-stage'], {
       cwd: REPO, encoding: 'utf8',
     });
     expect(r.status).toBe(2);
     expect(`${r.stdout}${r.stderr}`).toMatch(/not a pass/i);
-  });
+  }, 30_000);
 
   it('treats only missing subscriptions as drift, not extra ones', () => {
     // A subscribed event we do not handle is answered 200 and ignored. Calling
