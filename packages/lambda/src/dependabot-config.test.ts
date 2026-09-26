@@ -221,8 +221,13 @@ function directoriesDeclaringVitest(): string[] {
     let json: any;
     try {
       json = JSON.parse(readFileSync(manifest, 'utf8'));
-    } catch {
-      return false;
+    } catch (err) {
+      // Do NOT return false. Swallowing this drops the package from the
+      // inventory, so the coverage assertion below iterates one fewer
+      // directory and still passes — the protection disappears silently,
+      // which is the defect class this whole test exists to guard against.
+      // A malformed manifest in this repo is worth failing on.
+      throw new Error(`cannot parse ${manifest}: ${(err as Error).message}`);
     }
     // Deps only. A `"test:watch": "vitest"` script does not make the package a
     // target for a vitest version bump.
@@ -314,7 +319,12 @@ describe('the config reaches every directory that carries vitest', () => {
     // Inventory, not a count. If this detection breaks, the coverage assertion
     // below iterates nothing and passes while asserting nothing — the exact
     // failure mode this repo keeps producing. Update the list deliberately.
-    expect(vitestDirs).toEqual(['/', '/packages/core', '/packages/dashboard', '/packages/mcp']);
+    // Sorted on both sides: `listPackageDirs` reads through `readdirSync`, whose
+    // order is filesystem-dependent, so an unsorted snapshot would fail on a
+    // different machine for a reason unrelated to what it checks.
+    expect([...vitestDirs].sort()).toEqual(
+      ['/', '/packages/core', '/packages/dashboard', '/packages/mcp'].sort(),
+    );
   });
 
   it.each(vitestDirs)('%s is covered by an npm update entry', (dir) => {

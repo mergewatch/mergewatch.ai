@@ -59,7 +59,7 @@
 # `/packages/dashboard` and `/packages/mcp`, and the glob covers any package
 # that picks it up later.
 #
-# REVISIT WHEN #590 LANDS
+# REVISIT WHEN #590 LANDS — tracked as a checkbox on #590, not only here
 #
 # This exclusion is not a permanent opinion about vitest. It exists because
 # vitest 5 breaks coverage collection. When #590 is fixed and vitest 5 is on
