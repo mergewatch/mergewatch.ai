@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.5](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.4...v0.6.5) (2026-09-26)
+
+### Bug Fixes
+- fix(webhook): decode base64 bodies before verifying, and log the two silent rejections (#654) (b13e417)
+- docs: correct four pages still claiming contents: read (#650) (#652) (815cbcc)
+- fix(release): cite the issues, and stop the notes claiming manual verification (#641) (761097f)
 ## [0.6.4](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.3...v0.6.4) (2026-09-20)
 
 ### Bug Fixes
