@@ -79,7 +79,22 @@ sha256_of() {
   fi
 }
 
+# Validate anything that reaches a URL. The repo names are workflow constants
+# today, so this is defence in depth rather than a live hole — but the guard for
+# that lives in another file, and a guard that depends on a distant one is the
+# kind that quietly stops holding. A GHCR path is lowercase alphanumerics with
+# `._-/`; anything else cannot be a real repository and must not be smuggled
+# into the query string.
+assert_repo_name() { # $1=repo
+  case "$1" in
+    *[!a-z0-9._/-]*|/*|*/|"")
+      echo "::error::refusing to query a malformed repository name: '$1'" >&2
+      return 1 ;;
+  esac
+}
+
 registry_token() { # $1=repo
+  assert_repo_name "$1" || return 1
   local host="${REGISTRY_BASE#*://}"
   curl -fsSL "${REGISTRY_BASE}/token?scope=repository:${1}:pull&service=${host}" \
     2>/dev/null | jq -r '.token // empty' 2>/dev/null
@@ -164,7 +179,12 @@ for repo in "${REPOS[@]}"; do
   fi
   echo "  digest: ${version_digest}"
 
-  verify_layers "$repo" "$VERSION" "$token"
+  # Observe the return. `verify_layers` already calls `fail` per missing blob, so
+  # ignoring it was not a live hole — but it made the return dead logic that no
+  # test covered, so a later refactor relying on it would have been unguarded.
+  if ! verify_layers "$repo" "$VERSION" "$token"; then
+    fail "${repo}:${VERSION} — layer verification did not complete"
+  fi
 
   for moving in latest "$MAJOR_MINOR"; do
     if ! moving_digest="$(fetch_manifest "$repo" "$moving" "$token")"; then
