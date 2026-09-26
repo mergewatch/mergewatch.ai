@@ -72,7 +72,7 @@ vi.mock('../github-auth-ssm.js', () => ({
   getWebhookSecret: () => Promise.resolve('test-secret'),
 }));
 
-import { verifySignature, parseReviewMode, shouldHandleReviewCommentEvent, reviewCommentGateRejection, isMergeWatchCheckRun, handler } from './webhook.js';
+import { verifySignature, parseReviewMode, shouldHandleReviewCommentEvent, reviewCommentGateRejection, isMergeWatchCheckRun, handler, logSafe } from './webhook.js';
 import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME } from '@mergewatch/core';
 import type { PullRequestReviewCommentEvent, PullRequestEvent, CheckRunEvent, CheckSuiteEvent } from '@mergewatch/core';
 
@@ -1521,5 +1521,44 @@ describe('handler — base64 bodies and observable rejections (#597)', () => {
       expect(all).not.toContain(signature);
       expect(all).not.toContain(signature.replace(/^sha256=/, ''));
     }
+  });
+});
+
+describe('#597 — an attacker-controlled event name cannot forge log lines', () => {
+  it('strips newlines and control characters from the X-GitHub-Event value', async () => {
+    // CWE-117. The rejection paths run on requests we have NOT trusted, so the
+    // header value reaches the log on exactly the path where it is least safe.
+    // A raw interpolation lets a caller append a line that reads like ours.
+    const forged = 'push\nERROR Webhook signature verification failed';
+    const bad = 'not-json-at-all';
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+    try {
+      await handler({
+        body: bad,
+        headers: {
+          'x-hub-signature-256': signBody(bad),
+          'x-github-event': forged,
+        },
+      } as any);
+    } finally {
+      spy.mockRestore();
+    }
+    const joined = errors.join('\n');
+    // The forged line must not appear as its own line.
+    expect(joined).not.toContain('\nERROR Webhook signature verification failed');
+    // And the newline must have become a visible placeholder, not been dropped:
+    // silent removal would render the crafted name as plausible text.
+    expect(joined).toContain('push?ERROR');
+  });
+
+  it('truncates a very long event name rather than logging kilobytes', () => {
+    expect(logSafe('a'.repeat(500)).length).toBeLessThanOrEqual(41);
+  });
+
+  it('renders a missing value explicitly, not as an empty string', () => {
+    expect(logSafe(undefined)).toBe('(none)');
   });
 });

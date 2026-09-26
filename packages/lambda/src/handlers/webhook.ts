@@ -832,6 +832,26 @@ async function handleInstallationEvent(
 // Lambda entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * Make an attacker-controlled value safe to interpolate into a log line (#597).
+ *
+ * `X-GitHub-Event` is a request header, so its value is chosen by whoever sent
+ * the request — and the rejection paths by definition run on requests we have
+ * not trusted. Interpolating it raw lets a caller embed newlines and forge log
+ * entries (CWE-117): a reader then cannot tell our lines from theirs, which is
+ * worse than the missing line this change added logging to fix.
+ *
+ * Real GitHub event names are lowercase and underscored, so the safe set is
+ * narrow. Unsafe characters become `?` rather than being dropped — `??????` is
+ * visibly suspicious, where silent removal would render a crafted name as
+ * something plausible. Truncated because a header can be kilobytes long.
+ */
+export function logSafe(value: string | undefined, max = 40): string {
+  if (!value) return '(none)';
+  const cleaned = value.replace(/[^A-Za-z0-9_.-]/g, '?');
+  return cleaned.length > max ? `${cleaned.slice(0, max)}\u2026` : cleaned;
+}
+
 export async function handler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
@@ -877,7 +897,7 @@ export async function handler(
     payload = JSON.parse(body);
   } catch {
     console.error(
-      `Webhook rejected: body is not valid JSON for event=${githubEvent} `
+      `Webhook rejected: body is not valid JSON for event=${logSafe(githubEvent)} `
       + `(bytes=${body.length}, base64Encoded=${event.isBase64Encoded === true})`
     );
     return { statusCode: 400, body: "Invalid JSON body" };
