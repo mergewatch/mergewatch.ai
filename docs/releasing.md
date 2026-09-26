@@ -76,6 +76,49 @@ That dispatch is not decoration. `docker-publish.yml` listens for
 `GITHUB_TOKEN` — which is what the gate uses. **v0.6.0 published no images** and
 reported success before this was understood.
 
+#### The images are verified against the registry, not against the exit code
+
+After the wait, the gate runs
+[`scripts/verify-published-images.sh`](../scripts/verify-published-images.sh),
+which asks GHCR directly: does `<version>` resolve, does its index follow to a
+platform manifest, is every layer blob present, and do `latest` and
+`MAJOR.MINOR` resolve to the **same digest** as `<version>`. That is the
+verdict. `docker-publish`'s own conclusion is reported, and a non-zero one
+downgrades to a warning when the registry checks pass.
+
+**Do not "simplify" this back to `gh run watch --exit-status`.** That is what it
+was, and it is why **v0.6.5 reported `Cut the release: failure` on a release
+that shipped completely** (#665) — buildx hit a transient
+`error writing layer blob: not_found`, recovered, pushed both images (7 and 8
+layers, nothing missing, `latest` correct) and still exited non-zero. The run
+conclusion was not about the outcome.
+
+Red in the wrong direction is not harmless: someone reading it may start
+recovering a release that is fine, which has already happened here once
+(#629/#630). So the two cases get two different messages:
+
+| What the step says | What it means |
+|---|---|
+| `no complete images published for <version>` | Genuinely broken. The lines above name the image and the check that failed |
+| `images published, publisher exited non-zero` | The registry has everything. The publisher was noisy; the release is complete |
+
+Digest equality rather than presence is deliberate. A `latest` left pointing at
+the *previous* release passes every presence check and is exactly what a user
+hits when they follow the README's `docker pull`.
+
+The verifier needs no credentials for a public package — an anonymous pull token
+is enough — so it can also be run by hand against any past release:
+
+```bash
+scripts/verify-published-images.sh v0.6.5 \
+  mergewatch/mergewatch mergewatch/mergewatch-dashboard
+```
+
+`docker-publish.yml` also carries `fail-fast: false`. Without it, one image's
+transient error cancels the other leg mid-push, which can leave a tag resolving
+to a manifest whose layers are incomplete — worse than a red job. On v0.6.5 the
+dashboard image survived only because its push finished before the cancel landed.
+
 ## The gate's four outcomes are not interchangeable
 
 | Outcome | Meaning | Report it as |
