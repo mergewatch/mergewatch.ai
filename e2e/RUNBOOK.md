@@ -198,7 +198,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-09](#e2e-09-draft-pr-skip) | Draft PR → "Review skipped — Draft PR" | 30s | 30s | core | `skip`, `triggers`, `correctness` |
 | [E2E-10](#e2e-10-ignorelabels-skip) | `skip-review` label → "Review skipped — label" | 30s | 30s | core | `skip`, `triggers`, `correctness` |
 | [E2E-11](#e2e-11-re-review-on-synchronize) | Push new commit → old review dismissed + comment edited in place | 2m | 90s | core | `review-core`, `triggers`, `correctness` |
-| [E2E-12](#e2e-12-re-run-check-via-github-ui) | Click "Re-run" on the check → new review fires | 30s | 60s | core | `checks`, `triggers`, `correctness` |
+| [E2E-12](#e2e-12-re-run-check-via-github-ui) | Click "Re-run" → new review AND a new check run carrying its verdict | 30s | 60s | core | `checks`, `triggers`, `correctness` |
 | [E2E-13](#e2e-13-inline-reply-engages-on-mergewatch-thread) | Human replies in a MergeWatch inline thread → MergeWatch responds | 2m | 60s | #133 | `inline`, `correctness` |
 | [E2E-14](#e2e-14-inline-reply-skips-third-party-bot-thread) | Human replies in a non-MergeWatch inline thread → no engagement | 2m | 60s | #133 | `inline`, `correctness` |
 | [E2E-15](#e2e-15-mermaid-diagram-renders) | Complex diff produces a renderable Mermaid diagram | 2m | 60s | #128–#130 | `diagram`, `output`, `correctness` |
@@ -626,17 +626,33 @@ git push
 
 ### E2E-12: Re-run check via GitHub UI
 
-**Behavior**: clicking the "Re-run" button on the MergeWatch check should trigger a fresh review on the same commit.
+**Behavior**: clicking the "Re-run" button on the MergeWatch check should trigger a fresh review on the same commit **and leave the check run reporting that review's verdict**.
 
 **Setup**
 
 Open any completed fixture PR. In the Checks tab, click the ⋯ menu next to "MergeWatch Review" → "Re-run".
 
+The trigger must be a real **click**. `POST /check-runs/{id}/rerequest` is not a
+substitute: the UI button fires `check_suite.rerequested` (#558), the REST call
+fires `check_run.rerequested`, and they are different code paths.
+
 **Expected outcomes**
 
-- [ ] Within ~30s a new "in progress" check run appears
+- [ ] Within ~30s a **new** MergeWatch check run appears on the PR's head SHA —
+      `gh api "repos/<owner>/<repo>/commits/<head-sha>/check-runs?filter=all"`
+      shows one more MergeWatch run than before the click
+- [ ] That run's `conclusion` reflects the **new** review's verdict, not the previous one's
+- [ ] No MergeWatch check run is left `in_progress`
 - [ ] Summary comment is updated in place
-- [ ] Behavior identical to a synchronize event
+
+The verdict is the point (#639). Before the re-run key, every write went to the
+PREVIOUS review's completed run: the review was fresh, the comment was fresh,
+and branch protection kept reporting the old result. An unchanged run count is
+the signature of that failure.
+
+To see the verdict move, change something between the two runs **without
+pushing** — e.g. toggle a blocking org agent in the dashboard. `.mergewatch.yml`
+is read at the head SHA and cannot change without a commit.
 
 ---
 

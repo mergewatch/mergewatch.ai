@@ -174,6 +174,49 @@ describe('postBlockedCheckRun', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #639 — a billing block must land on the SAME run as the rest of the job
+// ---------------------------------------------------------------------------
+
+describe('postBlockedCheckRun — stage and writer (#639)', () => {
+  it('scopes the run name to the stage — dev stopped writing prod\'s name', async () => {
+    // A gap left from #416: this was the one check-run write in the codebase
+    // that omitted the stage, so a dev deployment posted a billing block under
+    // PROD's check-run name. Prod is unaffected — its stage is undefined.
+    const octokit = createMockOctokit();
+
+    await postBlockedCheckRun(octokit, owner, repo, 'sha123', 'credits', { stage: 'dev' });
+
+    expect(octokit.checks.create.mock.calls[0][0].name).toBe('MergeWatch Review (dev)');
+  });
+
+  // (pin) passes before and after — prod's frozen identity must not move.
+  it('keeps prod\'s frozen run name when no stage is given', async () => {
+    const octokit = createMockOctokit();
+    await postBlockedCheckRun(octokit, owner, repo, 'sha123');
+    expect(octokit.checks.create.mock.calls[0][0].name).toBe('MergeWatch Review');
+  });
+
+  it('delegates to the caller\'s bound writer, so a re-run block hits the job\'s run', async () => {
+    // The review agent creates one writer per delivery that owns the re-run's
+    // check-run identity. A billing block that called createCheckRun directly
+    // would resolve a DIFFERENT run — the previous review's completed one.
+    const octokit = createMockOctokit();
+    const write = vi.fn().mockResolvedValue(4242);
+
+    await postBlockedCheckRun(octokit, owner, repo, 'sha123', 'oss', { write });
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0][0]).toMatchObject({
+      status: 'completed',
+      conclusion: 'action_required',
+    });
+    expect(write.mock.calls[0][0].title).toContain('open-source grant');
+    // The writer owns the write — nothing goes around it.
+    expect(octokit.checks.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // OSS Program block copy (#261)
 // ---------------------------------------------------------------------------
 

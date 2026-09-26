@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { payloadFromEvent, attemptFromEvent, rateLimitedCheckSummary } from './review-agent-event.js';
 
 const job = { installationId: 1, owner: 'octo', repo: 'repo', prNumber: 7, mode: 'review' as const };
@@ -55,5 +56,39 @@ describe('rateLimitedCheckSummary (#370)', () => {
     const s = rateLimitedCheckSummary(3, '2026-08-19T19:31:56.000Z');
     expect(s).toContain('automatically re-driven');
     expect(s).not.toContain('operator redrive');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #639 — every check-run write in the review agent goes through ONE writer
+// ---------------------------------------------------------------------------
+
+describe('the review agent has a single check-run write path (#639)', () => {
+  // There is no handler harness for review-agent.ts (it wires a dozen AWS and
+  // GitHub clients at module scope), so the guard is a source scan. It is not a
+  // substitute for behavioural coverage — client.test.ts owns that — but it is
+  // what stops the next call site from quietly reintroducing the bug: a bare
+  // createCheckRun does not carry the re-run key, so its write lands on the
+  // PREVIOUS review's completed run and branch protection keeps the old verdict.
+  const src = readFileSync(
+    new URL('./review-agent.ts', import.meta.url),
+    'utf8',
+  );
+
+  it('binds exactly one writer, to the PR head it actually reviews', () => {
+    expect(src.match(/makeCheckRunWriter\(/g)).toHaveLength(1);
+    // prContext.headSha, not event.headSha: a key looked up against the event's
+    // (possibly older) SHA finds nothing and creates a spurious run.
+    expect(src).toMatch(/makeCheckRunWriter\(\{\s*\n\s*octokit, owner, repo, headSha, stage: STAGE, checkRunKey: event\.checkRunKey,/);
+  });
+
+  it('no call site bypasses it — zero direct createCheckRun calls remain', () => {
+    // Every one of the eight writes (skip, billing block, in-progress, rules
+    // skip, over-budget, completion, throttle-parked, failure) must route
+    // through the writer.
+    expect(src).not.toMatch(/\bcreateCheckRun\(/);
+    expect(src.match(/\bwriteCheckRun\(/g)).toHaveLength(7);
+    // The eighth is the billing block, which hands the writer to @mergewatch/billing.
+    expect(src).toMatch(/postBlockedCheckRun\([^)]*blockVariant, \{\s*\n\s*stage: STAGE, write: writeCheckRun,/);
   });
 });

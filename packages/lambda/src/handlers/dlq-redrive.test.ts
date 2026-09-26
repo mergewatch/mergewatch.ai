@@ -145,6 +145,63 @@ describe('dlq-redrive handler (#398)', () => {
     expect(checkArgs[4].conclusion).toBe('failure');
   });
 
+  it('corrects the re-run job\'s OWN run, on the PR\'s current head (#639)', async () => {
+    // The abandoned-check write is the last thing a keyed job does, and it must
+    // land on the run that job created — not on whatever run
+    // `filter: 'latest'` resolves for the commit. It must also never CREATE:
+    // a red run for a review that may never have reached its in-progress write
+    // is a worse lie than silence.
+    //
+    // The lookup uses the PR's CURRENT head, because that is the SHA the review
+    // agent writes its runs on. The enqueued `headSha` can be an older commit.
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: {
+        get: vi.fn().mockResolvedValue({
+          data: { state: 'open', head: { sha: 'newhead9' } },
+        }),
+      },
+    });
+    receiveOnce([
+      {
+        Body: job({ checkRunKey: 'key-1234' }),
+        ReceiptHandle: 'rh-1',
+        MessageAttributes: { MergeWatchRedriveGeneration: { StringValue: '8' } },
+      },
+    ]);
+
+    const result = await handler();
+
+    expect(result).toEqual({ redriven: 0, abandoned: 1, stale: 0 });
+    expect(mockCreateCheckRun).toHaveBeenCalledTimes(1);
+    const args = mockCreateCheckRun.mock.calls[0];
+    expect(args[3]).toBe('newhead9');
+    expect(args[6]).toEqual({ checkRunKey: 'key-1234', updateOnly: true });
+  });
+
+  it('an unkeyed job gets no identity, but still writes on the current head', async () => {
+    // The current-head lookup is not conditional on the key: a job enqueued
+    // against an older commit was always writing its abandoned check on a SHA
+    // the agent had stopped reviewing.
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: {
+        get: vi.fn().mockResolvedValue({ data: { state: 'open', head: { sha: 'newhead9' } } }),
+      },
+    });
+    receiveOnce([
+      {
+        Body: job(),
+        ReceiptHandle: 'rh-1',
+        MessageAttributes: { MergeWatchRedriveGeneration: { StringValue: '8' } },
+      },
+    ]);
+
+    await handler();
+
+    const args = mockCreateCheckRun.mock.calls[0];
+    expect(args[3]).toBe('newhead9');
+    expect(args[6]).toBeUndefined();
+  });
+
   it('leaves the message in the DLQ when the redrive send fails', async () => {
     const messages: unknown[] = [{ Body: job(), ReceiptHandle: 'rh-1' }];
     mockSqsSend.mockImplementation((cmd: { kind: string }) => {

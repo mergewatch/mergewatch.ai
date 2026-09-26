@@ -9,6 +9,7 @@ import {
   postReviewComment,
   updateReviewComment,
   createCheckRun,
+  makeCheckRunWriter,
   isStillPRHead,
   resolveWithdrawnFindingThreads,
   withdrawnThreadKey,
@@ -1386,6 +1387,233 @@ describe('check runs update rather than accumulate (#526)', () => {
 
     const output = updated[0].output as { summary: string };
     expect(output.summary.length).toBeLessThanOrEqual(65_535);
+  });
+});
+
+describe('a re-run writes to its OWN check run (#639)', () => {
+  /**
+   * The previous review's run: completed, green, and with NO `external_id`
+   * (every run written before this change has none). It is what
+   * `filter: 'latest'` hands back on a re-run of the same commit, and it is
+   * the run the gate is reading.
+   */
+  const A = { id: 1001, external_id: null, status: 'completed', conclusion: 'success' };
+
+  const KEY = 'key-aaaa-bbbb';
+
+  /**
+   * `listForRef` HONOURS `filter`, which is the whole point of some of these.
+   *
+   * GitHub documents `filter` as "filters check runs by their `completed_at`
+   * timestamp; `latest` returns the most recent check runs". What that does to a
+   * run with NO `completed_at` — one this job just created, still `in_progress`
+   * — is not stated anywhere. `latestHidesInProgress` models the reading where
+   * such a run is invisible, which is the case the key exists to survive. A mock
+   * that ignores `filter` entirely (as the #526 tests do) cannot see it, and
+   * would let the bug pass.
+   *
+   * Nothing here claims to know which reading is real. The point is that the
+   * keyed path does not depend on knowing.
+   */
+  function stub(
+    runs: Array<Record<string, unknown>>,
+    opts: { listThrows?: number; latestHidesInProgress?: boolean } = {},
+  ) {
+    const created: Array<Record<string, unknown>> = [];
+    const updated: Array<Record<string, unknown>> = [];
+    const listed: Array<Record<string, unknown>> = [];
+    let listCalls = 0;
+    let nextId = 2000;
+    const octokit = {
+      checks: {
+        listForRef: vi.fn(async (args: Record<string, unknown>) => {
+          listCalls += 1;
+          listed.push(args);
+          if (opts.listThrows && listCalls <= opts.listThrows) throw new Error('503');
+          const visible = args.filter !== 'all' && opts.latestHidesInProgress
+            ? runs.filter((r) => r.status === 'completed')
+            : runs;
+          return { data: { check_runs: visible } };
+        }),
+        create: vi.fn(async (a: Record<string, unknown>) => {
+          created.push(a);
+          const run = {
+            id: (nextId += 1),
+            external_id: a.external_id ?? null,
+            status: a.status,
+            conclusion: a.conclusion ?? null,
+          };
+          runs.push(run);
+          return { data: { id: run.id } };
+        }),
+        update: vi.fn(async (a: Record<string, unknown>) => {
+          updated.push(a);
+          const run = runs.find((r) => r.id === a.check_run_id);
+          if (run) { run.status = a.status; run.conclusion = a.conclusion ?? null; }
+          return { data: { id: a.check_run_id } };
+        }),
+      },
+    } as unknown as Octokit;
+    return { octokit, created, updated, listed, runs };
+  }
+
+  const inProgress = {
+    status: 'in_progress' as const,
+    title: 'Review in progress',
+    summary: 'working',
+  };
+  const failed = {
+    status: 'completed' as const,
+    conclusion: 'failure' as const,
+    title: '1/5',
+    summary: '1 critical',
+  };
+
+  it('the harm case: the new verdict lands on a NEW run, never on the stale green one', async () => {
+    // This is the bug. A re-run of the same commit finds A via
+    // `filter: 'latest'`, so every write goes to the run the previous review
+    // already completed — and the gate keeps reporting the old verdict.
+    const { octokit, created, updated } = stub([{ ...A }]);
+
+    const firstId = await createCheckRun(octokit, 'o', 'r', 'sha', inProgress, undefined, {
+      checkRunKey: KEY,
+    });
+    const secondId = await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, {
+      checkRunKey: KEY,
+    });
+
+    // A fresh run was created for this job, carrying the key as its identity.
+    expect(created).toHaveLength(1);
+    expect(created[0].external_id).toBe(KEY);
+    expect(firstId).toBe(2001);
+
+    // The completion verdict updated THAT run.
+    expect(updated).toHaveLength(1);
+    expect(updated[0].check_run_id).toBe(2001);
+    expect(updated[0].conclusion).toBe('failure');
+    expect(secondId).toBe(2001);
+
+    // …and never touched the previous review's run.
+    expect(updated.map((u) => u.check_run_id)).not.toContain(A.id);
+  });
+
+  it('keeps the key on UPDATE — GitHub does not promise PATCH preserves it', async () => {
+    // If an update dropped `external_id`, the next write in the job could no
+    // longer find its own run and would create a second one.
+    const { octokit, updated } = stub([{ ...A }]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', inProgress, undefined, { checkRunKey: KEY });
+    await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, { checkRunKey: KEY });
+    expect(updated[0].external_id).toBe(KEY);
+  });
+
+  it('a redelivery of the same job re-finds its run instead of creating another', async () => {
+    // A throttle rethrow (or DLQ redrive) replays the identical payload, so the
+    // key is the same. The run it created is `in_progress` and therefore
+    // INVISIBLE to `filter: 'latest'` — the lookup must use `filter: 'all'`.
+    const C = { id: 3003, external_id: KEY, status: 'in_progress', conclusion: null };
+    const { octokit, created, updated, listed } = stub(
+      [{ ...A }, C], { latestHidesInProgress: true },
+    );
+
+    await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, { checkRunKey: KEY });
+
+    expect(listed[0].filter).toBe('all');
+    expect(listed[0].per_page).toBe(100);
+    expect(created).toHaveLength(0);
+    expect(updated).toHaveLength(1);
+    expect(updated[0].check_run_id).toBe(C.id);
+    expect(updated.map((u) => u.check_run_id)).not.toContain(A.id);
+  });
+
+  it('retries a failed keyed lookup once before giving up on it', async () => {
+    // Falling straight through to `create` on one transient 503 would strand
+    // the real run and post a duplicate.
+    const C = { id: 3003, external_id: KEY, status: 'in_progress', conclusion: null };
+    const { octokit, created, updated, listed } = stub(
+      [{ ...A }, C], { listThrows: 1, latestHidesInProgress: true },
+    );
+
+    await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, { checkRunKey: KEY });
+
+    expect(listed).toHaveLength(2);
+    expect(created).toHaveLength(0);
+    expect(updated[0].check_run_id).toBe(C.id);
+  });
+
+  it('updateOnly never creates — a correction to a run that is not there is silence', async () => {
+    // The DLQ sweeper's abandoned-check write. Creating a red run for a review
+    // that may never have reached its in-progress write is a worse lie.
+    const { octokit, created, updated } = stub([{ ...A }]);
+
+    const id = await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, {
+      checkRunKey: KEY, updateOnly: true,
+    });
+
+    expect(id).toBeUndefined();
+    expect(created).toHaveLength(0);
+    expect(updated).toHaveLength(0);
+  });
+
+  it('a directly supplied run id skips the lookup entirely', async () => {
+    const { octokit, updated, listed } = stub([{ ...A }]);
+    await createCheckRun(octokit, 'o', 'r', 'sha', failed, undefined, {
+      checkRunKey: KEY, checkRunId: 4242,
+    });
+    expect(listed).toHaveLength(0);
+    expect(updated[0].check_run_id).toBe(4242);
+  });
+
+  describe('makeCheckRunWriter', () => {
+    it('one lookup per delivery: a later lookup failure cannot create a second run', async () => {
+      // Read-after-write lag or a 503 on the completion write would otherwise
+      // miss the run this job just created and create a duplicate — leaving the
+      // in-progress one stranded, which is #526 all over again.
+      const { octokit, created, updated, listed } = stub([{ ...A }]);
+      const write = makeCheckRunWriter({
+        octokit, owner: 'o', repo: 'r', headSha: 'sha', checkRunKey: KEY,
+      });
+
+      const runId = await write(inProgress);
+      // Everything from here on fails to list.
+      (octokit.checks.listForRef as unknown as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('503'));
+      await write(failed);
+
+      expect(created).toHaveLength(1);
+      expect(runId).toBe(2001);
+      expect(updated).toHaveLength(1);
+      expect(updated[0].check_run_id).toBe(runId);
+      expect(updated[0].conclusion).toBe('failure');
+      // One lookup, for the first write only.
+      expect(listed).toHaveLength(1);
+    });
+
+    // (pin) passes before and after by design: the non-re-run path must not move.
+    it('without a key it is a pass-through: #526 behaviour, cached ids and all', async () => {
+      // The first-review path must not change. A is the run for this (sha,
+      // name), so both writes update it and nothing is created.
+      const { octokit, created, updated } = stub([{ ...A }]);
+      const write = makeCheckRunWriter({ octokit, owner: 'o', repo: 'r', headSha: 'sha' });
+
+      await write(inProgress);
+      await write(failed);
+
+      expect(created).toHaveLength(0);
+      expect(updated).toHaveLength(2);
+      expect(updated.every((u) => u.check_run_id === A.id)).toBe(true);
+      expect(updated[0].external_id).toBeUndefined();
+    });
+
+    // (pin) passes before and after — it guards the #416 stage scoping on the
+    // new create branch rather than observing the #639 bug.
+    it('scopes the run name by stage', async () => {
+      const { octokit, created } = stub([]);
+      const write = makeCheckRunWriter({
+        octokit, owner: 'o', repo: 'r', headSha: 'sha', stage: 'dev', checkRunKey: KEY,
+      });
+      await write(inProgress);
+      expect(created[0].name).toContain('dev');
+    });
   });
 });
 

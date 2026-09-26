@@ -8,6 +8,7 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { createCheckRun } from '@mergewatch/core';
+import type { CheckRunWriter, Stage } from '@mergewatch/core';
 import { updateBillingFields } from './dynamo-billing';
 
 const SETTINGS_SK = '#SETTINGS';
@@ -28,16 +29,26 @@ export type BlockVariant = 'credits' | 'oss';
 const OSS_PROGRAM_URL = 'https://mergewatch.ai/open-source';
 const BILLING_URL = 'https://mergewatch.ai/dashboard/billing';
 
-/** Post a Check Run indicating the review was blocked by billing. */
+/**
+ * Post a Check Run indicating the review was blocked by billing.
+ *
+ * #639 — `opts.write` lets the caller hand in its own bound writer, so a
+ * billing block on a re-run job goes to the SAME run as every other write for
+ * that job instead of to whatever run `filter: 'latest'` happens to return.
+ * `opts.stage` fixes a gap left from #416: this function omitted the stage, so
+ * a dev deployment wrote PROD's check-run name here — the one place in the
+ * codebase that still did. Prod is unaffected (its stage is undefined).
+ */
 export async function postBlockedCheckRun(
   octokit: Octokit,
   owner: string,
   repo: string,
   sha: string,
   variant: BlockVariant = 'credits',
+  opts: { stage?: Stage; write?: CheckRunWriter } = {},
 ): Promise<void> {
   const oss = variant === 'oss';
-  await createCheckRun(octokit, owner, repo, sha, {
+  const params = {
     status: 'completed',
     conclusion: 'action_required',
     title: oss
@@ -50,7 +61,13 @@ export async function postBlockedCheckRun(
         + 'bring-your-own-key or self-hosting — both are free and unlimited.'
       : 'This PR was not reviewed because this installation has no remaining credits. '
         + `Please add credits at ${BILLING_URL} to resume reviews.`,
-  });
+  } as const;
+
+  if (opts.write) {
+    await opts.write(params);
+    return;
+  }
+  await createCheckRun(octokit, owner, repo, sha, params, opts.stage);
 }
 
 /**

@@ -444,32 +444,142 @@ export async function getCommentReactions(
  */
 export const MERGEWATCH_CHECK_RUN_NAME = 'MergeWatch Review';
 
+/** The fields a check-run write carries. Shared by every writer path (#639). */
+export interface CheckRunParams {
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion?: 'success' | 'failure' | 'neutral' | 'action_required';
+  title: string;
+  summary: string;
+  detailsUrl?: string;
+}
+
+/**
+ * #639 — which run a write is aimed at, when "the latest run for this (sha,
+ * name)" is the wrong answer.
+ *
+ * On a re-run of the SAME commit, #526's `filter: 'latest'` lookup finds the
+ * PREVIOUS review's completed run and updates it. Two problems follow:
+ *
+ *  1. GitHub's contract for a rerequested suite is that the app CREATES a run
+ *     ("start the process all over and create a new check run"); the suite is
+ *     reset to `queued` and its conclusion cleared. Updating the old run is
+ *     not that.
+ *  2. `filter: 'latest'` is documented as filtering by `completed_at`. A run
+ *     this invocation just created is `in_progress` and has none, so the
+ *     lookup on the NEXT write may hand back the old run again — the
+ *     completion verdict then lands on the wrong run and the fresh one is
+ *     stranded `in_progress`.
+ *
+ * So a re-run job mints a key, and that key — not a timestamp filter — decides
+ * identity. It is written as the run's `external_id`, which GitHub stores
+ * verbatim and which no other app will collide with.
+ */
+export interface CheckRunIdentity {
+  /**
+   * Stable per-job key, stored as the run's `external_id`. Present only for
+   * re-run jobs; absent restores #526's behaviour byte for byte.
+   *
+   * It must be stable for the whole life of the job, because SQS redelivery
+   * (a throttle rethrow), DLQ redrive and a manual re-invoke all replay the
+   * SAME payload body — which is exactly why the key lives in the payload
+   * rather than being minted per invocation.
+   */
+  checkRunKey?: string;
+  /**
+   * A run id already resolved during this delivery. Update it directly, with
+   * no lookup at all. This is what keeps a failed (or read-after-write stale)
+   * lookup on a LATER write in the same invocation from creating a second run.
+   */
+  checkRunId?: number;
+  /**
+   * Never create, only update. Used where a write is only meaningful as a
+   * correction to a run that already exists — the DLQ sweeper completing an
+   * abandoned check. Creating there would post a red run on a PR that may
+   * never have had one.
+   */
+  updateOnly?: boolean;
+}
+
+/**
+ * Find the run carrying `key` in its `external_id`.
+ *
+ * `filter: 'all'` — NOT `'latest'` — because the run we are looking for may be
+ * `in_progress` with no `completed_at`, which is precisely the case `'latest'`
+ * is documented to filter on. One page of 100: more than 100 same-name runs on
+ * a single SHA would miss the key and take the create branch, which posts a
+ * duplicate COMPLETED run rather than stranding one `in_progress`. That is the
+ * cheaper of the two failures, and 100 same-name runs on one commit is not a
+ * state this app can reach on its own.
+ *
+ * Retried once: a single transient list failure that fell through to `create`
+ * would strand the real run, so it is worth one more round trip before
+ * accepting that outcome.
+ */
+async function findRunByKey(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  headSha: string,
+  name: string,
+  key: string,
+): Promise<{ id: number } | undefined> {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const { data } = await octokit.checks.listForRef({
+        owner,
+        repo,
+        ref: headSha,
+        check_name: name,
+        filter: 'all',
+        per_page: 100,
+      });
+      return data.check_runs.find(
+        (run: { external_id?: string | null }) => run.external_id === key,
+      ) as { id: number } | undefined;
+    } catch (err) {
+      if (attempt === 2) {
+        console.warn(
+          'Keyed check-run lookup failed twice for %s/%s@%s (key=%s):',
+          owner, repo, headSha, key, err,
+        );
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 /**
  * Create or update a GitHub Check Run on a specific commit.
  *
  * Used to show pass/fail status directly in the PR merge box.
  * Call once with status "in_progress" when the review starts,
  * then again with status "completed" + conclusion when done.
+ *
+ * Returns the run id that was written, or `undefined` if nothing was written.
+ * Callers that will write again in the same invocation should thread that id
+ * back in via {@link CheckRunIdentity.checkRunId} (see
+ * {@link makeCheckRunWriter}, which does it for them).
  */
 export async function createCheckRun(
   octokit: Octokit,
   owner: string,
   repo: string,
   headSha: string,
-  params: {
-    status: 'queued' | 'in_progress' | 'completed';
-    conclusion?: 'success' | 'failure' | 'neutral' | 'action_required';
-    title: string;
-    summary: string;
-    detailsUrl?: string;
-  },
+  params: CheckRunParams,
   stage?: Stage,
-): Promise<void> {
+  identity?: CheckRunIdentity,
+): Promise<number | undefined> {
   const name = checkRunName(stage);
+  const key = identity?.checkRunKey;
   const body = {
     status: params.status,
     ...(params.conclusion && { conclusion: params.conclusion }),
     ...(params.detailsUrl && { details_url: params.detailsUrl }),
+    // Sent on UPDATE as well as create: GitHub does not document that PATCH
+    // preserves an omitted `external_id`, and losing it would make the next
+    // write in the job unable to find its own run.
+    ...(key && { external_id: key }),
     output: {
       title: params.title,
       // The catch below is deliberately non-fatal, so an oversized summary
@@ -480,6 +590,46 @@ export async function createCheckRun(
   };
 
   try {
+    // Already resolved this delivery: update that run, no lookup.
+    if (identity?.checkRunId != null) {
+      await octokit.checks.update({
+        owner, repo, check_run_id: identity.checkRunId, name, ...body,
+      });
+      console.log(
+        '[check-run] update id=%d key=%s (cached) %s/%s@%s status=%s',
+        identity.checkRunId, key ?? 'none', owner, repo, headSha, params.status,
+      );
+      return identity.checkRunId;
+    }
+
+    if (key) {
+      const target = await findRunByKey(octokit, owner, repo, headSha, name, key);
+      if (target) {
+        await octokit.checks.update({ owner, repo, check_run_id: target.id, name, ...body });
+        console.log(
+          '[check-run] update id=%d key=%s %s/%s@%s status=%s',
+          target.id, key, owner, repo, headSha, params.status,
+        );
+        return target.id;
+      }
+      if (identity?.updateOnly) {
+        console.warn(
+          '[check-run] no run matches key=%s on %s/%s@%s and this write is update-only — skipping',
+          key, owner, repo, headSha,
+        );
+        return undefined;
+      }
+      const created = await octokit.checks.create({
+        owner, repo, head_sha: headSha, name, ...body,
+      });
+      const id = (created as { data?: { id?: number } }).data?.id;
+      console.log(
+        '[check-run] create id=%s key=%s %s/%s@%s status=%s',
+        id ?? 'unknown', key, owner, repo, headSha, params.status,
+      );
+      return id;
+    }
+
     // #526 — UPDATE the run for this (sha, name) if one exists.
     //
     // This function's contract has always said "create or update", and every
@@ -493,6 +643,10 @@ export async function createCheckRun(
     //
     // `filter: 'latest'` returns the most recent run per name, which is the
     // one we own for this SHA. Stage-scoped names keep dev and prod separate.
+    //
+    // #639 note: this branch is for the FIRST review of a commit, where there
+    // is nothing of ours to collide with. A re-run of the same commit passes a
+    // key and takes the branch above instead — see {@link CheckRunIdentity}.
     //
     // The lookup has its OWN catch: a failure here must fall through to
     // `create`, which is exactly today's behaviour. Letting it reach the outer
@@ -514,13 +668,62 @@ export async function createCheckRun(
 
     if (target) {
       await octokit.checks.update({ owner, repo, check_run_id: target.id, name, ...body });
-      return;
+      return target.id;
     }
-    await octokit.checks.create({ owner, repo, head_sha: headSha, name, ...body });
+    const created = await octokit.checks.create({ owner, repo, head_sha: headSha, name, ...body });
+    return (created as { data?: { id?: number } }).data?.id;
   } catch (err) {
     // Non-critical — don't fail the review if the check run fails.
     console.warn('Failed to write check run for %s/%s@%s:', owner, repo, headSha, err);
+    return undefined;
   }
+}
+
+/** A bound check-run writer: same run, one lookup per delivery (#639). */
+export type CheckRunWriter = (params: CheckRunParams) => Promise<number | undefined>;
+
+/**
+ * Bind a check-run writer to one job's (repo, sha, stage, key).
+ *
+ * This is the piece both runtimes share. The Lambda review agent writes a
+ * check run from eight different places and the Express review processor from
+ * seven; threading a key and a cached run id through each of them by hand is
+ * how one of them gets missed. A writer is created once per delivery and every
+ * write goes through it, so:
+ *
+ *  - the key is passed identically everywhere, and
+ *  - the first write's run id is remembered, so no later write in the same
+ *    invocation performs a lookup that could miss and create a second run.
+ *
+ * Without a key it is a thin pass-through to `createCheckRun`, so the
+ * non-re-run path is unchanged.
+ */
+export function makeCheckRunWriter(ctx: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  headSha: string;
+  stage?: Stage;
+  /** Absent for a first review; present for a re-run job. */
+  checkRunKey?: string;
+  /** Never create — only correct a run that already exists. */
+  updateOnly?: boolean;
+}): CheckRunWriter {
+  let resolvedId: number | undefined;
+
+  return async (params: CheckRunParams) => {
+    const id = await createCheckRun(
+      ctx.octokit, ctx.owner, ctx.repo, ctx.headSha, params, ctx.stage,
+      // The cached id is only meaningful in keyed mode: unkeyed writes must
+      // keep #526's lookup so a run created by an earlier delivery (or by a
+      // previous deploy) is still the one updated.
+      ctx.checkRunKey
+        ? { checkRunKey: ctx.checkRunKey, checkRunId: resolvedId, updateOnly: ctx.updateOnly }
+        : undefined,
+    );
+    if (id != null) resolvedId = id;
+    return id;
+  };
 }
 
 // ---------------------------------------------------------------------------

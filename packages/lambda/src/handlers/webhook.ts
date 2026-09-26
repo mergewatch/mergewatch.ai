@@ -9,7 +9,7 @@
  *     invocation of the ReviewAgent Lambda.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { LambdaClient, InvokeCommand, InvocationType } from "@aws-sdk/client-lambda";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
@@ -687,6 +687,22 @@ async function enqueueRereview(args: {
     source: classification.source,
     agentKind: classification.agentKind,
     headSha,
+    // #639 — mint the identity of the check run this re-run owns.
+    //
+    // A re-run reviews the same commit, so the agent's #526 "update the latest
+    // run for this (sha, name)" lookup finds the PREVIOUS review's completed
+    // run. Every write for the re-run landed on it, so no fresh run ever
+    // appeared and branch protection kept reporting the old verdict.
+    //
+    // The key is minted HERE, once per click, rather than in the agent: the
+    // agent can run several times for one enqueue (SQS redelivery on a
+    // throttle rethrow, DLQ redrive, a manual re-invoke) and all of them must
+    // converge on one run. The payload body is byte-identical across those
+    // replays, so a key in the payload is stable for the job's lifetime while
+    // a key minted per invocation would create a run per attempt.
+    //
+    // Only the re-run paths get one. Everything else keeps #526's behaviour.
+    checkRunKey: randomUUID(),
     ...ossRepoFields(repository),
   });
 

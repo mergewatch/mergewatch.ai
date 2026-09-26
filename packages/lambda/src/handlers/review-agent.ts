@@ -22,7 +22,7 @@ import {
   removePRReaction,
   getCommentReactions,
   postReplyComment,
-  createCheckRun,
+  makeCheckRunWriter,
   resolveWithdrawnFindingThreads,
   withdrawnThreadKey,
   isStillPRHead,
@@ -452,6 +452,26 @@ export async function handler(
   const shortSha = headSha.slice(0, 7);
   const prNumberCommitSha = `${prNumber}#${shortSha}`;
 
+  // #639 — ONE writer owns every check-run write in this invocation.
+  //
+  // Eight call sites below write a check run (skip, billing block, in-progress,
+  // rules skip, over-budget, completion, throttle-parked, failure). Passing the
+  // re-run key at each of them by hand is how one of them gets missed, and a
+  // missed one writes to the wrong run: on a re-run the #526 lookup resolves to
+  // the PREVIOUS review's completed run. The writer also remembers the run id
+  // from its first write, so no later write repeats a lookup that could miss
+  // and create a second run.
+  //
+  // Bound to `prContext.headSha`, not `event.headSha`: the agent reviews the
+  // PR's CURRENT head, and a key looked up against the event's (possibly
+  // older) SHA would find nothing and create a spurious run.
+  //
+  // `makeCheckRunWriter` lives in @mergewatch/core so the Express review
+  // processor binds the identical writer (#657).
+  const writeCheckRun = makeCheckRunWriter({
+    octokit, owner, repo, headSha, stage: STAGE, checkRunKey: event.checkRunKey,
+  });
+
   const includePatterns = extractIncludePatterns(yamlConfig);
   const skipPatterns = extractSkipPatterns(yamlConfig);
 
@@ -479,12 +499,12 @@ export async function handler(
     await reviewStore.upsert(skippedRecord);
     await prLifecycleStore.markSkipped(String(installationId), repoFullName, prNumber, new Date().toISOString());
 
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: skipReason,
-    }, STAGE);
+    });
 
     return {
       statusCode: 200,
@@ -515,7 +535,9 @@ export async function handler(
       // pointing at renewal / BYOK, not "add a credit card".
       const blockVariant = isLapsedOssGrant(billing.ossReason) ? 'oss' as const : 'credits' as const;
 
-      await postBlockedCheckRun(octokit, owner, repo, headSha, blockVariant);
+      await postBlockedCheckRun(octokit, owner, repo, headSha, blockVariant, {
+        stage: STAGE, write: writeCheckRun,
+      });
 
       if (billing.firstBlock) {
         await ensureBillingIssue(octokit, owner, repo, String(installationId), dynamodb, INSTALLATIONS_TABLE, blockVariant);
@@ -560,11 +582,11 @@ export async function handler(
   // so the PR doesn't stay in a "MergeWatch is still looking" state forever.
   const eyesReactionId = await addPRReaction(octokit, owner, repo, prNumber, 'eyes');
 
-  await createCheckRun(octokit, owner, repo, headSha, {
+  await writeCheckRun({
     status: 'in_progress',
     title: 'Review in progress',
     summary: `MergeWatch is reviewing PR #${prNumber}...`,
-  }, STAGE);
+  });
 
   try {
     const diff = await getPRDiff(octokit, owner, repo, prNumber);
@@ -631,12 +653,12 @@ export async function handler(
       // autoReviewOff is handled silently earlier (before any GitHub side
       // effect). Any rulesSkip seen here is a visible-skip kind: draft,
       // maxFiles, labelIgnored, reviewOnMentionOff.
-      await createCheckRun(octokit, owner, repo, headSha, {
+      await writeCheckRun({
         status: 'completed',
         conclusion: 'neutral',
         title: 'Review skipped',
         summary: rulesSkip.reason,
-      }, STAGE);
+      });
 
       return {
         statusCode: 200,
@@ -701,12 +723,12 @@ export async function handler(
       const reason = describeOverBudget(budget, modelId);
       console.warn(`[input-budget] skipping ${repoFullName}#${prNumber}: ${reason}`);
 
-      await createCheckRun(octokit, owner, repo, headSha, {
+      await writeCheckRun({
         status: 'completed',
         conclusion: 'neutral',
         title: 'Review skipped — diff too large',
         summary: reason,
-      }, STAGE);
+      });
 
       await reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', {
         completedAt: new Date().toISOString(),
@@ -1262,7 +1284,7 @@ export async function handler(
     if (infoCount) findingSummaryParts.push(`${infoCount} info`);
     if (orgBlocked) findingSummaryParts.push(`blocked by org agent: ${orgBlockedBy.join(', ')}`);
 
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: checkConclusion,
       // #380 — the title leads with the merge score so a 3/5-with-warnings
@@ -1279,7 +1301,7 @@ export async function handler(
         ? `Found: ${findingSummaryParts.join(', ')}`
         : 'No issues detected in this PR.',
       detailsUrl: reviewDetailUrl,
-    }, STAGE);
+    });
 
     console.log(
       `Review complete for ${repoFullName}#${prNumber}: ${result.findings.length} findings`,
@@ -1305,13 +1327,13 @@ export async function handler(
         console.error('Failed to park throttled review as pending:', updateErr);
       });
 
-      await createCheckRun(octokit, owner, repo, headSha, {
+      await writeCheckRun({
         status: 'in_progress',
         title: `Review queued — rate limited (attempt ${deliveryAttempt})`,
         // #370 — attempt + parked-at + expectations: a parked review must be
         // distinguishable from a hung one at a glance.
         summary: rateLimitedCheckSummary(deliveryAttempt, new Date().toISOString()),
-      }, STAGE).catch((checkErr) => {
+      }).catch((checkErr) => {
         console.error('Failed to post rate-limited check run:', checkErr);
       });
 
@@ -1326,12 +1348,12 @@ export async function handler(
       console.error('Failed to update review status to failed:', updateErr);
     });
 
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'failure',
       title: 'Review failed',
       summary: `MergeWatch encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    }, STAGE);
+    });
 
     return {
       statusCode: 500,
