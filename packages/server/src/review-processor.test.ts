@@ -8,13 +8,42 @@ import type { WebhookDeps } from './webhook-handler.js';
 // ---------------------------------------------------------------------------
 vi.mock('@mergewatch/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mergewatch/core')>();
+  const createCheckRun = vi.fn().mockResolvedValue(undefined);
   return {
     ...actual,
     getPRContext: vi.fn(),
     getPRDiff: vi.fn(),
     addPRReaction: vi.fn().mockResolvedValue(12345),
     removePRReaction: vi.fn().mockResolvedValue(undefined),
-    createCheckRun: vi.fn().mockResolvedValue(undefined),
+    createCheckRun,
+    /**
+     * #639 / #657 — the processor writes every check run through a writer bound
+     * once per job, so `createCheckRun` is no longer called from this module.
+     *
+     * Core's real writer calls core's own `createCheckRun` intra-module, which a
+     * module mock cannot observe, so the writer is rebuilt here as the thinnest
+     * adapter onto the mocked function: the same positional arguments, the same
+     * identity object, the same id caching. The writer's own semantics (keyed
+     * lookup, create-vs-update, the retry) are core's to test — they are pinned
+     * in `core/src/github/client.test.ts` (#639). What these tests observe is
+     * what the PROCESSOR passes: on a re-run job, the job's key, on every write.
+     */
+    makeCheckRunWriter: (ctx: {
+      octokit: unknown; owner: string; repo: string; headSha: string;
+      stage?: string; checkRunKey?: string; updateOnly?: boolean;
+    }) => {
+      let resolvedId: number | undefined;
+      return async (params: unknown) => {
+        const id = await createCheckRun(
+          ctx.octokit, ctx.owner, ctx.repo, ctx.headSha, params, ctx.stage,
+          ctx.checkRunKey
+            ? { checkRunKey: ctx.checkRunKey, checkRunId: resolvedId, updateOnly: ctx.updateOnly }
+            : undefined,
+        );
+        if (id != null) resolvedId = id;
+        return id;
+      };
+    },
     // #527 — default to "still the head" so every existing test publishes as before.
     isStillPRHead: vi.fn().mockResolvedValue(true),
     shouldSkipPR: vi.fn().mockReturnValue(null),
@@ -212,6 +241,7 @@ describe('processReviewJob — check runs', () => {
         summary: 'MergeWatch is reviewing PR #1...',
       }),
       undefined, // #416 stage — unset in tests means prod
+      undefined, // #639 check-run identity — no key on a non-re-run job
     );
   });
 
@@ -229,6 +259,7 @@ describe('processReviewJob — check runs', () => {
         summary: 'Only lockfile changes',
       }),
       undefined, // #416 stage — unset in tests means prod
+      undefined, // #639 check-run identity — no key on a non-re-run job
     );
   });
 
@@ -255,6 +286,7 @@ describe('processReviewJob — check runs', () => {
         summary: 'Draft PR skipped',
       }),
       undefined, // #416 stage — unset in tests means prod
+      undefined, // #639 check-run identity — no key on a non-re-run job
     );
   });
 
@@ -299,6 +331,7 @@ describe('processReviewJob — check runs', () => {
         summary: 'MergeWatch encountered an error while reviewing this PR. Please try again or contact support if the issue persists.',
       }),
       undefined, // #416 stage — unset in tests means prod
+      undefined, // #639 check-run identity — no key on a non-re-run job
     );
   });
 
@@ -1237,6 +1270,116 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
     expect(check.title).toBe('2/5 — 1 critical issue found');
     expect(check.summary).toContain('1 critical');
     expect(check.summary).toContain('1 unverified');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #639 / #657 — a re-run writes to its OWN check run
+//
+// A re-run reviews the same commit, so #526's "update the latest run for this
+// (sha, name)" lookup resolves to the PREVIOUS review's completed run. Every
+// write for the re-run landed on it: the review ran, the summary comment
+// updated, and branch protection kept reporting the old verdict. The webhook
+// mints a key per click and the processor must carry it on EVERY write — the
+// completion one above all, because that is the write the gate reads.
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — re-run check-run identity (#639/#657)', () => {
+  // Falsifiability: the five key-carrying tests below were run against the
+  // pre-fix processor and observed failing ("expected undefined to match object
+  // { checkRunKey: ... }") — pre-fix, the processor called `createCheckRun`
+  // directly and passed no identity at all. The last test is labelled a **pin**:
+  // it passes before and after, and exists so a future change cannot start
+  // keying NON-re-run writes, which would take every first review off #526's
+  // create-or-update path.
+  const KEY = 'k-9f2c4e18-rerun';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (isStillPRHead as any).mockResolvedValue(true);
+    (createCheckRun as any).mockResolvedValue(undefined);
+  });
+
+  /** [octokit, owner, repo, sha, params, stage, identity] per write. */
+  const writes = () => (createCheckRun as any).mock.calls as any[][];
+
+  it('carries the job key on every check-run write, completion included', async () => {
+    await processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps());
+
+    const calls = writes();
+    // In-progress + completion at minimum; a bare `length > 0` would pass even
+    // if the completion write were the one that lost the key.
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) {
+      expect(call[6], `write ${JSON.stringify(call[4]?.status)}`).toMatchObject({ checkRunKey: KEY });
+    }
+
+    // The completion write is the one branch protection reads, so assert the
+    // exact key on it rather than trusting the loop above: the mocked
+    // `createCheckRun` resolves `undefined`, so nothing here would notice a
+    // completion write that quietly dropped the identity.
+    const completion = calls.find((c) => c[4]?.status === 'completed' && c[4]?.conclusion === 'success');
+    expect(completion, 'a completed/success check run was written').toBeDefined();
+    expect(completion![6].checkRunKey).toBe(KEY);
+  });
+
+  it('carries the key on a skip verdict too', async () => {
+    (shouldSkipPR as any).mockReturnValue('Only lockfile changes');
+    await processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps());
+
+    const skip = writes().find((c) => c[4]?.conclusion === 'neutral');
+    expect(skip, 'a neutral skip check run was written').toBeDefined();
+    expect(skip![6].checkRunKey).toBe(KEY);
+  });
+
+  it('carries the key on the failure verdict', async () => {
+    (runReviewPipeline as any).mockRejectedValue(new Error('LLM timeout'));
+    await expect(processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps())).rejects.toThrow('LLM timeout');
+
+    const failure = writes().find((c) => c[4]?.conclusion === 'failure');
+    expect(failure, 'a failure check run was written').toBeDefined();
+    expect(failure![6].checkRunKey).toBe(KEY);
+  });
+
+  it('carries the key on the throttle re-park, so a retried re-run keeps its run', async () => {
+    (runReviewPipeline as any).mockRejectedValue(
+      Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' }),
+    );
+    await expect(processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps())).rejects.toThrow('Too many requests');
+
+    const parked = writes().find((c) => c[4]?.status === 'in_progress' && /rate limited/i.test(c[4]?.title));
+    expect(parked, 'a rate-limited check run was written').toBeDefined();
+    expect(parked![6].checkRunKey).toBe(KEY);
+  });
+
+  it('threads ONE writer through the job, so the second write reuses the resolved run id', async () => {
+    // The identity is bound once and the resolved id is remembered; a later
+    // write must not repeat a lookup that could miss and create a second run.
+    // What this pins on the processor side is that all writes share a SINGLE
+    // writer — a writer rebuilt per call site would arrive with no cached id.
+    (createCheckRun as any).mockResolvedValue(4242);
+
+    await processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps());
+
+    const calls = writes();
+    expect(calls[0][6]).toMatchObject({ checkRunKey: KEY, checkRunId: undefined });
+    expect(calls[1][6]).toMatchObject({ checkRunKey: KEY, checkRunId: 4242 });
+  });
+
+  it('(pin) a normal review job passes no identity at all — #526 behaviour unchanged', async () => {
+    await processReviewJob(makeJob(), makeDeps());
+
+    const calls = writes();
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) {
+      expect(call[6]).toBeUndefined();
+    }
   });
 });
 

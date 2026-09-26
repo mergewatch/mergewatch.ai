@@ -21,6 +21,7 @@ import {
   COMMENT_LOOKUP_ACTIONS,
   MERGEWATCH_CHECK_RUN_NAME,
   checkRunName,
+  decideCheckSuiteRereview,
   classifyPrSource,
   fetchRepoConfig,
   mergeConfig,
@@ -566,54 +567,46 @@ async function handleCheckRunEvent(event: CheckRunEvent): Promise<void> {
  * re-run, which is a different affordance with a different payload shape.
  */
 async function handleCheckSuiteEvent(event: CheckSuiteEvent): Promise<void> {
-  if (event.action !== 'rerequested') return;
-
-  const installationId = event.installation?.id;
-  if (!installationId) {
-    console.warn('check_suite event missing installation ID — skipping');
-    return;
-  }
-
-  const prRef = event.check_suite.pull_requests?.[0];
-  if (!prRef) {
-    // A suite on a commit with no PR (a branch push). Nothing to review.
-    console.warn(
-      `check_suite rerequested with no attached PR on ${event.repository.full_name} @ ${event.check_suite.head_sha}`,
-    );
-    return;
-  }
-
   const owner = event.repository.owner.login;
   const repo = event.repository.name;
-  const headSha = event.check_suite.head_sha;
 
-  // A suite carries no `name`, so `isMergeWatchCheckRun`'s identity rule cannot
-  // be applied to the payload. Apply the SAME rule one level down instead: our
-  // stage's check run must exist on the suite's head. That keeps a rename from
-  // breaking it (unlike app.id), keeps dev from acting on prod's suite, and
-  // costs one call on an event that only fires when a human clicks a button.
-  const octokit = await authProvider.getInstallationOctokit(installationId);
-  const isOurs = await octokit.checks
-    .listForRef({ owner, repo, ref: headSha, per_page: 100 })
-    .then(({ data }) => data.check_runs.some((c) => c.name === checkRunName(STAGE)))
-    .catch((err) => {
-      // Fail closed: an unverifiable suite is not re-reviewed. A missed
-      // re-run is recoverable by pushing a commit; reviewing another tool's
-      // suite spends real money on work nobody asked for.
-      console.warn(
-        `check_suite ownership check failed for ${owner}/${repo}@${headSha} — not re-reviewing:`,
-        err,
-      );
-      return false;
-    });
-  if (!isOurs) return;
+  // #657 — the decision (action, installation, attached PR, ownership,
+  // fail-closed) now lives in @mergewatch/core so the Express webhook makes the
+  // identical one. This handler supplies only the two things it owns: the
+  // installation client and the enqueue.
+  //
+  // The client is resolved INSIDE the callback, which core calls at most once
+  // and only for a `rerequested` suite that has a PR. `check_suite.requested`
+  // fires on every push, and resolving a client for each of those would be a
+  // token exchange per push for an event we always drop.
+  let octokit: Awaited<ReturnType<typeof authProvider.getInstallationOctokit>> | undefined;
+  const decision = await decideCheckSuiteRereview(event, {
+    stage: STAGE,
+    listCheckRunNames: async (ref, checkName) => {
+      octokit = await authProvider.getInstallationOctokit(event.installation!.id);
+      const { data } = await octokit.checks.listForRef({
+        owner, repo, ref, check_name: checkName, per_page: 100,
+      });
+      return data.check_runs.map((c: { name: string }) => c.name);
+    },
+  });
+
+  if (!decision.rereview) {
+    // `notable` keeps this off the every-push path: `check_suite.requested`
+    // fires on each push, and another App's suite being re-run is routine.
+    // Everything else here followed a human clicking Re-run, so it is logged.
+    if (decision.notable) console.warn(`check_suite not re-reviewed: ${decision.reason}`);
+    return;
+  }
 
   await enqueueRereview({
-    installationId,
+    installationId: decision.installationId,
     repository: event.repository,
-    prNumber: prRef.number,
-    headSha,
+    prNumber: decision.prNumber,
+    headSha: decision.headSha,
     trigger: 'check_suite rerequested',
+    // Resolved by the ownership check above — reusing it keeps one token
+    // exchange per click (#562).
     octokit,
   });
 }

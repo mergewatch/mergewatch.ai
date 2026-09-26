@@ -1,7 +1,7 @@
 import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig, RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
-  findExistingBotComment, getCommentReactions, createCheckRun,
+  findExistingBotComment, getCommentReactions, makeCheckRunWriter,
   resolveWithdrawnFindingThreads, withdrawnThreadKey, isStillPRHead,
   formatReviewComment, countBlockingCriticals, buildCheckTitle, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, extractSkipPatterns,
   loadCategoryDisputeRates,
@@ -351,6 +351,27 @@ export async function processReviewJob(
   const shortSha = headSha.slice(0, 7);
   const prNumberCommitSha = `${prNumber}#${shortSha}`;
 
+  // #639 / #657 — ONE writer owns every check-run write in this job.
+  //
+  // Seven call sites below write a check run (in-progress, smart skip, rules
+  // skip, over-budget, completion, throttle-parked, failure). Threading the
+  // re-run key through each by hand is how one of them gets missed, and a missed
+  // one writes to the WRONG run: on a re-run of the same commit, #526's "update
+  // the latest run for this (sha, name)" lookup resolves to the previous
+  // review's completed run, so the gate keeps reporting the old verdict.
+  //
+  // The writer also remembers the run id from its first write, so no later write
+  // repeats a lookup that could miss and create a second run.
+  //
+  // Bound to `prContext.headSha` — the commit this processor actually reviews
+  // and the one every write below targets — not to `job.headSha`.
+  //
+  // Without `job.checkRunKey` (every non-re-run path) this is a pass-through to
+  // `createCheckRun`, so #526's behaviour is unchanged.
+  const writeCheckRun = makeCheckRunWriter({
+    octokit, owner, repo, headSha, stage: STAGE, checkRunKey: job.checkRunKey,
+  });
+
   // Atomically claim this review — prevents duplicate processing
   const now = new Date().toISOString();
   const claimed = await deps.reviewStore.claimReview({
@@ -383,11 +404,11 @@ export async function processReviewJob(
   };
 
   // In-progress check run
-  await createCheckRun(octokit, owner, repo, headSha, {
+  await writeCheckRun({
     status: 'in_progress',
     title: 'Review in progress',
     summary: `MergeWatch is reviewing PR #${prNumber}...`,
-  }, STAGE).catch((err) => console.warn('Failed to create in-progress check run:', err));
+  }).catch((err) => console.warn('Failed to create in-progress check run:', err));
 
   // yamlConfig was fetched earlier for the autoReview silent-skip gate and
   // is reused below for includePatterns + runtimeConfig — no second round-trip.
@@ -401,12 +422,12 @@ export async function processReviewJob(
   if (skipReason) {
     await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'skipped', { completedAt: now, skipReason });
     await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, now);
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: skipReason,
-    }, STAGE).catch((err) => console.warn('Failed to create skip check run:', err));
+    }).catch((err) => console.warn('Failed to create skip check run:', err));
     console.log(`Skipped ${repoFullName}#${prNumber}: ${skipReason}`);
     await clearEyes();
     return;
@@ -482,12 +503,12 @@ export async function processReviewJob(
     // autoReviewOff is handled silently earlier (before any GitHub side
     // effect). Any rulesSkip seen here is a visible-skip kind: draft,
     // maxFiles, labelIgnored, reviewOnMentionOff.
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'neutral',
       title: 'Review skipped',
       summary: rulesSkip.reason,
-    }, STAGE).catch((err) => console.warn('Failed to create rules skip check run:', err));
+    }).catch((err) => console.warn('Failed to create rules skip check run:', err));
     console.log(`Rules skip ${repoFullName}#${prNumber} (${rulesSkip.kind}): ${rulesSkip.reason}`);
     await clearEyes();
     return;
@@ -525,12 +546,12 @@ export async function processReviewJob(
       completedAt: new Date().toISOString(), skipReason: reason,
     });
     await deps.prLifecycleStore?.markSkipped(instId, repoFullName, prNumber, new Date().toISOString());
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'neutral',
       title: 'Review skipped — diff too large',
       summary: reason,
-    }, STAGE).catch((err) => console.warn('Failed to create skip check run:', err));
+    }).catch((err) => console.warn('Failed to create skip check run:', err));
     return;
   }
 
@@ -1064,7 +1085,7 @@ export async function processReviewJob(
     if (infoCount) findingSummaryParts.push(`${infoCount} info`);
     if (orgBlocked) findingSummaryParts.push(`blocked by org agent: ${orgBlockedBy.join(', ')}`);
 
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: checkConclusion,
       // #380 — the title leads with the merge score so a 3/5-with-warnings
@@ -1083,7 +1104,7 @@ export async function processReviewJob(
       detailsUrl: deps.dashboardBaseUrl
         ? `${deps.dashboardBaseUrl}/dashboard/reviews/${encodeURIComponent(repoFullName)}/${encodeURIComponent(prNumberCommitSha)}`
         : undefined,
-    }, STAGE).catch((err) => console.warn('Failed to create completion check run:', err));
+    }).catch((err) => console.warn('Failed to create completion check run:', err));
 
     console.log(`Review complete: ${repoFullName}#${prNumber} — score ${result.mergeScore}/5, ${result.findings.length} findings, ${durationMs}ms`);
   } catch (err) {
@@ -1095,11 +1116,11 @@ export async function processReviewJob(
       console.warn(`Review throttled for ${repoFullName}#${prNumber} — parking for retry`);
       await deps.reviewStore.updateStatus(repoFullName, prNumberCommitSha, 'pending')
         .catch((updateErr) => console.warn('Failed to park throttled review as pending:', updateErr));
-      await createCheckRun(octokit, owner, repo, headSha, {
+      await writeCheckRun({
         status: 'in_progress',
         title: 'Review queued — rate limited',
         summary: 'The model provider is rate limiting requests. MergeWatch will retry this review shortly.',
-      }, STAGE).catch((checkErr) => console.warn('Failed to post rate-limited check run:', checkErr));
+      }).catch((checkErr) => console.warn('Failed to post rate-limited check run:', checkErr));
       throw err;
     }
 
@@ -1107,12 +1128,12 @@ export async function processReviewJob(
       completedAt: new Date().toISOString(),
     });
     // Error check run — use generic message to avoid leaking internal details
-    await createCheckRun(octokit, owner, repo, headSha, {
+    await writeCheckRun({
       status: 'completed',
       conclusion: 'failure',
       title: 'Review failed',
       summary: 'MergeWatch encountered an error while reviewing this PR. Please try again or contact support if the issue persists.',
-    }, STAGE).catch((checkErr) => console.warn('Failed to create error check run:', checkErr));
+    }).catch((checkErr) => console.warn('Failed to create error check run:', checkErr));
     throw err;
   } finally {
     await clearEyes();

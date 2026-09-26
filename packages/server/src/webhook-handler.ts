@@ -1,10 +1,10 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
 import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPInsightStore, IPRLifecycleStore, ISatisfactionStore, IReviewCostStore, IGitHubAuthProvider, ILLMProvider, AgentReviewConfig,
   IReviewTraceStore,
 } from '@mergewatch/core';
-import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, IReviewJobQueue } from '@mergewatch/core';
-import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
+import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, CheckSuiteEvent, GitHubRepository, IReviewJobQueue } from '@mergewatch/core';
+import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, decideCheckSuiteRereview, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 // #416 — deployment stage, so review artifacts (comment marker, check-run
 // name) are scoped per stage. Absent means prod, which is the frozen
@@ -117,6 +117,11 @@ export function createWebhookHandler(deps: WebhookDeps) {
         await handleReviewComment(payload as PullRequestReviewCommentEvent, deps);
       } else if (event === 'check_run') {
         await handleCheckRun(payload as CheckRunEvent, deps);
+      } else if (event === 'check_suite') {
+        // #657 — the Checks-UI "Re-run" button fires check_suite.rerequested,
+        // not check_run.rerequested (#558). Until this branch existed the event
+        // matched nothing here, so on self-hosted the button did nothing at all.
+        await handleCheckSuite(payload as CheckSuiteEvent, deps);
       } else if (event === 'installation') {
         await handleInstallation(payload as InstallationEvent, deps);
       }
@@ -378,16 +383,110 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
     return;
   }
 
-  const owner = payload.repository.owner.login;
-  const repo = payload.repository.name;
-  const prNumber = prRef.number;
+  await enqueueRereview({
+    deps,
+    installationId,
+    repository: payload.repository,
+    prNumber: prRef.number,
+    trigger: 'check_run rerequested',
+  });
+}
 
-  let octokit: Awaited<ReturnType<IGitHubAuthProvider['getInstallationOctokit']>> | null = null;
-  try {
-    octokit = await deps.authProvider.getInstallationOctokit(installationId);
-  } catch (err) {
-    console.warn('Failed to obtain installation Octokit for check_run dispatch:', err);
+/**
+ * #657 — the Checks-UI "Re-run" button.
+ *
+ * GitHub fires `check_suite.rerequested` for it, not `check_run.rerequested`
+ * (#558). `handleCheckRun` was complete the whole time on this runtime too; the
+ * event simply never reached it, so the button was a no-op on every
+ * self-hosted install.
+ *
+ * `check_run.rerequested` is kept: GitHub sends it when a SINGLE run is re-run,
+ * which is a different affordance with a different payload shape.
+ *
+ * The decision — action, installation, attached PR, ownership, fail-closed — is
+ * `decideCheckSuiteRereview` in @mergewatch/core, the same call the Lambda
+ * webhook makes. Copying that logic here instead is how the ownership rule
+ * would drift between the two runtimes.
+ */
+async function handleCheckSuite(payload: CheckSuiteEvent, deps: WebhookDeps) {
+  const owner = payload.repository?.owner?.login;
+  const repo = payload.repository?.name;
+
+  // Resolved inside the callback, which core calls at most once and only for a
+  // rerequested suite with a PR attached. `check_suite.requested` fires on
+  // every push, and resolving an installation client for each of those would be
+  // a token exchange per push for an event we always drop.
+  let octokit: Awaited<ReturnType<IGitHubAuthProvider['getInstallationOctokit']>> | undefined;
+  const decision = await decideCheckSuiteRereview(payload, {
+    stage: STAGE,
+    listCheckRunNames: async (ref, checkName) => {
+      octokit = await deps.authProvider.getInstallationOctokit(payload.installation!.id);
+      const { data } = await octokit.checks.listForRef({
+        owner, repo, ref, check_name: checkName, per_page: 100,
+      });
+      return data.check_runs.map((c: { name: string }) => c.name);
+    },
+  });
+
+  if (!decision.rereview) {
+    // `notable` keeps this off the every-push path: `check_suite.requested`
+    // fires on each push, and another App's suite being re-run is routine.
+    // Everything else here followed a human clicking Re-run, so it is logged.
+    if (decision.notable) console.warn('check_suite not re-reviewed:', decision.reason);
     return;
+  }
+
+  await enqueueRereview({
+    deps,
+    installationId: decision.installationId,
+    repository: payload.repository,
+    prNumber: decision.prNumber,
+    trigger: 'check_suite rerequested',
+    // Already resolved by the ownership check — re-resolving would be a second
+    // token exchange per click, and a second place to fail after ownership has
+    // already passed (#562).
+    octokit,
+  });
+}
+
+/**
+ * Shared tail for both re-run entry points (#657).
+ *
+ * Extracted from `handleCheckRun` rather than copied into the new
+ * `check_suite` path: the two must produce an identical review job, and two
+ * copies of the PR refetch + classification + comment lookup would drift the
+ * first time one of them was touched. The Lambda webhook has the same
+ * extraction for the same reason.
+ *
+ * Deliberately NOT unified with the Lambda's version: this one uses the PR's
+ * head SHA (not the event's) and lets `pulls.get` throw, which is what this
+ * runtime has always done. Changing that here would be an unrelated behaviour
+ * change smuggled into a fix for a dead button (#657 keeps it as a follow-up).
+ */
+async function enqueueRereview(args: {
+  deps: WebhookDeps;
+  installationId: number;
+  repository: GitHubRepository;
+  prNumber: number;
+  trigger: string;
+  /**
+   * An already-resolved client, when the caller needed one anyway (the
+   * check_suite ownership check does).
+   */
+  octokit?: Awaited<ReturnType<IGitHubAuthProvider['getInstallationOctokit']>>;
+}) {
+  const { deps, installationId, repository, prNumber, trigger } = args;
+  const owner = repository.owner.login;
+  const repo = repository.name;
+
+  let octokit = args.octokit;
+  if (!octokit) {
+    try {
+      octokit = await deps.authProvider.getInstallationOctokit(installationId);
+    } catch (err) {
+      console.warn(`Failed to obtain installation Octokit for ${trigger} dispatch:`, err);
+      return;
+    }
   }
 
   // Refetch the PR so we get labels/draft/changed_files for the job payload.
@@ -417,10 +516,23 @@ async function handleCheckRun(payload: CheckRunEvent, deps: WebhookDeps) {
     source: classification.source,
     agentKind: classification.agentKind,
     headSha: pr.head?.sha,
-    ...ossRepoFields(payload.repository),
+    // #639 — the identity of the check run this re-run owns, minted once per
+    // click and written as the run's `external_id` by the review processor.
+    //
+    // A re-run reviews the SAME commit, so #526's "update the latest run for
+    // this (sha, name)" lookup resolves to the PREVIOUS review's completed run:
+    // every write for the re-run lands on it, no fresh run appears, and branch
+    // protection keeps reporting the old verdict. Minted here rather than in the
+    // processor because one enqueue can be processed more than once (the queue
+    // worker redelivers a throttled job, replaying this exact payload), and all
+    // of those attempts must converge on one run.
+    //
+    // Only the re-run paths get a key; every other path keeps #526's behaviour.
+    checkRunKey: randomUUID(),
+    ...ossRepoFields(repository),
   };
 
-  dispatchReviewJob(job, deps, `review job (check_run rerequested) ${payload.repository.full_name}#${prNumber}`);
+  dispatchReviewJob(job, deps, `review job (${trigger}) ${repository.full_name}#${prNumber}`);
 }
 
 async function handleInstallation(payload: InstallationEvent, deps: WebhookDeps) {
