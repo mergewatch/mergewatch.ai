@@ -835,7 +835,17 @@ async function handleInstallationEvent(
 export async function handler(
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> {
-  const body = event.body ?? "";
+  // API Gateway base64-encodes the request body for content types it does not
+  // treat as text — notably `application/x-www-form-urlencoded` (#597). GitHub
+  // signs the *raw* bytes it sent, so the HMAC must be computed over the
+  // decoded body; verifying against the base64 text makes a correctly
+  // configured sender fail with "signature verification failed", which sends
+  // the operator off rotating a secret that was never wrong. Same decode as
+  // `billing.ts` (the Stripe webhook already got this right).
+  const encodedBody = event.body ?? "";
+  const body = event.isBase64Encoded
+    ? Buffer.from(encodedBody, "base64").toString("utf-8")
+    : encodedBody;
   const secret = await getWebhookSecret();
 
   const signatureHeader =
@@ -851,6 +861,14 @@ export async function handler(
     event.headers["X-GitHub-Event"] ?? event.headers["x-github-event"];
 
   if (!githubEvent) {
+    // Distinct from the two other rejection messages on purpose: an operator
+    // reading logs must be able to tell a routing/header problem apart from a
+    // secret mismatch and from a malformed body. Never log the body or the
+    // signature header — the first is attacker-controlled, the second is
+    // derived from the shared secret.
+    console.error(
+      "Webhook rejected: missing X-GitHub-Event header (signature was valid)"
+    );
     return { statusCode: 400, body: "Missing X-GitHub-Event header" };
   }
 
@@ -858,6 +876,10 @@ export async function handler(
   try {
     payload = JSON.parse(body);
   } catch {
+    console.error(
+      `Webhook rejected: body is not valid JSON for event=${githubEvent} `
+      + `(bytes=${body.length}, base64Encoded=${event.isBase64Encoded === true})`
+    );
     return { statusCode: 400, body: "Invalid JSON body" };
   }
 

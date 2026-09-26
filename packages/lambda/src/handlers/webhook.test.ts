@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHmac } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -1284,5 +1284,242 @@ describe('handler — marketplace attach on install (#421)', () => {
     mockAttachMarketplace.mockRejectedValue(new Error('dynamo down'));
     const result = await handler(apiEvent(installEvent('created')));
     expect(result.statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handler — base64 bodies and observable rejections (#597)
+//
+// Two defects, one entry point:
+//
+//   1. API Gateway base64-encodes the request body for content types it does
+//      not treat as text — proven for `application/x-www-form-urlencoded`.
+//      `webhook.ts` verified the HMAC against that base64 text while GitHub
+//      had signed the raw bytes, so a correctly-configured sender could never
+//      authenticate. The failure was LOUD and WRONG: "signature verification
+//      failed" points at the secret, not the content type.
+//   2. Two of the three rejection paths logged nothing at all, so a bad
+//      delivery was indistinguishable from no delivery.
+// ---------------------------------------------------------------------------
+
+describe('handler — base64 bodies and observable rejections (#597)', () => {
+  /** Every string this handler wrote to any console channel, in order. */
+  let logged: string[];
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let consoleSpies: Array<{ mockRestore: () => void }>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logged = [];
+    const capture = (...args: unknown[]) => {
+      logged.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+    };
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(capture);
+    consoleSpies = [
+      errorSpy,
+      vi.spyOn(console, 'warn').mockImplementation(capture),
+      vi.spyOn(console, 'log').mockImplementation(capture),
+    ];
+
+    mockIsSaas.mockReturnValue(true);
+    mockRecordMarketplaceEvent.mockResolvedValue({
+      accountLogin: 'Acme-Corp', accountId: 9931, planName: 'Free',
+    });
+  });
+
+  afterEach(() => {
+    // Restore only the console spies — `vi.restoreAllMocks()` would also reset
+    // the module-level vi.fn() mocks other describe blocks rely on.
+    for (const spy of consoleSpies) spy.mockRestore();
+  });
+
+  /** A payload GitHub would really send, so a pass reaches real dispatch. */
+  const PAYLOAD = JSON.stringify({
+    action: 'purchased',
+    effective_date: '2026-08-22T12:00:00Z',
+    sender: { login: 'someone', id: 1, type: 'User' },
+    marketplace_purchase: {
+      account: { type: 'Organization', id: 9931, login: 'Acme-Corp' },
+      plan: { id: 77, name: 'Free', monthly_price_in_cents: 0 },
+    },
+  });
+
+  // -------------------------------------------------------------------------
+  // 1. The decode, matching billing.ts:151-154
+  // -------------------------------------------------------------------------
+
+  it('authenticates a base64-encoded body signed over the DECODED bytes', async () => {
+    // Exactly what API Gateway hands this handler for a form-urlencoded
+    // delivery: `body` is base64, `isBase64Encoded` is true, and the signature
+    // GitHub sent covers the raw (decoded) bytes. Before the fix this returned
+    // 401 "Invalid signature" — the one outcome that cannot be true, since the
+    // sender signed correctly with the correct secret.
+    const result = await handler({
+      body: Buffer.from(PAYLOAD, 'utf-8').toString('base64'),
+      isBase64Encoded: true,
+      headers: {
+        'x-hub-signature-256': signBody(PAYLOAD),
+        'x-github-event': 'marketplace_purchase',
+      },
+    } as any);
+
+    expect(result.statusCode).toBe(200);
+    expect(mockRecordMarketplaceEvent).toHaveBeenCalledTimes(1);
+    expect(logged.join('\n')).not.toMatch(/signature verification failed/);
+  });
+
+  it('rejects a base64-encoded body signed over the base64 TEXT as a 401', async () => {
+    // The mirror image, and the reason the decode is not merely cosmetic:
+    // signing the transport encoding rather than the payload is a genuine
+    // signature mismatch. Before the fix this authenticated and died at
+    // JSON.parse with a 400 — a forged-encoding body getting past the gate.
+    const encoded = Buffer.from(PAYLOAD, 'utf-8').toString('base64');
+    const result = await handler({
+      body: encoded,
+      isBase64Encoded: true,
+      headers: {
+        'x-hub-signature-256': signBody(encoded),
+        'x-github-event': 'marketplace_purchase',
+      },
+    } as any);
+
+    expect(result.statusCode).toBe(401);
+    expect(mockRecordMarketplaceEvent).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a plain JSON body when isBase64Encoded is absent', async () => {
+    const result = await handler({
+      body: PAYLOAD,
+      headers: {
+        'x-hub-signature-256': signBody(PAYLOAD),
+        'x-github-event': 'marketplace_purchase',
+      },
+    } as any);
+
+    expect(result.statusCode).toBe(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // 2. Each rejection path is observable
+  // -------------------------------------------------------------------------
+
+  it('logs when the X-GitHub-Event header is missing', async () => {
+    const result = await handler({
+      body: PAYLOAD,
+      headers: { 'x-hub-signature-256': signBody(PAYLOAD) },
+    } as any);
+
+    expect(result.statusCode).toBe(400);
+    expect(logged.length).toBeGreaterThan(0);
+    expect(logged.join('\n')).toMatch(/X-GitHub-Event/);
+  });
+
+  it('logs when the body is not valid JSON', async () => {
+    const body = 'payload=%7B%22action%22%3A%22purchased%22%7D';
+    const result = await handler({
+      body,
+      headers: {
+        'x-hub-signature-256': signBody(body),
+        'x-github-event': 'marketplace_purchase',
+      },
+    } as any);
+
+    expect(result.statusCode).toBe(400);
+    expect(logged.length).toBeGreaterThan(0);
+    expect(logged.join('\n')).toMatch(/JSON/);
+  });
+
+  it('pins the 401 log text, so this change cannot alter the path that worked', async () => {
+    // A regression pin, not a bug observer: it is green before the fix by
+    // design. Its job is to go red if anyone edits the one rejection message
+    // that operators and runbooks already depend on.
+    const result = await handler({
+      body: PAYLOAD,
+      headers: {
+        'x-hub-signature-256': 'sha256=deadbeef',
+        'x-github-event': 'marketplace_purchase',
+      },
+    } as any);
+
+    expect(result.statusCode).toBe(401);
+    expect(errorSpy).toHaveBeenCalledWith('Webhook signature verification failed');
+  });
+
+  // -------------------------------------------------------------------------
+  // 3. The three messages are pairwise distinct
+  // -------------------------------------------------------------------------
+
+  it('emits pairwise distinct messages for all three rejection paths', async () => {
+    // Distinguishability is the point of the ticket. Three identical lines
+    // would satisfy "every path logs" and fix nothing, so collapsing any two
+    // of these strings must fail here.
+    async function messageFor(ev: Record<string, unknown>): Promise<string> {
+      logged = [];
+      await handler(ev as any);
+      expect(logged.length).toBeGreaterThan(0);
+      return logged.join('\n');
+    }
+
+    const badJson = 'payload=%7B%7D';
+    const badSignature = await messageFor({
+      body: PAYLOAD,
+      headers: { 'x-hub-signature-256': 'sha256=deadbeef', 'x-github-event': 'marketplace_purchase' },
+    });
+    const missingEventHeader = await messageFor({
+      body: PAYLOAD,
+      headers: { 'x-hub-signature-256': signBody(PAYLOAD) },
+    });
+    const unparseableBody = await messageFor({
+      body: badJson,
+      headers: { 'x-hub-signature-256': signBody(badJson), 'x-github-event': 'marketplace_purchase' },
+    });
+
+    const messages = [badSignature, missingEventHeader, unparseableBody];
+    expect(new Set(messages).size).toBe(3);
+
+    // Set-of-3 alone would pass if two messages differed only by an
+    // interpolated byte count, so assert each pair is genuinely unrelated.
+    for (const [a, b] of [[0, 1], [0, 2], [1, 2]] as const) {
+      expect(messages[a]).not.toContain(messages[b]);
+      expect(messages[b]).not.toContain(messages[a]);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 4. No log line leaks the body or the signature
+  // -------------------------------------------------------------------------
+
+  it('never logs the raw body or the signature header value', async () => {
+    // The body is attacker-controlled and the signature is derived from the
+    // shared secret. Neither belongs in CloudWatch, on any path.
+    const marker = 'MW597-BODY-MARKER-d41d8cd98f';
+    const cases: Array<{ body: string; signature: string; headers: Record<string, string> }> = [
+      // bad signature -> 401
+      {
+        body: `{"marker":"${marker}"}`,
+        signature: 'sha256=00ff00ff00ff00ff',
+        headers: { 'x-github-event': 'marketplace_purchase' },
+      },
+      // missing event header -> 400
+      { body: `{"marker":"${marker}"}`, signature: '', headers: {} },
+      // unparseable body -> 400
+      { body: `payload=${marker}`, signature: '', headers: { 'x-github-event': 'marketplace_purchase' } },
+    ];
+
+    for (const c of cases) {
+      logged = [];
+      const signature = c.signature || signBody(c.body);
+      await handler({
+        body: c.body,
+        headers: { ...c.headers, 'x-hub-signature-256': signature },
+      } as any);
+
+      const all = logged.join('\n');
+      expect(logged.length).toBeGreaterThan(0);
+      expect(all).not.toContain(c.body);
+      expect(all).not.toContain(marker);
+      expect(all).not.toContain(signature);
+      expect(all).not.toContain(signature.replace(/^sha256=/, ''));
+    }
   });
 });
