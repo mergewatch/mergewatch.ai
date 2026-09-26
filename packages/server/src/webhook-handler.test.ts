@@ -25,7 +25,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
 import { verifySignature, parseReviewMode, isMergeWatchCheckRun, createWebhookHandler } from './webhook-handler.js';
 import type { WebhookDeps } from './webhook-handler.js';
 import { MERGEWATCH_CHECK_RUN_NAME } from '@mergewatch/core';
-import type { IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, IPRLifecycleStore, PullRequestEvent, CheckRunEvent, IssueCommentEvent, PullRequestReviewCommentEvent } from '@mergewatch/core';
+import type { IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, IPRLifecycleStore, PullRequestEvent, CheckRunEvent, CheckSuiteEvent, IssueCommentEvent, PullRequestReviewCommentEvent } from '@mergewatch/core';
 
 // ---------------------------------------------------------------------------
 // verifySignature
@@ -509,6 +509,23 @@ describe('createWebhookHandler — check_run.rerequested', () => {
     expect(job.prLabels).toEqual(['needs-review']);
   });
 
+  it('mints a check-run key for the re-run job (#639)', async () => {
+    // Without a key the processor's #526 lookup updates the PREVIOUS review's
+    // completed run for this (sha, name), so the re-run's verdict never reaches
+    // the gate. The key rides in the payload because the queue worker can
+    // redeliver this exact body and every attempt must converge on one run.
+    const deps = makeDepsWithPR();
+    const handler = createWebhookHandler(deps);
+    const { req, res } = makeReqRes(JSON.stringify(makeCheckRunEvent()), 'check_run');
+
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const job = mockProcessReviewJob.mock.calls[0][0];
+    expect(typeof job.checkRunKey).toBe('string');
+    expect(job.checkRunKey.length).toBeGreaterThan(0);
+  });
+
   it('ignores non-rerequested check_run actions', async () => {
     const deps = makeDepsWithPR();
     const handler = createWebhookHandler(deps);
@@ -543,6 +560,164 @@ describe('createWebhookHandler — check_run.rerequested', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #657 — check_suite.rerequested dispatch on the self-hosted runtime
+//
+// The Checks-UI "Re-run" button fires check_suite.rerequested, not
+// check_run.rerequested (#558). This dispatcher handled only the latter, so the
+// event matched no branch and the button did nothing at all on every
+// self-hosted install — no review, no comment, no check run.
+// ---------------------------------------------------------------------------
+
+function makeCheckSuiteEvent(overrides: {
+  action?: CheckSuiteEvent['action'];
+  pullRequests?: CheckSuiteEvent['check_suite']['pull_requests'];
+  installation?: CheckSuiteEvent['installation'];
+} = {}): CheckSuiteEvent {
+  const base = makeCheckRunEvent();
+  return {
+    action: overrides.action ?? 'rerequested',
+    check_suite: {
+      id: 7001,
+      head_sha: 'abc123',
+      status: 'completed',
+      conclusion: 'failure',
+      app: { id: 42, slug: 'mergewatch-ai', name: 'MergeWatch' },
+      pull_requests: overrides.pullRequests ?? base.check_run.pull_requests,
+    },
+    repository: base.repository,
+    installation: 'installation' in overrides ? overrides.installation : { id: 999 },
+    sender: base.sender,
+  };
+}
+
+describe('createWebhookHandler — check_suite.rerequested (#657)', () => {
+  // Falsifiability: the three tests that assert a dispatch HAPPENS are the ones
+  // that fail on `main` (the dispatcher ignores the event, so nothing is
+  // dispatched and no client is ever resolved). Every test below that asserts a
+  // dispatch does NOT happen — not ours, fail-closed, wrong action, no PR, no
+  // installation — passes on `main` for the wrong reason: nothing was handled at
+  // all. They are disclosed as **pins** on the new handler's guards, not as
+  // coverage of the bug.
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    mockFindExistingBotComment.mockResolvedValue(null);
+  });
+
+  /** Octokit reporting which check runs sit on the suite's head SHA. */
+  function makeDepsWithChecks(names: string[]) {
+    const deps = makeDeps();
+    const listForRef = vi.fn().mockResolvedValue({
+      data: { check_runs: names.map((name) => ({ name })) },
+    });
+    (deps.authProvider.getInstallationOctokit as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({
+        pulls: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              draft: false,
+              labels: [{ name: 'needs-review' }],
+              changed_files: 3,
+              head: { sha: 'abc123' },
+            },
+          }),
+        },
+        checks: { listForRef },
+      });
+    return { deps, listForRef };
+  }
+
+  async function deliver(deps: WebhookDeps, event: CheckSuiteEvent) {
+    const handler = createWebhookHandler(deps);
+    const { req, res } = makeReqRes(JSON.stringify(event), 'check_suite');
+    await handler(req, res);
+    await new Promise((resolve) => setImmediate(resolve));
+    return res;
+  }
+
+  it('dispatches a re-review carrying a check-run key — the button now does something', async () => {
+    const { deps, listForRef } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME]);
+
+    await deliver(deps, makeCheckSuiteEvent());
+
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+    const job = mockProcessReviewJob.mock.calls[0][0];
+    expect(job.prNumber).toBe(42);
+    expect(job.mode).toBe('review');
+    expect(job.headSha).toBe('abc123');
+    // #639 — the re-run owns its own check run, or the gate keeps reporting the
+    // previous verdict. A mirror of #558's handler alone would have shipped that
+    // bug onto a second runtime.
+    expect(typeof job.checkRunKey).toBe('string');
+    expect(job.checkRunKey.length).toBeGreaterThan(0);
+    // Ownership is checked by name, not by paging every run on the commit.
+    expect(listForRef).toHaveBeenCalledWith(
+      expect.objectContaining({ ref: 'abc123', check_name: MERGEWATCH_CHECK_RUN_NAME }),
+    );
+  });
+
+  it('ignores a suite that is not ours', async () => {
+    const { deps } = makeDepsWithChecks(['CodeQL', 'Build & Test']);
+    await deliver(deps, makeCheckSuiteEvent());
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('fails CLOSED when the ownership check errors', async () => {
+    const deps = makeDeps();
+    (deps.authProvider.getInstallationOctokit as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({
+        pulls: { get: vi.fn() },
+        checks: { listForRef: vi.fn().mockRejectedValue(new Error('503')) },
+      });
+
+    await deliver(deps, makeCheckSuiteEvent());
+
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-rerequested actions without resolving a client', async () => {
+    // `requested` fires on every push; acting on it would double every review.
+    for (const action of ['requested', 'completed'] as const) {
+      vi.clearAllMocks();
+      const { deps } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME]);
+      await deliver(deps, makeCheckSuiteEvent({ action }));
+      expect(mockProcessReviewJob, action).not.toHaveBeenCalled();
+      expect(deps.authProvider.getInstallationOctokit, action).not.toHaveBeenCalled();
+    }
+  });
+
+  it('ignores a suite with no attached PR', async () => {
+    const { deps } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME]);
+    await deliver(deps, makeCheckSuiteEvent({ pullRequests: [] }));
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('ignores an event with no installation id', async () => {
+    const { deps } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME]);
+    await deliver(deps, makeCheckSuiteEvent({ installation: undefined }));
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('resolves the installation client once, not once per step', async () => {
+    // The ownership check and the enqueue share one client: two exchanges per
+    // click would give the second one a chance to fail after ownership passed
+    // (#562).
+    const { deps } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME]);
+    await deliver(deps, makeCheckSuiteEvent());
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+    expect(deps.authProvider.getInstallationOctokit).toHaveBeenCalledTimes(1);
+  });
+
+  it('one suite event yields exactly one job, however many checks it holds', async () => {
+    const { deps } = makeDepsWithChecks([MERGEWATCH_CHECK_RUN_NAME, 'CodeQL', 'Build & Test']);
+    await deliver(deps, makeCheckSuiteEvent());
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
   });
 });
 

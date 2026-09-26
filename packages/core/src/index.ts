@@ -113,6 +113,11 @@ export { reviewMarker, inlineMarker, checkRunName } from './stage.js';
 export type { Stage } from './stage.js';
 export type { CheckRunParams, CheckRunIdentity, CheckRunWriter } from './github/client.js';
 
+// #657 — the "Re-run" button's decision, shared by the Lambda webhook and the
+// Express webhook so the two cannot drift.
+export { decideCheckSuiteRereview } from './github/check-suite-rereview.js';
+export type { CheckSuiteRereviewDecision, CheckSuiteRereviewDeps } from './github/check-suite-rereview.js';
+
 export {
   BOT_COMMENT_MARKER,
   INLINE_BOT_COMMENT_MARKER,
