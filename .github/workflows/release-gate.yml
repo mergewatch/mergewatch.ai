@@ -777,5 +777,56 @@ jobs:
             exit 1
           fi
           echo "docker-publish run: $RUN_ID"
-          gh run watch "$RUN_ID" --exit-status --interval 20
-          echo "images published for $VERSION"
+
+          # WAIT — but do not let the run's conclusion be the verdict (#665).
+          #
+          # This used to be `gh run watch --exit-status`, which propagates the
+          # run conclusion. v0.6.5 published BOTH images completely (7 and 8
+          # layers, nothing missing, `latest` correct) and still reported
+          # `Cut the release: failure`, because buildx hit a transient
+          # `error writing layer blob: not_found`, recovered, pushed, and exited
+          # non-zero anyway. Someone reading that red may start recovering a
+          # release that is fine — which has already gone wrong here once
+          # (#629/#630).
+          #
+          # The wait itself stays: fire-and-forget is how v0.6.0 shipped with no
+          # images at all (#513). Only the verdict moves — to the registry.
+          gh run watch "$RUN_ID" --interval 20 || true
+
+          # `gh run watch` can also return because IT failed — a transient API
+          # error, a dropped connection. Without `--exit-status` that is now
+          # indistinguishable from "the run finished", and verifying a registry
+          # mid-push would fail on an image that was about to land. So confirm
+          # the run is actually `completed` before reading anything from it.
+          STATUS=""
+          for _ in $(seq 1 60); do
+            STATUS="$(gh run view "$RUN_ID" --json status --jq '.status // empty')" || STATUS=""
+            [ "$STATUS" = "completed" ] && break
+            sleep 20
+          done
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::docker-publish run $RUN_ID never reached 'completed' (last status: '${STATUS:-unknown}') — not verifying a half-finished push. Check the run, then verify by hand with: scripts/verify-published-images.sh $VERSION mergewatch/mergewatch mergewatch/mergewatch-dashboard"
+            exit 1
+          fi
+          CONCLUSION="$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion // "unknown"')"
+          echo "docker-publish concluded: $CONCLUSION"
+
+          # Ask the registry. This is the only source that can tell "no images"
+          # apart from "images fine, publisher exited non-zero" — and the gate
+          # has had both failures.
+          vrc=0
+          scripts/verify-published-images.sh "$VERSION" \
+            mergewatch/mergewatch mergewatch/mergewatch-dashboard || vrc=$?
+
+          if [ "$vrc" -ne 0 ]; then
+            # Genuinely broken. Say which of the two it is, because the
+            # recovery differs: nothing published means re-run the publisher,
+            # while a partial push means the tag has to be rebuilt.
+            echo "::error::no complete images published for $VERSION — the registry check above names the image and the check that failed (docker-publish concluded '$CONCLUSION')"
+            exit 1
+          fi
+
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::warning::images published, publisher exited non-zero — docker-publish concluded '$CONCLUSION', but every image, layer and moving tag for $VERSION is present in the registry. Treating the release as complete (#665)."
+          fi
+          echo "images published and verified in the registry for $VERSION"

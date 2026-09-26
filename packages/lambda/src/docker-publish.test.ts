@@ -87,6 +87,30 @@ describe('release gate — the release actually ships images', () => {
   const publish = () =>
     gate.jobs.release.steps.find((s: any) => s.name === 'Publish the images');
 
+  /**
+   * Executable lines only. The step's comments quote the code they replaced —
+   * including the literal `--exit-status` — so a match over the raw text finds
+   * the explanation of the fix and reports it as the bug. Same reason
+   * release-gate.test.ts strips comments before its ordering assertions.
+   */
+  const publishCode = (): string =>
+    (publish().run as string)
+      .split('\n')
+      .filter((l: string) => !/^\s*#/.test(l))
+      .join('\n');
+
+  /**
+   * Where the verifier is actually INVOKED. `indexOf` on the name finds the
+   * earlier mention inside the not-completed guard's error message (which tells
+   * a human how to run it by hand), so ordering assertions anchored on the name
+   * point at prose rather than at the call.
+   */
+  const invocationAt = (code = publishCode()): number => {
+    const at = code.search(/^\s*scripts\/verify-published-images\.sh /m);
+    expect(at, 'the verifier is never invoked as a command').toBeGreaterThan(-1);
+    return at;
+  };
+
   it('dispatches docker-publish explicitly rather than relying on the event', () => {
     // GITHUB_TOKEN suppression means publishing the release fires nothing. An
     // explicit dispatch is an API call, not an event, so it is exempt.
@@ -94,10 +118,87 @@ describe('release gate — the release actually ships images', () => {
     expect(publish().run).toMatch(/gh workflow run docker-publish\.yml --ref "\$VERSION"/);
   });
 
-  it('waits for the images, and fails the release if they fail', () => {
-    // Fire-and-forget would let a release whose images never built report
-    // success — the same hole the gate exists to close, one step further on.
-    expect(publish().run).toMatch(/gh run watch .*--exit-status/);
+  it('still WAITS for the publisher — fire-and-forget shipped v0.6.0 with no images', () => {
+    // #513. The wait is not what #665 changed; only the verdict is. Assert it
+    // survived, because "stop trusting the exit code" reads awfully like
+    // "stop waiting".
+    expect(publish().run).toMatch(/gh run watch "\$RUN_ID"/);
+  });
+
+  it('does NOT make the run conclusion the verdict (#665)', () => {
+    // v0.6.5: both images published complete — 7 and 8 layers, nothing
+    // missing, `latest` correct — and the release still reported failure,
+    // because buildx recovered from a transient GHCR blob error and exited
+    // non-zero anyway. `--exit-status` propagates the conclusion, so the
+    // release outcome was decided by something that was not about the outcome.
+    expect(publishCode()).not.toMatch(/--exit-status/);
+  });
+
+  it('decides from the registry, by running the image verifier', () => {
+    // The verdict has to come from a source that can distinguish "no images"
+    // (v0.6.0) from "images fine, publisher noisy" (v0.6.5). Neither the run
+    // conclusion nor the existence of a tag can.
+    const run = publishCode();
+    expect(run).toMatch(/scripts\/verify-published-images\.sh/);
+    expect(run).toMatch(/mergewatch\/mergewatch\b/);
+    expect(run).toMatch(/mergewatch\/mergewatch-dashboard/);
+  });
+
+  it('verifies AFTER the wait — a verifier that runs first proves nothing', () => {
+    // Checking the registry before docker-publish has finished would find the
+    // PREVIOUS release's images and pass. Ordering is the whole check.
+    const run: string = publishCode();
+    const watch = run.indexOf('gh run watch');
+    expect(watch, 'the wait is gone').toBeGreaterThan(-1);
+    expect(invocationAt(run)).toBeGreaterThan(watch);
+  });
+
+  it('confirms the run COMPLETED before reading the registry', () => {
+    // Without `--exit-status`, a `gh run watch` that returns because it itself
+    // failed is indistinguishable from one that returns because the run
+    // finished. Verifying then would check a registry mid-push and fail on an
+    // image that was about to land — a false red, which is the bug.
+    const run: string = publishCode();
+    expect(run).toMatch(/--json status/);
+    expect(run).toMatch(/never reached 'completed'/);
+    // the guard sits between the wait and the verifier
+    const guard = run.indexOf("never reached 'completed'");
+    expect(guard).toBeGreaterThan(run.indexOf('gh run watch'));
+    expect(guard).toBeLessThan(invocationAt(run));
+  });
+
+  it('fails the release when the registry check fails, not when the run is red', () => {
+    // The exit has to hang off the verifier's status. If it hangs off
+    // $CONCLUSION the behaviour is unchanged whatever the comments claim.
+    const run: string = publishCode();
+    const verifyAt = invocationAt(run);
+    // There are earlier `exit 1`s — the "docker-publish never started" guard
+    // (#513) and the not-completed guard — so anchor on the one that follows
+    // the verifier rather than the first one in the block.
+    expect(run.indexOf('exit 1', verifyAt)).toBeGreaterThan(verifyAt);
+    // …and it is the VERIFIER's status that decides. If the `exit 1` hung off
+    // $CONCLUSION instead, behaviour would be unchanged whatever the comments
+    // claim, so assert the verifier's own exit code is what is branched on.
+    expect(run).toMatch(/vrc"? -ne 0/);
+    const decision = run.slice(verifyAt);
+    expect(decision.indexOf('vrc'), 'nothing reads the verifier\'s exit code')
+      .toBeGreaterThan(-1);
+    expect(decision.indexOf('exit 1')).toBeGreaterThan(decision.indexOf('vrc'));
+  });
+
+  it('distinguishes "no images" from "images published, publisher exited non-zero"', () => {
+    // The conflation IS the bug: `buildx failed with: …` was the only message,
+    // and it reads identically for a release with no images and a release that
+    // is complete. Two different outcomes need two different sentences, and
+    // they must sit on opposite sides of the verifier's verdict.
+    const run: string = publishCode();
+    const broken = run.indexOf('no complete images published');
+    const noisy = run.indexOf('images published, publisher exited non-zero');
+    expect(broken, 'no message for the genuinely-broken case').toBeGreaterThan(-1);
+    expect(noisy, 'no message for the complete-but-red case').toBeGreaterThan(-1);
+    // the broken message is an error that exits; the noisy one is a warning
+    expect(run.slice(broken - 40, broken)).toMatch(/::error::/);
+    expect(run.slice(noisy - 40, noisy)).toMatch(/::warning::/);
   });
 
   it('fails when docker-publish never starts at all', () => {
@@ -120,5 +221,37 @@ describe('release gate — the release actually ships images', () => {
     // comment cannot be tested, but its absence can.
     const header = readFileSync(resolve(WORKFLOWS, 'release-gate.yml'), 'utf8').slice(0, 2000);
     expect(header).not.toMatch(/which fires on `release: published`/);
+  });
+});
+
+describe('docker-publish — one image\'s failure must not cancel the other (#665)', () => {
+  const strategy = () => docker.jobs['build-and-push'].strategy;
+
+  it('sets fail-fast: false', () => {
+    // The key was ABSENT, which defaults to true. On v0.6.5 `mergewatch` hit a
+    // transient registry error and GitHub cancelled the `mergewatch-dashboard`
+    // leg; that image exists only because its push finished before the cancel
+    // landed. `undefined` is not `false` here — asserting on absence would have
+    // passed on the broken workflow.
+    expect(strategy()['fail-fast']).toBe(false);
+  });
+
+  it('still builds both images, so fail-fast was not "fixed" by dropping a leg', () => {
+    const images = strategy().matrix.include.map((m: any) => m.image);
+    expect(images).toEqual([
+      'ghcr.io/mergewatch/mergewatch',
+      'ghcr.io/mergewatch/mergewatch-dashboard',
+    ]);
+  });
+
+  it('the gate verifies BOTH images, so a cancelled leg cannot pass unnoticed', () => {
+    // fail-fast: false stops the cancel. It does not make a leg that failed
+    // for real visible — that is the registry check's job, and it only helps
+    // if it covers every image the matrix publishes.
+    const publish = gate.jobs.release.steps.find((s: any) => s.name === 'Publish the images');
+    for (const image of strategy().matrix.include.map((m: any) => m.image)) {
+      const repo = image.replace(/^ghcr\.io\//, '');
+      expect(publish.run, `${repo} is published but never verified`).toContain(repo);
+    }
   });
 });

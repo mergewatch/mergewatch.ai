@@ -36,6 +36,14 @@ jobs:
       packages: write
 
     strategy:
+      # The two images are independent pushes, so one failing must not cancel
+      # the other (#665). This key was absent, which defaults to `true`: on
+      # v0.6.5 `mergewatch` hit a transient registry error and GitHub cancelled
+      # the `mergewatch-dashboard` leg. The dashboard image existed anyway only
+      # because its push happened to finish before the cancel landed — luck of
+      # timing, not design. A cancel mid-push would leave a tag resolving to a
+      # manifest whose layers are incomplete, which is far worse than a red job.
+      fail-fast: false
       matrix:
         include:
           - image: ghcr.io/mergewatch/mergewatch
