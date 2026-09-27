@@ -289,3 +289,47 @@ describe('#584 — the release gate passes the fixture snapshot refs too', () =>
     expect(anyMatches('run-suite.sh', ref) && anyMatches('grade-run.mjs', ref)).toBe(true);
   });
 });
+
+/**
+ * #582 — both gates pace the apply loop, and neither may pace at ZERO.
+ *
+ * SLEEP is what stops 49 PRs landing on the review queue at once. Measured on
+ * deploy #581, it is also 93% of the gate's wall clock (49 x 45s = 36.8 min of a
+ * 39.6 min apply step), so it is the obvious thing to reduce — and the obvious
+ * over-reduction is to delete it, which hands the queue every PR simultaneously
+ * and lets the queue, not the product, decide the result.
+ *
+ * So this asserts a RANGE, not a value: pacing must exist, and must stay within
+ * a band that keeps roughly the queue's own concurrency in flight. Asserting the
+ * exact number would fail on every deliberate tune; asserting only "is set"
+ * would pass at 0.
+ */
+describe('#582 — the gates pace the apply loop, and both do it the same way', () => {
+  const load = (f: string) =>
+    yaml.load(readFileSync(resolve(__dirname, `../../../.github/workflows/${f}`), 'utf8')) as any;
+
+  const sleeps = (wf: any) =>
+    Object.values(wf.jobs)
+      .flatMap((j: any) => j.steps ?? [])
+      .filter((st: any) => st?.env && st.env.SLEEP !== undefined)
+      .map((st: any) => Number(st.env.SLEEP));
+
+  for (const f of ['deploy.yml', 'release-gate.yml']) {
+    it(`${f} paces the suite, and not at zero`, () => {
+      const vals = sleeps(load(f));
+      expect(vals.length, `${f} sets no SLEEP — the apply loop would not pace at all`)
+        .toBeGreaterThan(0);
+      for (const v of vals) {
+        // 0 would remove pacing entirely. Above ~30 and the gate is mostly sleep.
+        expect(v).toBeGreaterThan(0);
+        expect(v).toBeLessThanOrEqual(30);
+      }
+    });
+  }
+
+  it('both gates use the SAME pacing, so they cannot disagree about a fixture', () => {
+    // A release grading under different pacing than the deploy gate can fail a
+    // fixture for a reason that is neither the product nor the fixture.
+    expect(sleeps(load('deploy.yml'))).toEqual(sleeps(load('release-gate.yml')));
+  });
+});

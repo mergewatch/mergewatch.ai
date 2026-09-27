@@ -351,7 +351,11 @@ jobs:
       - name: Run the suite
         working-directory: fixtures-repo
         env:
-          SLEEP: 45
+          # Same 45 -> 10 as the deploy gate (#582); see the rationale there.
+          # Kept identical on purpose: a release must grade under the same
+          # pacing the deploy gate does, or the two gates can disagree about a
+          # fixture for a reason that is neither the product nor the fixture.
+          SLEEP: 10
         run: xargs scripts/run-suite.sh --snapshot-ref "${{ steps.fixref.outputs.sha }}" < /tmp/sel.txt
 
       - name: Restore the tooling checkout
