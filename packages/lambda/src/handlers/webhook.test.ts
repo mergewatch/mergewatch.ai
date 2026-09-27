@@ -482,6 +482,64 @@ describe('handler — agent-source classification', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #639 — a re-run job carries its own check-run identity
+// ---------------------------------------------------------------------------
+
+describe('re-run jobs carry a checkRunKey (#639)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetInstallationOctokit.mockResolvedValue(octokitWithChecks([MERGEWATCH_CHECK_RUN_NAME]));
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+    mockFindExistingBotComment.mockResolvedValue(null);
+  });
+
+  function enqueuedPayload() {
+    const invokeInput = (mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input;
+    return JSON.parse(invokeInput.Payload.toString());
+  }
+
+  // A re-run reviews the SAME commit, so the agent's #526 "latest run for this
+  // (sha, name)" lookup resolves to the PREVIOUS review's completed run. The
+  // key is what gives the re-run a run of its own.
+  it('check_suite.rerequested — the button GitHub actually fires', async () => {
+    await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+    expect(enqueuedPayload().checkRunKey).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it('check_run.rerequested — the single-run affordance', async () => {
+    mockGetInstallationOctokit.mockResolvedValue({
+      pulls: { get: vi.fn().mockResolvedValue({ data: { draft: false, labels: [] } }) },
+    });
+    await handler(makeCheckRunApiEvent(JSON.stringify(makeCheckRunEvent())));
+    expect(enqueuedPayload().checkRunKey).toBeTruthy();
+  });
+
+  it('two clicks mint two different keys', async () => {
+    // Each click is its own job and must not silently share a run with the
+    // other; distinct keys is what makes the two writes independent instead of
+    // racing on one run.
+    await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+    await handler(makeCheckSuiteApiEvent(JSON.stringify(makeCheckSuiteEvent())));
+    const keys = mockEnqueue.mock.calls.map(
+      (c) => JSON.parse((c[0] as { input: { Payload: Buffer } }).input.Payload.toString()).checkRunKey,
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  // (pin) passes before and after — it guards what must NOT change.
+  it('synchronize does NOT get a key — #526 behaviour is unchanged there', async () => {
+    // A push is a new commit with no run of ours to collide with, so the
+    // create-or-update-latest path is already correct. Handing it a key would
+    // change behaviour nobody reported a problem with.
+    await handler(makeApiGatewayEvent(JSON.stringify(makePullRequestEvent({ action: 'synchronize' }))));
+    expect(enqueuedPayload().checkRunKey).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // check_run.rerequested dispatch
 // ---------------------------------------------------------------------------
 

@@ -68,8 +68,19 @@ export function redriveDelaySeconds(generation: number): number {
  * check run — that reads as a hang and blocks GitHub's re-run affordance.
  * Best-effort: a failure here must not stop the sweep.
  */
-async function completeAbandonedCheck(payload: ReviewJobPayload): Promise<void> {
-  const { installationId, owner, repo, headSha, prNumber } = payload;
+async function completeAbandonedCheck(
+  payload: ReviewJobPayload,
+  /**
+   * #639 — the PR's CURRENT head, from the `pulls.get` the staleness check
+   * already made. A re-run job's run lives on the head the agent reviewed,
+   * which is not necessarily the SHA the job was enqueued with; looking the key
+   * up on the enqueued SHA would find nothing. Absent when that lookup failed,
+   * in which case the payload's SHA is the best available guess.
+   */
+  currentHeadSha?: string,
+): Promise<void> {
+  const { installationId, owner, repo, prNumber } = payload;
+  const headSha = currentHeadSha ?? payload.headSha;
   if (!installationId || !owner || !repo || !headSha) return;
 
   try {
@@ -82,7 +93,12 @@ async function completeAbandonedCheck(payload: ReviewJobPayload): Promise<void> 
         'MergeWatch retried this review across several queue generations and the model provider '
         + 'was still rate limiting. The job has been dropped so it does not cycle indefinitely. '
         + 'Re-run this check or comment `@mergewatch review` to try again.',
-    }, STAGE);
+    }, STAGE, payload.checkRunKey
+      // #639 — a keyed job owns one run; correct THAT run, and never create.
+      // Creating here would put a red run on a PR whose review may never have
+      // reached the in-progress write, which is a worse lie than silence.
+      ? { checkRunKey: payload.checkRunKey, updateOnly: true }
+      : undefined);
     console.log(`Completed abandoned check run for ${owner}/${repo}#${prNumber}`);
   } catch (err) {
     console.error(`Failed to complete abandoned check run for ${owner}/${repo}#${prNumber}:`, err);
@@ -100,21 +116,27 @@ async function completeAbandonedCheck(payload: ReviewJobPayload): Promise<void> 
  * `null` means "couldn't tell" — treated as alive, because dropping a real
  * review on a transient API blip is the worse error.
  */
-async function isPrStillOpen(payload: ReviewJobPayload): Promise<boolean | null> {
+async function isPrStillOpen(
+  payload: ReviewJobPayload,
+): Promise<{ open: boolean | null; headSha?: string }> {
   const { installationId, owner, repo, prNumber } = payload;
-  if (!installationId || !owner || !repo || !prNumber) return null;
+  if (!installationId || !owner || !repo || !prNumber) return { open: null };
 
   try {
     const octokit = await authProvider.getInstallationOctokit(installationId);
     const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
-    return data.state === 'open';
+    // #639 — the head SHA rides along: this is the only PR read the sweep
+    // makes, and the abandoned-check write needs the current head to find the
+    // job's run. Making a second `pulls.get` for it would be a second place to
+    // fail after this one already succeeded.
+    return { open: data.state === 'open', headSha: data.head?.sha };
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
     // A deleted PR is definitively not worth reviewing; anything else is
     // indeterminate.
-    if (status === 404) return false;
+    if (status === 404) return { open: false };
     console.warn(`Could not determine PR state for ${owner}/${repo}#${prNumber}:`, err);
-    return null;
+    return { open: null };
   }
 }
 
@@ -171,7 +193,8 @@ export async function handler(): Promise<{ redriven: number; abandoned: number; 
       // Drop jobs whose PR has closed or merged while the job sat in the DLQ.
       // No check run to complete — the PR is gone; reviving it would only
       // burn model quota the live reviews need.
-      if ((await isPrStillOpen(payload)) === false) {
+      const prState = await isPrStillOpen(payload);
+      if (prState.open === false) {
         console.log(`Dropping dead-lettered review for ${label} — PR is no longer open`);
         await sqs
           .send(new DeleteMessageCommand({ QueueUrl: REVIEW_DLQ_URL, ReceiptHandle: message.ReceiptHandle }))
@@ -182,7 +205,7 @@ export async function handler(): Promise<{ redriven: number; abandoned: number; 
 
       if (generation >= MAX_GENERATIONS) {
         console.warn(`Abandoning review after ${generation} redrive generations: ${label}`);
-        await completeAbandonedCheck(payload);
+        await completeAbandonedCheck(payload, prState.headSha);
         await sqs
           .send(new DeleteMessageCommand({ QueueUrl: REVIEW_DLQ_URL, ReceiptHandle: message.ReceiptHandle }))
           .catch((err) => console.error(`Failed to delete abandoned DLQ message for ${label}:`, err));

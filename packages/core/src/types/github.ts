@@ -364,6 +364,22 @@ export interface ReviewJobPayload {
   /** True when triggered by an @mergewatch comment (force-bypasses skip logic). */
   mentionTriggered?: boolean;
   /**
+   * #639 — identity of the check run this job owns, minted by the webhook for
+   * re-run jobs only and written as the run's `external_id`.
+   *
+   * A re-run reviews the SAME commit, so "the latest run for this (sha, name)"
+   * points at the PREVIOUS review's completed run: the re-run's writes landed
+   * on it instead of on a fresh one, and branch protection kept reporting the
+   * old verdict. A key the job carries is the only identity that survives SQS
+   * redelivery, DLQ redrive and a manual re-invoke — all of which replay this
+   * exact payload body — so it must live here rather than being minted per
+   * invocation.
+   *
+   * Absent on every other path (first review, synchronize, @mergewatch), which
+   * keeps #526's create-or-update-latest behaviour exactly as it is.
+   */
+  checkRunKey?: string;
+  /**
    * Head commit SHA of the PR. Passed from the webhook so the review-agent
    * can fetch `.mergewatch.yml` at the PR's head (not the repo's default
    * branch) — required for the silent autoReview-off gate to honor config

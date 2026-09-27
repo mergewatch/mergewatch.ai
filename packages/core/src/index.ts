@@ -111,6 +111,7 @@ export {
 // #416 — stage-scoped review identity (dev/prod A/B on one repo).
 export { reviewMarker, inlineMarker, checkRunName } from './stage.js';
 export type { Stage } from './stage.js';
+export type { CheckRunParams, CheckRunIdentity, CheckRunWriter } from './github/client.js';
 
 export {
   BOT_COMMENT_MARKER,
@@ -124,6 +125,7 @@ export {
   findExistingBotComment,
   getCommentReactions,
   createCheckRun,
+  makeCheckRunWriter,
   isStillPRHead,
   resolveWithdrawnFindingThreads,
   withdrawnThreadKey,
