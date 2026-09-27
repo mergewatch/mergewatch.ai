@@ -412,6 +412,19 @@ async function handleCheckSuite(payload: CheckSuiteEvent, deps: WebhookDeps) {
   const owner = payload.repository?.owner?.login;
   const repo = payload.repository?.name;
 
+  // Validate before the closure below can pass these to listForRef. They are
+  // optional-chained, so a malformed payload would not crash here — it would
+  // reach the API as `owner: undefined` and fail there instead, at a distance
+  // from the cause. Logged rather than dropped silently: a Re-run that does
+  // nothing with no trace is the exact defect #657 exists to remove.
+  if (!owner || !repo) {
+    console.warn(
+      'check_suite event carries no repository owner/name — skipping (delivery=%s)',
+      payload.check_suite?.head_sha ?? 'unknown',
+    );
+    return;
+  }
+
   // Resolved inside the callback, which core calls at most once and only for a
   // rerequested suite with a PR attached. `check_suite.requested` fires on
   // every push, and resolving an installation client for each of those would be
