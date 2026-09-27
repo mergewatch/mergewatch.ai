@@ -209,6 +209,12 @@ describe('#664 — buildMergeGate with agent failures', () => {
     invariants(adv, 0);
   });
 
+  it('a malformed source fails closed: it gates', () => {
+    const odd = { agent: 'odd', source: { kind: 'team', agent: 'odd' }, reason: 'error' } as unknown as CustomAgentFailure;
+    const noEnforcement = { agent: 'bare', source: { kind: 'org', agent: 'bare' }, reason: 'error' } as unknown as CustomAgentFailure;
+    expect(buildMergeGate([], [], [odd, noEnforcement])).toMatchObject({ fails: true, failedGatingAgents: ['bare', 'odd'], failedAdvisoryAgents: [] });
+  });
+
   it('failure lists are distinct and sorted, and a failed agent is never in orgBlockedBy', () => {
     const g = buildMergeGate([crit({ source: org('blocking', 'x') })], [], [fail('zeta'), fail('alpha'), fail('zeta'), advisoryFail('b'), advisoryFail('a')]);
     expect(g.failedGatingAgents).toEqual(['alpha', 'zeta']);

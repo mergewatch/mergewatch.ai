@@ -55,11 +55,12 @@ export interface CustomAgentFailure {
 
 /**
  * #664 — a failure that fails the check: a repo agent (repo agents have no
- * advisory mode, and their criticals block) or a blocking org agent. An
- * advisory org agent's failure is only disclosed.
+ * advisory mode, and their criticals block) or a blocking org agent. Only an
+ * org agent explicitly set to advisory is merely disclosed — anything else,
+ * including a malformed source, gates (fail closed, as #382).
  */
 export const isGatingFailure = (f: CustomAgentFailure): boolean =>
-  f.source.kind === 'repo' || f.source.enforcement === 'blocking';
+  !(f.source?.kind === 'org' && f.source.enforcement === 'advisory');
 
 /** The minimum a finding needs to be classified. */
 export interface GateFinding {
