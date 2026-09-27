@@ -641,9 +641,22 @@ export async function createCheckRun(
         owner, repo, head_sha: headSha, name, ...body,
       });
       const id = (created as { data?: { id?: number } }).data?.id;
+      if (id == null) {
+        // The create call did not throw, so a run probably exists — we just do
+        // not know its id. Returning undefined silently would be
+        // indistinguishable from "create failed", and the caller would then
+        // re-derive the run by key on the next write, which is the path that can
+        // duplicate. Say it happened.
+        console.warn(
+          '[check-run] create returned no id for key=%s on %s/%s@%s — a run may '
+          + 'exist that later writes cannot address by id',
+          key, owner, repo, headSha,
+        );
+        return undefined;
+      }
       console.log(
-        '[check-run] create id=%s key=%s %s/%s@%s status=%s',
-        id ?? 'unknown', key, owner, repo, headSha, params.status,
+        '[check-run] create id=%d key=%s %s/%s@%s status=%s',
+        id, key, owner, repo, headSha, params.status,
       );
       return id;
     }
