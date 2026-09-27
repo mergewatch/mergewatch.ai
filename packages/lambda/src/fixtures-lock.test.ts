@@ -333,3 +333,36 @@ describe('#582 — the gates pace the apply loop, and both do it the same way', 
     expect(sleeps(load('deploy.yml'))).toEqual(sleeps(load('release-gate.yml')));
   });
 });
+
+/**
+ * #660 — both gates check expect.json structure BEFORE the suite spends.
+ *
+ * Fixtures CI is path-filtered to `scripts/**`, so a fixture-only change (an
+ * unlabelled `_determinism`, a bad overlay) never runs `expectations.test.mjs`
+ * there. The gate is the first place it can fail, and it must fail before
+ * `reset-env.sh` and the suite open PRs, not after a 40-minute run.
+ */
+describe('#660 — the gates run the fixture expectation rules before the suite', () => {
+  const load = (f: string) =>
+    yaml.load(readFileSync(resolve(__dirname, `../../../.github/workflows/${f}`), 'utf8')) as any;
+
+  for (const f of ['deploy.yml', 'release-gate.yml']) {
+    it(`${f} checks expectations after selection and before the reset`, () => {
+      const job: any = Object.values(load(f).jobs).find((j: any) =>
+        (j.steps ?? []).some((st: any) => st?.name === 'Reset the fixtures environment'));
+      expect(job, `${f}: no job resets the fixtures environment`).toBeTruthy();
+      const names: string[] = job.steps.map((st: any) => st?.name);
+      const at = (n: string) => names.indexOf(n);
+
+      const check = job.steps[at('Check fixture expectations')];
+      expect(check, `${f}: no "Check fixture expectations" step`).toBeTruthy();
+      expect(check.run).toBe('node --test scripts/expectations.test.mjs');
+      expect(check['working-directory']).toBe('fixtures-repo');
+      expect(check.if).toBe("steps.select.outputs.count != '0'");
+
+      expect(at('Setup Node.js')).toBeLessThan(at('Check fixture expectations'));
+      expect(at('Resolve the selection')).toBeLessThan(at('Check fixture expectations'));
+      expect(at('Check fixture expectations')).toBeLessThan(at('Reset the fixtures environment'));
+    });
+  }
+});

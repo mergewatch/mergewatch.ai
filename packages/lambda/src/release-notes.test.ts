@@ -1,10 +1,30 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import yaml from 'js-yaml';
+import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
+
+/**
+ * #660 — git here must not read the developer's or runner's config: a global
+ * hook, signing requirement or `init.defaultBranch` would change what these
+ * tests observe. The generator shells out to git too, so it gets the same env.
+ */
+const GIT_ENV: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
+/**
+ * Run and return stdout, or throw with the child's stderr in the message:
+ * the assertions below match on what the script printed, and a bare "exit 1"
+ * would make a timeout kill indistinguishable from the refusal under test.
+ */
+function mustRun(cmd: string, args: string[], cwd: string): string {
+  const r = runBounded(cmd, args, { cwd, env: GIT_ENV });
+  if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} exited ${r.status}: ${r.stderr}`);
+  return r.stdout;
+}
 
 /**
  * #550 — release notes said how the release was TESTED, never what CHANGED.
@@ -34,8 +54,7 @@ const notesStep = JSON.stringify(
  */
 function repoWithHistory(): string {
   const dir = mkdtempSync(join(tmpdir(), 'changelog-'));
-  const git = (...args: string[]) =>
-    execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+  const git = (...args: string[]) => mustRun('git', args, dir);
   git('init', '--quiet', '-b', 'main');
   git('config', 'user.email', 'test@test');
   git('config', 'user.name', 'test');
@@ -54,8 +73,7 @@ function repoWithHistory(): string {
 
 const REPO = repoWithHistory();
 
-const gen = (args: string[], cwd = REPO) =>
-  execFileSync(resolve(ROOT, 'scripts/changelog-section.sh'), args, { cwd, encoding: 'utf8' });
+const gen = (args: string[], cwd = REPO) => mustRun(resolve(ROOT, 'scripts/changelog-section.sh'), args, cwd);
 
 describe('#550 — one generator feeds both', () => {
   it('release.sh calls the shared script rather than inlining git log', () => {
@@ -117,7 +135,7 @@ describe('#550 review — the generator is called safely', () => {
 
   it('rejects a --since that is not a plain ref', () => {
     for (const bad of ['--output=/tmp/pwn', 'a b', 'x;y']) {
-      expect(() => gen(['0.6.2', '--since', bad])).toThrow();
+      expect(() => gen(['0.6.2', '--since', bad])).toThrow(/--since must/);
     }
   });
 

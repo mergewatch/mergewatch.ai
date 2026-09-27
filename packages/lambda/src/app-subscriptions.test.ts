@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { resolve, join, delimiter } from 'node:path';
+import { tmpdir } from 'node:os';
 import yaml from 'js-yaml';
+import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
 
 /**
  * #601 — guards on the subscription-drift check itself.
@@ -20,6 +23,22 @@ import yaml from 'js-yaml';
 const REPO = resolve(__dirname, '../../..');
 const SCRIPT = join(REPO, 'scripts/check-app-subscriptions.mjs');
 const src = readFileSync(SCRIPT, 'utf8');
+
+/**
+ * #660 — the script shells out to `aws ssm get-parameter`. On a runner with
+ * credentials, or a slow metadata endpoint, that was a real network call, and
+ * it is what made the "cannot check" test flake at 5055ms. A stub `aws` first
+ * on PATH makes the failure path deterministic and fast, and its stderr proves
+ * the stub (not a real AWS error) is what the script reported.
+ */
+let stubDir: string;
+let env: NodeJS.ProcessEnv;
+beforeAll(() => {
+  stubDir = mkdtempSync(join(tmpdir(), 'stub-aws-'));
+  writeFileSync(join(stubDir, 'aws'), '#!/bin/sh\necho "stub aws: no network" >&2\nexit 255\n', { mode: 0o755 });
+  env = { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH ?? ''}` };
+});
+afterAll(() => rmSync(stubDir, { recursive: true, force: true }));
 
 describe('subscription drift — the check reads LIVE state, not the repo', () => {
   it('asks GitHub what the App is subscribed to', () => {
@@ -53,7 +72,7 @@ describe('subscription drift — the check reads LIVE state, not the repo', () =
 describe('subscription drift — review findings from #614', () => {
   it('refuses a stage name that could escape the SSM path', () => {
     // STAGE is interpolated into `/mergewatch/${STAGE}/github-app-id`.
-    const r = spawnSync('node', [SCRIPT, '--stage', '../../elsewhere'], { cwd: REPO, encoding: 'utf8' });
+    const r = runBounded('node', [SCRIPT, '--stage', '../../elsewhere'], { cwd: REPO, env });
     expect(r.status).toBe(2);
     expect(`${r.stdout}${r.stderr}`).toMatch(/invalid stage name/i);
   });
@@ -76,18 +95,13 @@ describe('subscription drift — review findings from #614', () => {
 });
 
 describe('subscription drift — outcomes stay distinguishable', () => {
-  // Explicit timeout: this spawns a real `node` subprocess, and vitest's 5s
-  // default leaves no headroom on a loaded CI runner. It flaked twice on
-  // 2026-09-25, blocking #641 and #654, each time with "Test timed out in
-  // 5000ms" rather than an assertion failure — a red build that says nothing
-  // about the code under test is worse than a slow one.
   it('exits 2 when it cannot check, and says that is not a pass', () => {
-    const r = spawnSync('node', [SCRIPT, '--stage', 'definitely-not-a-stage'], {
-      cwd: REPO, encoding: 'utf8',
-    });
+    const r = runBounded('node', [SCRIPT, '--stage', 'definitely-not-a-stage'], { cwd: REPO, env });
     expect(r.status).toBe(2);
     expect(`${r.stdout}${r.stderr}`).toMatch(/not a pass/i);
-  }, 30_000);
+    // The failure came from the stub, not from real AWS (#660).
+    expect(`${r.stdout}${r.stderr}`).toMatch(/stub aws/);
+  });
 
   it('treats only missing subscriptions as drift, not extra ones', () => {
     // A subscribed event we do not handle is answered 200 and ignored. Calling
