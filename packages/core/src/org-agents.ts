@@ -147,6 +147,7 @@ export function toCustomAgentDef(a: OrgCustomAgent): CustomAgentDef {
     severityDefault: a.severityDefault,
     enabled: true,
     enforcement: a.enforcement,
+    origin: 'org',
   };
 }
 

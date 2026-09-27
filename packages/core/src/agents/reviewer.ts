@@ -57,6 +57,9 @@ import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/age
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
 import { extractChangedLines, isLineNearChange } from '../diff-filter.js';
+import { buildMergeGate } from '../gate.js';
+import { BUILTIN_FINDING_CATEGORIES } from '../builtin-categories.js';
+import type { FindingSource, VerificationOutcome, MergeGate } from '../gate.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +104,19 @@ export interface AgentFinding {
    * verifier's reason is discarded inside `verifyFindings`.
    */
   evidence?: FindingEvidence;
+  /**
+   * #662 — which custom agent raised this finding. Absent on built-in
+   * findings. The gate, the #510 blocking set, the custom dedup key and the cap
+   * exemption all read this instead of matching `category` against agent
+   * names, which let a custom agent named `security` pass for the built-in one.
+   */
+  source?: FindingSource;
+  /**
+   * #662 — why a custom finding is `verification: 'unverified'`. Only
+   * `refuted` lets a blocking org agent's critical through; `inconclusive`
+   * fails closed (#382). Absent when the verifier did not run on it.
+   */
+  verificationOutcome?: VerificationOutcome;
 }
 
 export interface OrchestratedFinding extends AgentFinding {
@@ -295,6 +311,57 @@ export function buildPrompt(
 }
 
 /**
+ * #662 — the `source` a custom agent stamps on its findings. `origin` says
+ * whether the agent came from the org (dashboard) or the repo
+ * (`.mergewatch.yml`); records that predate it infer org from `enforcement`,
+ * which only org agents carry.
+ */
+export function sourceForAgent(agent: CustomAgentDef): FindingSource {
+  const origin = agent.origin ?? (agent.enforcement ? 'org' : 'repo');
+  return origin === 'org'
+    ? { kind: 'org', agent: agent.name, enforcement: agent.enforcement ?? 'advisory' }
+    : { kind: 'repo', agent: agent.name };
+}
+
+/**
+ * #662 — split prior findings into those the orchestrator may see and the
+ * custom-agent ones it must not.
+ *
+ * Custom findings bypass the orchestrator (#385), but their PRIORS did not:
+ * both runtimes pass the whole prior review as `previousFindings`, and the
+ * orchestrator is told to keep "the same title/category" (reviewer.ts ~1503).
+ * It re-emitted a prior custom finding as its own, on the built-in path, where
+ * the location dedup then dropped the fresh custom copy — so a blocking org
+ * critical came back as an unsourced built-in one.
+ *
+ * `removed` = a prior with `source`, or a legacy record whose category is an
+ * enabled custom agent that is not named like a built-in.
+ */
+export function orchestratorPriors<T extends { category: string; source?: unknown }>(
+  previous: ReadonlyArray<T> | undefined,
+  customAgents: ReadonlyArray<CustomAgentDef>,
+): { kept: T[]; removed: T[] } {
+  const customNames = new Set(
+    customAgents.filter((a) => a.enabled && !BUILTIN_FINDING_CATEGORIES.has(a.name)).map((a) => a.name),
+  );
+  const kept: T[] = [];
+  const removed: T[] = [];
+  for (const p of previous ?? []) {
+    if (p.source != null || customNames.has(p.category)) removed.push(p);
+    else kept.push(p);
+  }
+  return { kept, removed };
+}
+
+/** #662 — is this orchestrator finding a re-emission of a removed custom prior? */
+export function isCustomReEmission(
+  f: { title: string; file: string; line: number },
+  removed: ReadonlyArray<{ title: string; file: string; line: number }>,
+): boolean {
+  return removed.some((p) => p.title === f.title && p.file === f.file && p.line === f.line);
+}
+
+/**
  * #569 — enforce `maxFindings` in code.
  *
  * It was only ever substituted into the orchestrator prompt as
@@ -313,11 +380,15 @@ export function buildPrompt(
  * blocking agent's finding failing the check is the entire point. Dropping
  * one to satisfy a noise cap would silently discard the thing #385 exists to
  * protect. The cap governs what the MODEL produced.
+ *
+ * #662 — exempt by `source`, not by category name. Matching names let a custom
+ * agent named like a built-in category (`bug`) exempt every built-in `bug`
+ * finding from the cap, and let a model-emitted finding that merely reused a
+ * custom agent's name escape it.
  */
-export function capFindings<T extends { category?: string; title: string; file: string; line: number }>(
+export function capFindings<T extends { source?: unknown; title: string; file: string; line: number }>(
   findings: T[],
   maxFindings: number,
-  customAgentNames: ReadonlySet<string>,
 ): { kept: T[]; dropped: T[] } {
   if (!Number.isFinite(maxFindings) || maxFindings <= 0) return { kept: findings, dropped: [] };
 
@@ -325,7 +396,7 @@ export function capFindings<T extends { category?: string; title: string; file: 
   const dropped: T[] = [];
   let modelBudget = maxFindings;
   for (const f of findings) {
-    if (f.category && customAgentNames.has(f.category)) {
+    if (f.source != null) {
       kept.push(f);
       continue;
     }
@@ -1434,6 +1505,8 @@ export type PreviousFinding = {
    * the FB-A / FB-B analytics writers can use it without unsafe coercion.
    */
   fingerprint?: string;
+  /** #662 — set on custom-agent findings; how `orchestratorPriors` recognises them. */
+  source?: FindingSource;
   /**
    * Optional — exposed for the FP-H L2 verifier path (compute significant
    * tokens for pattern-match detection). The runtime data already carries
@@ -1748,6 +1821,12 @@ export interface ReviewPipelineOptions {
 export interface ReviewPipelineResult {
   summary: string;
   findings: OrchestratedFinding[];
+  /**
+   * #662 — the merge gate, computed once from `findings` (after triage and the
+   * cap). Both runtimes read the check conclusion, title, summary and review
+   * event from it; neither recomputes it.
+   */
+  gate: MergeGate;
   /** Map of file → set of new-side line numbers that were actually changed */
   changedLines: Map<string, Set<number>>;
   diagram: string;
@@ -2340,6 +2419,17 @@ export async function verifyFindings(
    * both were previously visible only in CloudWatch.
    */
   trace?: TraceRecorder,
+  /**
+   * #662 — for #510's blocking-org call only.
+   *   - `blockingOrg`: skip the FP-I L2 short-circuit (D3). For a critical it is
+   *     the only way to be "not returned", and it would let a byte-match on the
+   *     suggestion overrule an org's policy without a verdict.
+   *   - and record WHY each finding is unverified (`verificationOutcome`), so
+   *     the gate can let a refutation through while an inconclusive result
+   *     fails closed. Built-in callers get neither, so their records are
+   *     unchanged.
+   */
+  opts?: { blockingOrg?: boolean },
 ): Promise<OrchestratedFinding[]> {
   // Each task returns the disposition for one finding:
   //   - { keep: true }                            — pass-through (info-only).
@@ -2377,7 +2467,12 @@ export async function verifyFindings(
 
   // #469 — `reason` rides along so the verifier's one-sentence justification
   // reaches the developer instead of only CloudWatch.
-  type Verdict = { keep: boolean; verification?: 'verified' | 'unverified'; reason?: string };
+  type Verdict = {
+    keep: boolean;
+    verification?: 'verified' | 'unverified';
+    outcome?: VerificationOutcome;
+    reason?: string;
+  };
   const verdicts = await withConcurrency<Verdict>(
     findings.map((f) => async () => {
       // FP-E: verify both criticals and warnings; skip only info-level.
@@ -2398,7 +2493,7 @@ export async function verifyFindings(
       // is byte-equivalent to code already present at the cited location,
       // drop without an LLM call. Catches the unambiguous case
       // (`:262`-on-#169-style "suggestion equals existing line") cheaply.
-      if (suggestionMatchesExistingCode(f.suggestion, content, f.line)) {
+      if (!opts?.blockingOrg && suggestionMatchesExistingCode(f.suggestion, content, f.line)) {
         console.warn(
           '[finding-verify] dropped %s "%s" (%s:%d) — FP-I L2: suggestion already implemented at cited location',
           f.severity, f.title, f.file, f.line,
@@ -2488,7 +2583,7 @@ export async function verifyFindings(
               reason: normalizeEvidenceReason(parsed.reason)
                 ?? 'dismissal rested on an in-code intent claim, which is unverified input',
             });
-            return { keep: true, verification: 'unverified', reason: parsed.reason };
+            return { keep: true, verification: 'unverified', outcome: 'inconclusive', reason: parsed.reason };
           }
           // #385 — a refuted CRITICAL demotes to advisory, never deletes.
           // The verifier runs on the light model and can refute a true
@@ -2510,7 +2605,7 @@ export async function verifyFindings(
             trace?.record(f, 'demoted', 'finding-verify', {
               reason: normalizeEvidenceReason(parsed.reason),
             });
-            return { keep: true, verification: 'unverified', reason: parsed.reason };
+            return { keep: true, verification: 'unverified', outcome: 'refuted', reason: parsed.reason };
           }
           console.warn(
             '[finding-verify] dropped false-positive %s "%s" (%s:%d): %s',
@@ -2536,7 +2631,7 @@ export async function verifyFindings(
           f.file,
           f.line,
         );
-        return { keep: true, verification: 'unverified' };
+        return { keep: true, verification: 'unverified', outcome: 'inconclusive' };
       } catch (err) {
         // #386 — throttles PARK the review (#355 semantics), they never
         // degrade the verdict: tagging 'unverified' here under rate-limit
@@ -2553,7 +2648,7 @@ export async function verifyFindings(
           f.line,
           err,
         );
-        return { keep: true, verification: 'unverified' };
+        return { keep: true, verification: 'unverified', outcome: 'inconclusive' };
       }
     }),
     AGENT_CONCURRENCY,
@@ -2576,6 +2671,8 @@ export async function verifyFindings(
     result.push({
       ...f,
       verification: v.verification,
+      // #662 — only on the blocking-org call, and never as `undefined` (#471).
+      ...(opts?.blockingOrg && v.outcome ? { verificationOutcome: v.outcome } : {}),
       ...(evidence ? { evidence } : {}),
     });
   }
@@ -3224,21 +3321,27 @@ export async function runReviewPipeline(
     : [];
 
   // Tag custom agent findings
-  const customTagged: TaggedFindings[] = enabledCustomAgents.map((agentDef, i) => ({
-    category: agentDef.name,
-    findings: customResults[i] || [],
-  }));
+  // #662 — every custom finding carries its provenance from here on.
+  const customTagged: TaggedFindings[] = enabledCustomAgents.map((agentDef, i) => {
+    const source = sourceForAgent(agentDef);
+    return {
+      category: agentDef.name,
+      findings: (customResults[i] || []).map((f) => ({ ...f, source })),
+    };
+  });
 
-  // Orchestrate: deduplicate + rank all findings
-  const taggedFindings: TaggedFindings[] = [
+  // The six built-in agents, by position, never by category. #662: partitioning
+  // by name let a custom agent called `security` remove the built-in security
+  // findings from the orchestrator's input.
+  const builtinTagged: TaggedFindings[] = [
     { category: 'security', findings: securityFindings },
     { category: 'bug', findings: bugFindings },
     { category: 'style', findings: styleFindings },
     { category: 'error-handling', findings: errorHandlingFindings },
     { category: 'test-coverage', findings: testCoverageFindings },
     { category: 'comment-accuracy', findings: commentAccuracyFindings },
-    ...customTagged,
   ];
+  const taggedFindings: TaggedFindings[] = [...builtinTagged, ...customTagged];
 
   // #385 — custom/org-agent findings are user-legislated policy, so they are
   // routed AROUND every model-taste layer: the orchestrator (whose
@@ -3262,8 +3365,6 @@ export async function runReviewPipeline(
     }
   }
 
-  const customCategorySet = new Set(enabledCustomAgents.map((a) => a.name));
-  const builtinTagged = taggedFindings.filter((t) => !customCategorySet.has(t.category));
 
   // FP-C — pre-orchestrator same-`(file, line)` cross-agent dedup. Merges
   // exact-line doubles BEFORE the orchestrator's LLM call sees them so the
@@ -3317,12 +3418,16 @@ export async function runReviewPipeline(
   }
   const dedupedTaggedFindings = fpCResult.taggedFindings as TaggedFindings[];
 
+  // #662 — custom priors never reach the orchestrator. Delta, scoring and
+  // built-in verification still use every prior.
+  const { kept: orchestratorPriorFindings, removed: customPriors } =
+    orchestratorPriors(previousFindings, enabledCustomAgents);
   const orchestratorResult = await runOrchestratorAgent(
     dedupedTaggedFindings,
     lightModelId,
     maxFindings,
     llm,
-    previousFindings,
+    orchestratorPriorFindings,
     conventions,
     agentAuthored,
   );
@@ -3423,6 +3528,21 @@ export async function runReviewPipeline(
         : "not in the orchestrator's returned set (it does not emit per-finding reasons — #473)";
     },
   );
+
+  // #662 — a custom prior the orchestrator re-emitted as its own. It has no
+  // source, so it would take the built-in path, and the location dedup below
+  // would then drop the fresh (sourced) custom finding at the same line.
+  if (customPriors.length > 0) {
+    const reEmitted = orchestratorResult.findings.filter((f) => isCustomReEmission(f, customPriors));
+    if (reEmitted.length > 0) {
+      for (const f of reEmitted) {
+        trace.record(f, 'dropped', 'custom-prior-reemission', {
+          reason: 'the orchestrator re-emitted a prior custom-agent finding; the custom agent reports its own',
+        });
+      }
+      orchestratorResult.findings = orchestratorResult.findings.filter((f) => !isCustomReEmission(f, customPriors));
+    }
+  }
 
   // #385 — W10 runs BEFORE the deleting filters below.
   //
@@ -3703,10 +3823,14 @@ export async function runReviewPipeline(
   // (fp-c precedent — the skip rolls into `suppressedCount`). Everything the
   // model layers could have done to them is bypassed by design.
   const seenCustomKeys = new Set<string>();
+  const isOrgBlocking = (f: AgentFinding) => f.source?.kind === 'org' && f.source.enforcement === 'blocking';
   const customFindings = customTagged
     .flatMap((t) => (t.findings ?? []).map((f) => ({ ...f, category: t.category } as OrchestratedFinding)))
     .filter((f) => {
-      const key = `${f.category}|${f.file}|${f.line}`;
+      // #662 — keyed on provenance, so a repo and an org agent sharing a name
+      // (or an advisory and a blocking one) do not collapse into one finding.
+      const s = f.source;
+      const key = `${s?.kind ?? ''}|${s?.agent ?? f.category}|${s?.kind === 'org' ? s.enforcement : ''}|${f.file}|${f.line}`;
       if (seenCustomKeys.has(key)) {
         trace.record(f, 'dropped', 'custom-agent-dedup', {
           reason: 'the same custom agent already reported this file and line',
@@ -3714,6 +3838,10 @@ export async function runReviewPipeline(
         return false;
       }
       seenCustomKeys.add(key);
+      // #662 D1 — never for a blocking org finding. A built-in finding of ANY
+      // severity at the same line (an info nit) used to drop the blocking
+      // critical before the gate saw it: fail open.
+      if (isOrgBlocking(f)) return true;
       const alreadySurfaced = onChangedLines.some((k) => k.file === f.file && k.line === f.line);
       if (alreadySurfaced) {
         trace.record(f, 'dropped', 'custom-agent-dedup', {
@@ -3752,17 +3880,15 @@ export async function runReviewPipeline(
   //   • Nothing else comes back. FP-A, the orchestrator's anti-pedantry pass
   //     and the line-proximity geometry stay bypassed for every custom
   //     finding, blocking or not.
-  const blockingAgentNames = new Set(
-    enabledCustomAgents.filter((a) => a.enforcement === 'blocking').map((a) => a.name),
-  );
   let verifiedCustomFindings = customFindings;
-  if (blockingAgentNames.size > 0) {
-    const blocking = customFindings.filter((f) => blockingAgentNames.has(f.category));
-    const rest = customFindings.filter((f) => !blockingAgentNames.has(f.category));
+  {
+    // #662 — the blocking set is read from `source`, not by matching category.
+    const blocking = customFindings.filter(isOrgBlocking);
+    const rest = customFindings.filter((f) => !isOrgBlocking(f));
     if (blocking.length > 0) {
       console.log(
-        '[org-agents] verifying %d finding%s from blocking agent%s (#510)',
-        blocking.length, blocking.length === 1 ? '' : 's', blockingAgentNames.size === 1 ? '' : 's',
+        '[org-agents] verifying %d finding%s from blocking agents (#510)',
+        blocking.length, blocking.length === 1 ? '' : 's',
       );
       // The shared grounding fetch above is keyed off the ORCHESTRATOR's
       // findings, and custom findings bypass the orchestrator (#385). So none
@@ -3777,13 +3903,17 @@ export async function runReviewPipeline(
         ...groundingFileContents,
         ...(await fetchFindingFileContents(blocking, groundingContext)),
       };
+      // #662 D2 — no prior context. FP-J Layer 2 makes MergeWatch's own
+      // earlier suggestion binding, which would let a past model suggestion
+      // refute an org's blocking policy. D3 — no FP-I L2 short-circuit either.
       const verified = await verifyFindings(
         blocking,
         blockingFileContents,
         lightModelId,
         llm,
-        previousFindings,
+        undefined,
         trace,
+        { blockingOrg: true },
       );
       // verifyFindings demotes rather than deletes (#459), but a custom
       // finding must never be lost even if that changes: re-attach anything
@@ -3791,7 +3921,15 @@ export async function runReviewPipeline(
       const returnedKeys = new Set(verified.map((f) => outcomeKey(f)));
       const missing = blocking
         .filter((f) => !returnedKeys.has(outcomeKey(f)))
-        .map((f) => ({ ...f, verification: 'unverified' as const }));
+        // #662 — after D3, the only way a blocking finding is not returned is
+        // an explicit valid:false drop of a warning: a refutation. A refuted
+        // critical is demoted, never dropped, so a missing critical means
+        // something else lost it — that fails closed (#382), not open.
+        .map((f) => ({
+          ...f,
+          verification: 'unverified' as const,
+          verificationOutcome: f.severity === 'critical' ? 'inconclusive' as const : 'refuted' as const,
+        }));
       for (const f of missing) {
         trace.record(f, 'demoted', 'finding-verify', {
           reason: 'the verifier did not return this blocking custom finding — kept as unverified rather than lost',
@@ -3835,11 +3973,7 @@ export async function runReviewPipeline(
 
   // #569 — the cap, enforced. Last filter before finalize so it governs what
   // is actually posted.
-  const { kept: cappedFindings, dropped: overCap } = capFindings(
-    filteredFindings,
-    maxFindings,
-    new Set(enabledCustomAgents.map((a) => a.name)),
-  );
+  const { kept: cappedFindings, dropped: overCap } = capFindings(filteredFindings, maxFindings);
   for (const f of overCap) {
     trace.record(f, 'dropped', 'max-findings', {
       reason: `over the repo's maxFindings cap of ${maxFindings}`,
@@ -3875,6 +4009,9 @@ export async function runReviewPipeline(
   const orchestratorWarningsCount = orchestratorResult.findings.filter(
     (f) => f.severity === 'warning',
   ).length;
+
+  // #662 — the merge gate, once, from what will be posted. #640 reuses it.
+  const gate = buildMergeGate(cappedFindings, triageSuppressed);
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
   const { mergeScore, mergeScoreReason, disputeDisclosure } = reconcileMergeScore({
@@ -3921,6 +4058,7 @@ export async function runReviewPipeline(
   return {
     summary,
     findings: cappedFindings,
+    gate,
     changedLines,
     diagram: diagramResult.diagram,
     diagramCaption: diagramResult.caption,

@@ -19,11 +19,17 @@ export interface CustomAgentDef {
    * agent fails the check and requests changes regardless of merge score
    * (#235), which is why those findings are W2-verified before they can act.
    *
-   * Absent for repo-level `.mergewatch.yml` agents, which cannot block —
-   * so absent reads as advisory, and the pipeline's behaviour for them is
-   * unchanged.
+   * Absent for repo-level `.mergewatch.yml` agents. Those are not verified and
+   * their criticals DO fail the check like a built-in critical (#662 corrected
+   * this comment, which used to say they cannot block).
    */
   enforcement?: 'advisory' | 'blocking';
+  /**
+   * #662 — where the agent was defined: `org` (dashboard) or `repo`
+   * (`.mergewatch.yml`). Absent on older records: inferred as `org` when
+   * `enforcement` is set, else `repo`.
+   */
+  origin?: 'org' | 'repo';
 }
 
 export interface UXConfig {
@@ -212,6 +218,11 @@ export interface MergeWatchConfig {
   maxFileDiffKB: number;
   /** User-defined custom review agents */
   customAgents: CustomAgentDef[];
+  /**
+   * #662 — repo custom agents dropped because their name is reserved for a
+   * built-in agent. Omitted when empty; surfaced in the check summary.
+   */
+  rejectedCustomAgents?: string[];
   /** UX configuration for reviewer experience */
   ux: UXConfig;
   /** Rules controlling when and what gets reviewed */

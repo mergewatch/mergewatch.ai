@@ -513,6 +513,41 @@ customAgents:
     expect(result!.customAgents![0].severityDefault).toBe('warning');
   });
 
+  it('#662 — drops a repo custom agent with a reserved built-in name, and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const yaml = `
+customAgents:
+  - name: security
+    prompt: "Flag hardcoded tokens"
+    severityDefault: critical
+    enabled: true
+  - name: no-todo
+    prompt: "Flag any new TODO comment"
+    severityDefault: critical
+    enabled: true
+`;
+    try {
+      const result = parseRepoConfigYaml(yaml);
+      expect(result!.customAgents!.map((a) => a.name)).toEqual(['no-todo']);
+      expect(result!.customAgents![0].origin).toBe('repo');
+      expect(result!.rejectedCustomAgents).toEqual(['security']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('reserved built-in names'), 1, 'security');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('#662 — no reserved names → no rejectedCustomAgents key', () => {
+    const result = parseRepoConfigYaml(`
+customAgents:
+  - name: perf
+    prompt: "Check for performance issues"
+    severityDefault: warning
+    enabled: true
+`);
+    expect('rejectedCustomAgents' in result!).toBe(false);
+  });
+
   // ─── Agent review parsing ────────────────────────────────────────────────
   it('parses a full agentReview block', () => {
     const yaml = `

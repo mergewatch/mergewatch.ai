@@ -27,9 +27,12 @@ import {
   withdrawnThreadKey,
   isStillPRHead,
   runReviewPipeline,
+  buildCheckOutcome,
+  reviewEventForGate,
+  formatGateLog,
+  REVIEW_FAILED_CHECK_TITLE,
+  isReservedAgentName,
   formatReviewComment,
-  countBlockingCriticals,
-  buildCheckTitle,
   isThrottleError,
   computeDiffStats,
   mergeConfig,
@@ -43,7 +46,6 @@ import {
   BOT_COMMENT_MARKER,
   submitPRReview,
   dismissStaleReviews,
-  mergeScoreToReviewEvent,
   buildInlineComments,
   extractInlineCommentTitle,
   fetchRepoConfig,
@@ -63,7 +65,6 @@ import {
   recordSummaryHelpfulVotes,
   selectOrgAgentsForReview,
   unionCustomAgents,
-  blockingCriticalAgents,
   languagesFromFiles,
   findingMatchKeys,
   resolveReviewModelId,
@@ -863,6 +864,12 @@ export async function handler(
     if (selectedOrgAgents.length > 0) {
       console.log('[org-agents] %d org custom agent(s) apply to %s', selectedOrgAgents.length, repoFullName);
     }
+    // #662 — a stored org agent with a built-in name still runs (provenance
+    // keeps it apart from the built-in agent), but it can no longer be created.
+    const reservedOrgNames = selectedOrgAgents.map((a) => a.name).filter(isReservedAgentName);
+    if (reservedOrgNames.length > 0) {
+      console.warn('[org-agents] org agent(s) with reserved built-in names on %s: %s', repoFullName, reservedOrgNames.join(', '));
+    }
     // Author triage of a blocking org agent's finding is allowed but recorded
     // (every triage already lands in the disposition store); emit an explicit
     // blocking-tagged signal for admins.
@@ -872,7 +879,11 @@ export async function handler(
     if (disputedKeys.length > 0 && blockingAgentNames.size > 0 && prevComplete?.findings) {
       const disputedSet = new Set(disputedKeys);
       const triagedBlocking = prevComplete.findings.filter(
-        (f) => blockingAgentNames.has(f.category) && findingMatchKeys(f).some((k) => disputedSet.has(k)),
+        (f) => (f.source
+          ? f.source.kind === 'org' && f.source.enforcement === 'blocking'
+          // #662 — legacy records predate `source`; only this log falls back.
+          : blockingAgentNames.has(f.category))
+          && findingMatchKeys(f).some((k) => disputedSet.has(k)),
       );
       if (triagedBlocking.length > 0) {
         console.warn(
@@ -997,12 +1008,13 @@ export async function handler(
       conventionsTruncated: conventionsResult?.truncated,
     });
 
-    // #235 — a critical finding from a *blocking* org agent gates the merge
-    // regardless of the overall score (REQUEST_CHANGES + failing check run).
-    const orgBlockedBy = blockingCriticalAgents(selectedOrgAgents, result.findings);
-    const orgBlocked = orgBlockedBy.length > 0;
-    if (orgBlocked) {
-      console.log('[org-agents] blocking gate fired for %s#%d via: %s', repoFullName, prNumber, orgBlockedBy.join(', '));
+    // #662 — the gate is computed once, in the pipeline. Nothing here
+    // recomputes it; the check, its title and summary, and the review event
+    // are all derived from `result.gate`.
+    const gate = result.gate;
+    console.log('%s %s#%d', formatGateLog(gate), repoFullName, prNumber);
+    if (gate.orgBlockedBy.length > 0) {
+      console.log('[org-agents] blocking gate fired for %s#%d via: %s', repoFullName, prNumber, gate.orgBlockedBy.join(', '));
     }
 
     // #527 — is this verdict still about the current code?
@@ -1025,7 +1037,7 @@ export async function handler(
     }
 
     // ── Step A: Upsert issue comment (full review — primary artifact) ──────
-    const reviewEvent = orgBlocked ? 'REQUEST_CHANGES' : mergeScoreToReviewEvent(result.mergeScore);
+    const reviewEvent = reviewEventForGate(gate, result.mergeScore);
     let commentId: number | undefined;
 
     // Look up existing comment: job payload → DynamoDB → API scan
@@ -1079,7 +1091,6 @@ export async function handler(
 
     // Severity counts — used both for the check-run rendering below and
     // (previously) for the PR-review verdict body.
-    const criticalCount = result.findings.filter((f) => f.severity === 'critical').length;
     const warningCount = result.findings.filter((f) => f.severity === 'warning').length;
     const infoCount = result.findings.filter((f) => f.severity === 'info').length;
 
@@ -1261,45 +1272,23 @@ export async function handler(
       }
     }
 
-    // #235 — a blocking org agent fails the check too.
-    // #240 — only VERIFIED criticals fail the check. Unverified ones are
-    // advisory everywhere else (W7 clamps the score, FP-L renders them under
-    // "Unverified concerns"); the check must agree instead of going red on a
-    // critical the review event refuses to block on.
-    // #543 — advisory org agents must not fail the check. Their findings are
-    // now reliably at the configured severity (the floor), so without this an
-    // advisory `critical` agent would fail every check while deliberately NOT
-    // setting the "Blocked by org agent" title — advisory in name only.
-    const advisoryOrgAgentNames = selectedOrgAgents
-      .filter((a) => a.enforcement !== 'blocking')
-      .map((a) => a.name);
-    const blockingCriticalCount = countBlockingCriticals(result.findings, advisoryOrgAgentNames);
-    const unverifiedCriticalCount = criticalCount - blockingCriticalCount;
-    const hasCritical = blockingCriticalCount > 0;
-    const checkConclusion = (hasCritical || orgBlocked) ? 'failure' as const : 'success' as const;
-    const findingSummaryParts: string[] = [];
-    if (blockingCriticalCount) findingSummaryParts.push(`${blockingCriticalCount} critical`);
-    if (unverifiedCriticalCount) findingSummaryParts.push(`${unverifiedCriticalCount} unverified`);
-    if (warningCount) findingSummaryParts.push(`${warningCount} warning`);
-    if (infoCount) findingSummaryParts.push(`${infoCount} info`);
-    if (orgBlocked) findingSummaryParts.push(`blocked by org agent: ${orgBlockedBy.join(', ')}`);
-
+    // #662 — conclusion, title and summary all come from the pipeline's gate
+    // (#235 org blocking, #240 unverified criticals, #543 advisory agents).
+    const outcome = buildCheckOutcome(gate, {
+      mergeScore: result.mergeScore,
+      findingCount: result.findings.length,
+      warningCount,
+      infoCount,
+      suppressedCount: result.suppressedCount,
+      rejectedCustomAgents: runtimeConfig.rejectedCustomAgents,
+    });
     await writeCheckRun({
       status: 'completed',
-      conclusion: checkConclusion,
+      conclusion: outcome.conclusion,
       // #380 — the title leads with the merge score so a 3/5-with-warnings
       // verdict is visible in the checks tab despite the green conclusion.
-      title: buildCheckTitle({
-        mergeScore: result.mergeScore,
-        findingCount: result.findings.length,
-        blockingCriticalCount,
-        orgBlocked,
-        orgBlockedBy,
-        suppressedCount: result.suppressedCount,
-      }),
-      summary: findingSummaryParts.length > 0
-        ? `Found: ${findingSummaryParts.join(', ')}`
-        : 'No issues detected in this PR.',
+      title: outcome.title,
+      summary: outcome.summary,
       detailsUrl: reviewDetailUrl,
     });
 
@@ -1351,7 +1340,7 @@ export async function handler(
     await writeCheckRun({
       status: 'completed',
       conclusion: 'failure',
-      title: 'Review failed',
+      title: REVIEW_FAILED_CHECK_TITLE,
       summary: `MergeWatch encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
     });
 

@@ -98,3 +98,27 @@ describe('the review agent has a single check-run write path (#639)', () => {
     expect(src).toMatch(/postBlockedCheckRun\([^)]*blockVariant, \{\s*\n\s*stage: STAGE, write: writeCheckRun,/);
   });
 });
+
+/**
+ * #662 — the Lambda handler reads the gate from the pipeline. It has no
+ * handler-level harness, so the guard is a source scan: none of the inline
+ * gate computations may come back, and the core derivations must be used.
+ */
+describe('review-agent.ts derives the gate outputs from core (#662)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+
+  it('no inline gate', () => {
+    for (const banned of ['countBlockingCriticals(', 'blockingCriticalAgents(', 'advisoryOrgAgentNames',
+      'mergeScoreToReviewEvent(', "title: 'Review failed'"]) {
+      expect(src, `review-agent.ts still contains ${banned}`).not.toContain(banned);
+    }
+  });
+
+  it('uses the core gate derivations', () => {
+    for (const required of ['buildCheckOutcome(', 'reviewEventForGate(', 'formatGateLog(']) {
+      expect(src, `review-agent.ts lacks ${required}`).toContain(required);
+    }
+    // #659 will move the catch to reviewFailedCheckOutput(error); either names the title.
+    expect(src).toMatch(/REVIEW_FAILED_CHECK_TITLE|reviewFailedCheckOutput\(/);
+  });
+});

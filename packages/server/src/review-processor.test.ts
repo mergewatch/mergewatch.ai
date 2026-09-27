@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider } from '@mergewatch/core';
+import type {
+  ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider,
+  ReviewPipelineResult, MergeGate, OrchestratedFinding,
+} from '@mergewatch/core';
 import { DEFAULT_INSTALLATION_SETTINGS } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
@@ -57,7 +60,6 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     findExistingBotComment: vi.fn().mockResolvedValue(null),
     postReviewComment: vi.fn().mockResolvedValue(100),
     updateReviewComment: vi.fn().mockResolvedValue(undefined),
-    mergeScoreToReviewEvent: vi.fn().mockReturnValue('APPROVE'),
     buildInlineComments: vi.fn().mockReturnValue([]),
     dismissStaleReviews: vi.fn().mockResolvedValue(undefined),
     submitPRReview: vi.fn().mockResolvedValue(undefined),
@@ -84,7 +86,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
 import {
   getPRContext, getPRDiff, createCheckRun, shouldSkipPR, shouldSkipByRules,
   runReviewPipeline, postReplyComment, fetchRepoConfig, handleInlineReply,
-  addPRReaction, removePRReaction, submitPRReview, mergeScoreToReviewEvent,
+  addPRReaction, removePRReaction, submitPRReview,
   fetchTriageComments, computeDisputedKeys,
   postReviewComment, updateReviewComment, findExistingBotComment, isStillPRHead,
 } from '@mergewatch/core';
@@ -144,23 +146,50 @@ const basePRContext = {
   totalDeletions: 5,
 };
 
+/** #662 — a gate the pipeline would return; tests override only what they assert on. */
+const gateOf = (over: Partial<MergeGate> = {}): MergeGate => ({
+  fails: false,
+  blockingCriticalCount: 0,
+  advisoryCriticalCount: 0,
+  unverifiedCriticalCount: 0,
+  orgBlockedBy: [],
+  refutedOrgBlockingCount: 0,
+  authorWaivedBlocking: [],
+  ...over,
+});
+
 const basePipelineResult = {
   summary: 'All good',
   findings: [],
+  gate: gateOf(),
   // FB-A / FB-B downstream readers expect this map (changedLines drives the
   // quiet-drop detection). Empty map = "no files changed" — sufficient for
   // these unit-level tests that never assert on the analytics writers.
   changedLines: new Map<string, Set<number>>(),
   mergeScore: 5,
   mergeScoreReason: 'No issues',
-  diagram: undefined,
-  diagramCaption: undefined,
+  diagram: '',
+  diagramCaption: '',
   enabledAgentCount: 6,
   suppressedCount: 0,
+  filterOutcomes: [],
+  parseFailureCount: 0,
+  degenerateResponseCount: 0,
   inputTokens: 1000,
   outputTokens: 200,
   estimatedCostUsd: 0.01,
-};
+  conventionsUsed: false,
+  deltaCaption: null,
+} satisfies ReviewPipelineResult;
+
+/** A full pipeline result: the base plus what a test sets. Typed, so a missing field fails typecheck. */
+const pipelineResult = (over: Partial<ReviewPipelineResult>): ReviewPipelineResult => ({ ...basePipelineResult, ...over });
+
+/** A complete finding; tests set only what they care about. */
+const finding = (over: Partial<OrchestratedFinding>): OrchestratedFinding => ({
+  file: 'a.ts', line: 1, severity: 'critical', category: 'security', title: 'x', description: '', suggestion: '',
+  ...over,
+});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -173,7 +202,7 @@ describe('processReviewJob — superseded by a newer push (#527)', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (isStillPRHead as any).mockResolvedValue(true);
   });
@@ -223,7 +252,7 @@ describe('processReviewJob — check runs', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     // vi.clearAllMocks() doesn't reset .mockResolvedValue implementations
     // set by previous tests, so explicitly restore the default.
     (fetchRepoConfig as any).mockResolvedValue(null);
@@ -307,7 +336,7 @@ describe('processReviewJob — check runs', () => {
 
   it('still runs review when autoReview is off but mentionTriggered is true (@mergewatch override)', async () => {
     (fetchRepoConfig as any).mockResolvedValueOnce({ rules: { autoReview: false } });
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     const deps = makeDeps();
     await processReviewJob(makeJob({ mentionTriggered: true }), deps);
 
@@ -317,7 +346,7 @@ describe('processReviewJob — check runs', () => {
   });
 
   it('creates failure check run on error', async () => {
-    (runReviewPipeline as any).mockRejectedValue(new Error('LLM timeout'));
+    vi.mocked(runReviewPipeline).mockRejectedValue(new Error('LLM timeout'));
     const deps = makeDeps();
 
     await expect(processReviewJob(makeJob(), deps)).rejects.toThrow('LLM timeout');
@@ -345,7 +374,7 @@ describe('processReviewJob — check runs', () => {
     });
 
     it('clears the eyes reaction even when the pipeline throws', async () => {
-      (runReviewPipeline as any).mockRejectedValue(new Error('LLM timeout'));
+      vi.mocked(runReviewPipeline).mockRejectedValue(new Error('LLM timeout'));
       const deps = makeDeps();
 
       await expect(processReviewJob(makeJob(), deps)).rejects.toThrow('LLM timeout');
@@ -380,15 +409,20 @@ describe('processReviewJob — check runs', () => {
   });
 
   describe('completion check run', () => {
-    it('shows critical count when critical findings exist', async () => {
-      (runReviewPipeline as any).mockResolvedValue({
-        ...basePipelineResult,
+    // #662 — the processor reports the pipeline's gate; it never recounts the
+    // findings. Each test below hands it a gate that CONTRADICTS the findings,
+    // so the assertion can only pass if the output came from the gate. The
+    // findings-to-gate classification itself is tested directly in
+    // core/src/gate.test.ts (same titles and summaries).
+    it('shows the critical count the gate reports (findings carry none)', async () => {
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
         findings: [
-          { file: 'a.ts', line: 1, severity: 'critical', category: 'security', title: 'SQLi', description: '', suggestion: '' },
-          { file: 'b.ts', line: 2, severity: 'critical', category: 'security', title: 'XSS', description: '', suggestion: '' },
+          finding({ file: 'a.ts', line: 1, severity: 'warning', title: 'SQLi' }),
+          finding({ file: 'b.ts', line: 2, severity: 'warning', title: 'XSS' }),
         ],
+        gate: gateOf({ fails: true, blockingCriticalCount: 2 }),
         mergeScore: 1,
-      });
+      }));
 
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
@@ -401,19 +435,20 @@ describe('processReviewJob — check runs', () => {
         conclusion: 'failure',
         // #380 — titles lead with the merge score.
         title: '1/5 — 2 critical issues found',
-        summary: 'Found: 2 critical',
+        summary: 'Found: 2 critical, 2 warning',
       });
     });
 
-    it('shows finding count (no critical) when only warnings/info', async () => {
-      (runReviewPipeline as any).mockResolvedValue({
-        ...basePipelineResult,
+    it('passes when the gate does not fail, even over a critical finding', async () => {
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
         findings: [
-          { file: 'a.ts', line: 1, severity: 'warning', category: 'style', title: 'Naming', description: '', suggestion: '' },
-          { file: 'b.ts', line: 2, severity: 'info', category: 'style', title: 'Docs', description: '', suggestion: '' },
+          finding({ file: 'c.ts', line: 3, severity: 'critical', title: 'Ignored by the gate' }),
+          finding({ file: 'a.ts', line: 1, severity: 'warning', category: 'style', title: 'Naming' }),
+          finding({ file: 'b.ts', line: 2, severity: 'info', category: 'style', title: 'Docs' }),
         ],
+        gate: gateOf(),
         mergeScore: 4,
-      });
+      }));
 
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
@@ -424,12 +459,16 @@ describe('processReviewJob — check runs', () => {
         status: 'completed',
         conclusion: 'success',
         // #240 — "blocking" qualifier: unverified criticals no longer count.
-        title: '4/5 — 2 findings (no blocking critical)',
+        title: '4/5 — 3 findings (no blocking critical)',
         summary: 'Found: 1 warning, 1 info',
       });
     });
 
-    it('shows the clean check title when no findings', async () => {
+    it('shows the clean summary when the gate reports nothing (a critical in findings is not recounted)', async () => {
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+        findings: [finding({ severity: 'critical', title: 'Ignored by the gate' })],
+        gate: gateOf(),
+      }));
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
@@ -438,7 +477,7 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4]).toMatchObject({
         status: 'completed',
         conclusion: 'success',
-        title: '5/5 — Looks good to me',
+        title: '5/5 — 1 finding (no blocking critical)',
         summary: 'No issues detected in this PR.',
       });
     });
@@ -461,14 +500,12 @@ describe('processReviewJob — check runs', () => {
       expect(completionCall[4].detailsUrl).toBeUndefined();
     });
 
-    it('uses singular "issue" for single critical finding', async () => {
-      (runReviewPipeline as any).mockResolvedValue({
-        ...basePipelineResult,
-        findings: [
-          { file: 'a.ts', line: 1, severity: 'critical', category: 'security', title: 'SQLi', description: '', suggestion: '' },
-        ],
+    it('uses singular "issue" for the single critical the gate reports', async () => {
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+        findings: [finding({ severity: 'warning', title: 'SQLi' })],
+        gate: gateOf({ fails: true, blockingCriticalCount: 1 }),
         mergeScore: 2,
-      });
+      }));
 
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
@@ -480,13 +517,9 @@ describe('processReviewJob — check runs', () => {
   });
 
   describe('formal PR review submission', () => {
-    // mergeScoreToReviewEvent is mocked at module level; reset it per test.
-    beforeEach(() => {
-      (mergeScoreToReviewEvent as any).mockReset();
-    });
-
+    // #662 — the event comes from core's real reviewEventForGate (gate + score);
+    // nothing here mocks the mapping.
     it('submits APPROVE with empty body for high merge scores', async () => {
-      (mergeScoreToReviewEvent as any).mockReturnValue('APPROVE');
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
@@ -504,14 +537,11 @@ describe('processReviewJob — check runs', () => {
       // REQUEST_CHANGES / COMMENT to satisfy GitHub's required-body constraint
       // while rendering as zero visible content. See client.test.ts's W6
       // suite for the stub-substitution coverage.
-      (mergeScoreToReviewEvent as any).mockReturnValue('REQUEST_CHANGES');
-      (runReviewPipeline as any).mockResolvedValue({
-        ...basePipelineResult,
-        findings: [
-          { file: 'a.ts', line: 1, severity: 'critical', category: 'security', title: 'SQLi', description: '', suggestion: '' },
-        ],
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+        findings: [finding({ title: 'SQLi' })],
+        gate: gateOf({ fails: true, blockingCriticalCount: 1 }),
         mergeScore: 1,
-      });
+      }));
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
@@ -522,7 +552,7 @@ describe('processReviewJob — check runs', () => {
     });
 
     it('submits COMMENT with an empty body — W6 (wrapper handles the API stub)', async () => {
-      (mergeScoreToReviewEvent as any).mockReturnValue('COMMENT');
+      vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({ mergeScore: 3 }));
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
@@ -601,7 +631,7 @@ describe('processReviewJob — respond mode', () => {
   it('falls through to review mode when userComment is missing', async () => {
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
 
     const deps = makeDeps();
     await processReviewJob(
@@ -625,7 +655,7 @@ describe('processReviewJob — config merging', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
   });
 
@@ -644,7 +674,7 @@ describe('processReviewJob — config merging', () => {
 
     await processReviewJob(makeJob(), deps);
 
-    const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineCall = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(pipelineCall).toBeDefined();
   });
 
@@ -700,7 +730,7 @@ describe('processReviewJob — config merging', () => {
 
     await processReviewJob(makeJob(), deps);
 
-    const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineCall = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(pipelineCall.maxFindings).toBe(25);
     expect(pipelineCall.customStyleRules).toEqual(['yml rule']);
   });
@@ -725,7 +755,7 @@ describe('processReviewJob — config merging', () => {
 
     await processReviewJob(makeJob(), deps);
 
-    const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineCall = vi.mocked(runReviewPipeline).mock.calls[0][0];
     // yml silent on maxFindings — dashboard maxComments applies
     expect(pipelineCall.maxFindings).toBe(5);
     // yml explicitly re-enables style — wins over the dashboard toggle
@@ -742,7 +772,7 @@ describe('processReviewJob — config merging', () => {
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
-      const pipelineCall = (runReviewPipeline as any).mock.calls[0][0];
+      const pipelineCall = vi.mocked(runReviewPipeline).mock.calls[0][0];
       expect(pipelineCall.modelId).toBe('env-override-model');
       expect(pipelineCall.lightModelId).toBe('env-override-model');
     } finally {
@@ -846,7 +876,7 @@ describe('processReviewJob — agent-authored wiring', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
   });
 
@@ -870,7 +900,7 @@ describe('processReviewJob — agent-authored wiring', () => {
       deps,
     );
 
-    const pipelineOptions = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineOptions = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(pipelineOptions.agentAuthored).toBe(true);
   });
 
@@ -878,7 +908,7 @@ describe('processReviewJob — agent-authored wiring', () => {
     const deps = makeDeps();
     await processReviewJob(makeJob({ source: 'human' }), deps);
 
-    const pipelineOptions = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineOptions = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(pipelineOptions.agentAuthored).toBe(false);
   });
 
@@ -886,7 +916,7 @@ describe('processReviewJob — agent-authored wiring', () => {
     const deps = makeDeps();
     await processReviewJob(makeJob(), deps);
 
-    const pipelineOptions = (runReviewPipeline as any).mock.calls[0][0];
+    const pipelineOptions = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(pipelineOptions.agentAuthored).toBe(false);
   });
 });
@@ -902,7 +932,7 @@ describe('processReviewJob — FP-B previousFindings pre-filter', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (addPRReaction as any).mockResolvedValue(12345);
     // Reset the triage mocks back to the "no-triage" defaults — `vi.clearAllMocks`
@@ -934,7 +964,7 @@ describe('processReviewJob — FP-B previousFindings pre-filter', () => {
 
     await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
 
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(opts.previousFindings).toEqual([
       { file: 'b.ts', line: 20, severity: 'warning', category: 'bug', title: 'Still valid', description: '', suggestion: '' },
     ]);
@@ -956,7 +986,7 @@ describe('processReviewJob — FP-B previousFindings pre-filter', () => {
 
     await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
 
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(opts.previousFindings).toEqual(priorFindings);
     expect(opts.disputedKeys).toEqual([]);
   });
@@ -973,7 +1003,7 @@ describe('processReviewJob — FP-F inline-resolve memory', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (addPRReaction as any).mockResolvedValue(12345);
     // Same triage-mock reset rationale as FP-B (vi.clearAllMocks preserves
@@ -1004,7 +1034,7 @@ describe('processReviewJob — FP-F inline-resolve memory', () => {
 
     await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
 
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
     // Union: both keys present (order isn't guaranteed — assert as a set).
     expect(new Set(opts.disputedKeys)).toEqual(new Set([triageKey, inlineKey]));
     // FP-B pre-filter then drops BOTH from previousFindings.
@@ -1028,7 +1058,7 @@ describe('processReviewJob — FP-F inline-resolve memory', () => {
     // No triage → live W3 disputedKeys stays empty.
     await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
 
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(opts.disputedKeys).toEqual([inlineKey]);
     // FP-B drops the inline-resolved prior finding from previousFindings.
     expect(opts.previousFindings).toEqual([]);
@@ -1046,7 +1076,7 @@ describe('processReviewJob — FP-F inline-resolve memory', () => {
 
     await processReviewJob(makeJob({ headSha: 'NEW_SHA' }), deps);
 
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
     expect(opts.disputedKeys).toEqual([]);
     expect(opts.previousFindings).toEqual(priorFindings);
   });
@@ -1063,8 +1093,7 @@ describe('processReviewJob — org custom agents (#235)', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
-    (mergeScoreToReviewEvent as any).mockReturnValue('APPROVE');
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
   });
 
   const blockingAgent = {
@@ -1088,8 +1117,8 @@ describe('processReviewJob — org custom agents (#235)', () => {
   it('passes in-scope org agents into the pipeline as customAgents', async () => {
     const deps = depsWithAgents([blockingAgent]);
     await processReviewJob(makeJob(), deps);
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
-    expect(opts.customAgents.map((a: any) => a.name)).toContain('security-policy');
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
+    expect((opts.customAgents ?? []).map((a) => a.name)).toContain('security-policy');
   });
 
   it('does NOT run an org agent scoped to a different repo', async () => {
@@ -1097,17 +1126,18 @@ describe('processReviewJob — org custom agents (#235)', () => {
       { ...blockingAgent, scope: { mode: 'selected', repos: ['someone/else'] } },
     ]);
     await processReviewJob(makeJob(), deps);
-    const opts = (runReviewPipeline as any).mock.calls[0][0];
-    expect(opts.customAgents.map((a: any) => a.name)).not.toContain('security-policy');
+    const opts = vi.mocked(runReviewPipeline).mock.calls[0][0];
+    expect((opts.customAgents ?? []).map((a) => a.name)).not.toContain('security-policy');
   });
 
-  it('blocking gate: a critical finding from a blocking agent forces REQUEST_CHANGES + failing check', async () => {
+  it('blocking gate: a gate blocked by an org agent forces REQUEST_CHANGES + failing check', async () => {
     const deps = depsWithAgents([blockingAgent]);
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult,
+    // #662 — the findings carry no critical; only the gate says the agent blocked.
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
       mergeScore: 5, // would otherwise APPROVE
-      findings: [{ severity: 'critical', category: 'security-policy', title: 'x', description: 'y', file: 'a.ts', line: 1 }],
-    });
+      findings: [],
+      gate: gateOf({ fails: true, blockingCriticalCount: 1, orgBlockedBy: ['security-policy'] }),
+    }));
 
     await processReviewJob(makeJob(), deps);
 
@@ -1125,14 +1155,14 @@ describe('processReviewJob — org custom agents (#235)', () => {
 
   it('advisory agent does NOT trigger the blocking gate', async () => {
     const deps = depsWithAgents([{ ...blockingAgent, enforcement: 'advisory' }]);
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult,
-      findings: [{ severity: 'critical', category: 'security-policy', title: 'x', description: 'y', file: 'a.ts', line: 1 }],
-    });
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [finding({ category: 'security-policy', description: 'y' })],
+      gate: gateOf({ advisoryCriticalCount: 1 }),
+    }));
 
     await processReviewJob(makeJob(), deps);
 
-    // No org-block override → event comes from the (mocked) score mapping.
+    // No org-block override → event comes from the score (5 → APPROVE).
     const reviewEvent = (submitPRReview as any).mock.calls[0][5];
     expect(reviewEvent).toBe('APPROVE');
   });
@@ -1149,7 +1179,7 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult); // zero findings
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult); // zero findings
     (fetchRepoConfig as any).mockResolvedValue(null);
     (findExistingBotComment as any).mockResolvedValue(null);
     (postReviewComment as any).mockResolvedValue(100);
@@ -1180,10 +1210,9 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
 
   it('posts normally on a dirty PR even when postSummaryOnClean is false', async () => {
     (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult,
-      findings: [{ file: 'src/index.ts', line: 1, severity: 'warning', category: 'bug', title: 'T', description: 'D', suggestion: 'S' }],
-    });
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [finding({ file: 'src/index.ts', line: 1, severity: 'warning', category: 'bug', title: 'T', description: 'D', suggestion: 'S' })],
+    }));
     const deps = makeDeps();
     await processReviewJob(makeJob(), deps);
 
@@ -1203,7 +1232,7 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
 // ---------------------------------------------------------------------------
 
 describe('processReviewJob — check conclusion vs verification (#240)', () => {
-  const critical = (verification?: 'verified' | 'unverified') => ({
+  const critical = (verification?: 'verified' | 'unverified') => finding({
     file: 'src/index.ts', line: 1, severity: 'critical', category: 'security',
     title: 'Race', description: 'D', suggestion: 'S',
     ...(verification ? { verification } : {}),
@@ -1226,10 +1255,11 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
     (postReviewComment as any).mockResolvedValue(100);
   });
 
-  it('unverified-only critical → check stays advisory (success), title never claims a critical', async () => {
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult, findings: [critical('unverified')], mergeScore: 3,
-    });
+  // #662 — the gate decides; each finding below says the opposite of its gate.
+  it('an unverified-only gate → check stays advisory (success), title never claims a critical', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [critical('verified')], gate: gateOf({ unverifiedCriticalCount: 1 }), mergeScore: 3,
+    }));
     await processReviewJob(makeJob(), makeDeps());
 
     const check = completionCheckRun();
@@ -1239,10 +1269,10 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
     expect(check.summary).toContain('1 unverified');
   });
 
-  it('verified critical → check still fails with the critical title (no regression)', async () => {
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult, findings: [critical('verified')], mergeScore: 2,
-    });
+  it('a blocking gate → check fails with the critical title (the finding says unverified)', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [critical('unverified')], gate: gateOf({ fails: true, blockingCriticalCount: 1 }), mergeScore: 2,
+    }));
     await processReviewJob(makeJob(), makeDeps());
 
     const check = completionCheckRun();
@@ -1250,19 +1280,21 @@ describe('processReviewJob — check conclusion vs verification (#240)', () => {
     expect(check.title).toBe('2/5 — 1 critical issue found');
   });
 
-  it('a critical with no verification field (pre-W2 record) still fails the check', async () => {
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult, findings: [critical()], mergeScore: 2,
-    });
+  it('a failing gate fails the check even with no critical in the findings', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [], gate: gateOf({ fails: true, blockingCriticalCount: 1 }), mergeScore: 2,
+    }));
     await processReviewJob(makeJob(), makeDeps());
 
     expect(completionCheckRun().conclusion).toBe('failure');
   });
 
-  it('mixed verified + unverified → fails on the verified one, discloses the unverified one', async () => {
-    (runReviewPipeline as any).mockResolvedValue({
-      ...basePipelineResult, findings: [critical('verified'), critical('unverified')], mergeScore: 2,
-    });
+  it('mixed gate → fails on the blocking one, discloses the unverified one', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [critical('unverified'), critical('unverified')],
+      gate: gateOf({ fails: true, blockingCriticalCount: 1, unverifiedCriticalCount: 1 }),
+      mergeScore: 2,
+    }));
     await processReviewJob(makeJob(), makeDeps());
 
     const check = completionCheckRun();
@@ -1300,7 +1332,7 @@ describe('processReviewJob — re-run check-run identity (#639/#657)', () => {
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (isStillPRHead as any).mockResolvedValue(true);
     (createCheckRun as any).mockResolvedValue(undefined);
@@ -1339,7 +1371,7 @@ describe('processReviewJob — re-run check-run identity (#639/#657)', () => {
   });
 
   it('carries the key on the failure verdict', async () => {
-    (runReviewPipeline as any).mockRejectedValue(new Error('LLM timeout'));
+    vi.mocked(runReviewPipeline).mockRejectedValue(new Error('LLM timeout'));
     await expect(processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps())).rejects.toThrow('LLM timeout');
 
     const failure = writes().find((c) => c[4]?.conclusion === 'failure');
@@ -1348,7 +1380,7 @@ describe('processReviewJob — re-run check-run identity (#639/#657)', () => {
   });
 
   it('carries the key on the throttle re-park, so a retried re-run keeps its run', async () => {
-    (runReviewPipeline as any).mockRejectedValue(
+    vi.mocked(runReviewPipeline).mockRejectedValue(
       Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' }),
     );
     await expect(processReviewJob(makeJob({ checkRunKey: KEY }), makeDeps())).rejects.toThrow('Too many requests');
@@ -1398,7 +1430,7 @@ describe('processReviewJob — throttle handling (#355)', () => {
   });
 
   it('parks a throttled review as pending with an in_progress "rate limited" check — never FAILURE', async () => {
-    (runReviewPipeline as any).mockRejectedValue(
+    vi.mocked(runReviewPipeline).mockRejectedValue(
       Object.assign(new Error('Too many requests, please wait before trying again.'), { name: 'ThrottlingException' }),
     );
     const deps = makeDeps();
@@ -1416,7 +1448,7 @@ describe('processReviewJob — throttle handling (#355)', () => {
   });
 
   it('a non-throttle pipeline error still fails the review and the check (no regression)', async () => {
-    (runReviewPipeline as any).mockRejectedValue(
+    vi.mocked(runReviewPipeline).mockRejectedValue(
       Object.assign(new Error('model exploded'), { name: 'ValidationException' }),
     );
     const deps = makeDeps();
@@ -1430,7 +1462,7 @@ describe('processReviewJob — throttle handling (#355)', () => {
   });
 
   it('a 429 from a non-Bedrock provider (Anthropic/LiteLLM shape) is also parked', async () => {
-    (runReviewPipeline as any).mockRejectedValue(
+    vi.mocked(runReviewPipeline).mockRejectedValue(
       Object.assign(new Error('rate_limit_error'), { status: 429 }),
     );
     const deps = makeDeps();
@@ -1453,14 +1485,14 @@ describe('processReviewJob — severityThreshold → minSeverity mapping (#357)'
     (getPRDiff as any).mockResolvedValue('diff content');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (findExistingBotComment as any).mockResolvedValue(null);
     (postReviewComment as any).mockResolvedValue(100);
   });
 
   function pipelineMinSeverity() {
-    return (runReviewPipeline as any).mock.calls[0][0].minSeverity;
+    return vi.mocked(runReviewPipeline).mock.calls[0][0].minSeverity;
   }
 
   it("default settings map to 'info' — info-tier findings render out of the box", async () => {
@@ -1509,7 +1541,7 @@ describe('processReviewJob — work-done stats from filtered diff (#358)', () =>
     (getPRDiff as any).mockResolvedValue('raw diff');
     (shouldSkipPR as any).mockReturnValue(null);
     (shouldSkipByRules as any).mockReturnValue(null);
-    (runReviewPipeline as any).mockResolvedValue(basePipelineResult);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
     (fetchRepoConfig as any).mockResolvedValue(null);
     (findExistingBotComment as any).mockResolvedValue(null);
     (postReviewComment as any).mockResolvedValue(100);
@@ -1536,5 +1568,80 @@ describe('processReviewJob — work-done stats from filtered diff (#358)', () =>
       1,
       expect.any(Number),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #662 — one merge gate, read from the pipeline
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — the gate comes from the pipeline (#662)', () => {
+  const noTodo = (enforcement: 'blocking' | 'advisory') => ({
+    id: 'nt1', name: 'no-todo', prompt: 'Flag any new TODO comment', severityDefault: 'critical' as const,
+    enforcement, enabled: true, scope: { mode: 'all' as const }, updatedAt: 'iso', updatedBy: 'admin',
+  });
+  const depsWith = (agent: ReturnType<typeof noTodo>) => {
+    const deps = makeDeps();
+    vi.mocked(deps.installationStore.getCustomAgents!).mockResolvedValue([agent]);
+    return deps;
+  };
+  const completion = () => {
+    const calls = (createCheckRun as any).mock.calls.filter((c: any[]) => c[4]?.status === 'completed');
+    return calls[calls.length - 1]?.[4];
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  it('a refuted blocking-org critical passes: success, no org-block title, COMMENT (not APPROVE)', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      mergeScore: 5,
+      findings: [finding({
+        category: 'no-todo', title: 'New TODO', verification: 'unverified', verificationOutcome: 'refuted',
+        source: { kind: 'org', agent: 'no-todo', enforcement: 'blocking' },
+      })],
+      gate: gateOf({ unverifiedCriticalCount: 1, refutedOrgBlockingCount: 1 }),
+    }));
+    await processReviewJob(makeJob(), depsWith(noTodo('blocking')));
+
+    const check = completion();
+    expect(check.conclusion).toBe('success');
+    expect(check.title).not.toMatch(/Blocked by org agent/);
+    expect(vi.mocked(submitPRReview).mock.calls[0][5]).toBe('COMMENT');
+  });
+
+  it('advisory org criticals are summarised as advisory, not unverified', async () => {
+    const adv = (line: number) => finding({
+      line, category: 'no-todo', title: `TODO ${line}`,
+      source: { kind: 'org', agent: 'no-todo', enforcement: 'advisory' },
+    });
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      findings: [adv(1), adv(2), finding({ line: 3, severity: 'info', title: 'note' })],
+      gate: gateOf({ advisoryCriticalCount: 2 }),
+    }));
+    await processReviewJob(makeJob(), depsWith(noTodo('advisory')));
+
+    expect(completion().summary).toBe('Found: 2 advisory, 1 info');
+  });
+
+  it('source scan: the processor derives the gate outputs from core, never inline', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(join(__dirname, 'review-processor.ts'), 'utf8');
+    for (const banned of ['countBlockingCriticals(', 'blockingCriticalAgents(', 'advisoryOrgAgentNames',
+      'mergeScoreToReviewEvent(', "title: 'Review failed'"]) {
+      expect(src, `review-processor.ts still contains ${banned}`).not.toContain(banned);
+    }
+    for (const required of ['buildCheckOutcome(', 'reviewEventForGate(', 'formatGateLog(', 'REVIEW_FAILED_CHECK_TITLE']) {
+      expect(src, `review-processor.ts lacks ${required}`).toContain(required);
+    }
   });
 });

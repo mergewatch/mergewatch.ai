@@ -20,6 +20,7 @@ export type FilterStage =
   | "finding-verify"
   | "line-proximity"
   | "custom-agent-dedup"
+  | "custom-prior-reemission"
   | "triage-suppressed";
 
 /**
@@ -78,6 +79,7 @@ const STAGE_ORDER: readonly TrailStage[] = [
   "line-proximity",
   "fp-i-already-applied",
   "custom-agent-dedup",
+  "custom-prior-reemission",
   "triage-suppressed",
   // Last: a gap in the recorder, not a filtering decision.
   UNKNOWN_STAGE,
@@ -96,6 +98,7 @@ export const STAGE_LABELS: Record<TrailStage, string> = {
   "line-proximity": "Not near a changed line",
   "fp-i-already-applied": "Already applied",
   "custom-agent-dedup": "Custom agent dedup",
+  "custom-prior-reemission": "Re-emitted custom prior",
   "triage-suppressed": "Suppressed by triage",
 };
 

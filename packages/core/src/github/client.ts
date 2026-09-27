@@ -22,6 +22,7 @@ import type {
   PassThreshold,
 } from '../config/defaults.js';
 import { PASS_THRESHOLDS } from '../config/defaults.js';
+import { isReservedAgentName } from '../builtin-categories.js';
 import { reviewMarker, inlineMarker, checkRunName } from '../stage.js';
 import type { Stage } from '../stage.js';
 
@@ -1670,9 +1671,18 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     // Custom agents
     if (Array.isArray(parsed.customAgents)) {
       const validSeverities = new Set(['info', 'warning', 'critical']);
+      const rejected: string[] = [];
       config.customAgents = (parsed.customAgents as unknown[])
         .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
         .filter((a) => typeof a.name === 'string' && typeof a.prompt === 'string')
+        // #662 — a repo agent may not take a built-in agent's name: it would
+        // be indistinguishable from the built-in agent. Dropped, and named in
+        // the check summary so the author can see why it did not run.
+        .filter((a) => {
+          if (!isReservedAgentName(a.name as string)) return true;
+          rejected.push((a.name as string).trim());
+          return false;
+        })
         .map((a): CustomAgentDef => ({
           name: a.name as string,
           prompt: a.prompt as string,
@@ -1680,7 +1690,15 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
             ? (a.severityDefault as 'info' | 'warning' | 'critical')
             : 'warning',
           enabled: typeof a.enabled === 'boolean' ? a.enabled : true,
+          origin: 'repo',
         }));
+      if (rejected.length > 0) {
+        console.warn(
+          '[custom-agents] ignored %d repo custom agent(s) with reserved built-in names: %s',
+          rejected.length, rejected.join(', '),
+        );
+        config.rejectedCustomAgents = rejected;
+      }
     }
 
     // UX config
