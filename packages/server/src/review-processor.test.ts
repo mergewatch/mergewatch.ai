@@ -3,7 +3,7 @@ import type {
   ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider,
   ReviewPipelineResult, MergeGate, OrchestratedFinding,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS, emptyGate, type CustomAgentFailure } from '@mergewatch/core';
 import type { WebhookDeps } from './webhook-handler.js';
 
 // ---------------------------------------------------------------------------
@@ -80,6 +80,10 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     // tests aren't affected; the FP-B test overrides these per-call.
     fetchTriageComments: vi.fn().mockResolvedValue([]),
     computeDisputedKeys: vi.fn().mockResolvedValue([]),
+    // #664 — observed by the withheld-prior test; defaults match what the real
+    // ones return against the empty mock octokit (no login, nothing closed).
+    resolveAppLogin: vi.fn().mockResolvedValue(null),
+    resolveWithdrawnFindingThreads: vi.fn().mockResolvedValue(0),
   };
 });
 
@@ -89,6 +93,7 @@ import {
   addPRReaction, removePRReaction, submitPRReview,
   fetchTriageComments, computeDisputedKeys,
   postReviewComment, updateReviewComment, findExistingBotComment, isStillPRHead,
+  computeReviewDelta, formatReviewComment, resolveAppLogin, resolveWithdrawnFindingThreads,
 } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
@@ -147,21 +152,13 @@ const basePRContext = {
 };
 
 /** #662 — a gate the pipeline would return; tests override only what they assert on. */
-const gateOf = (over: Partial<MergeGate> = {}): MergeGate => ({
-  fails: false,
-  blockingCriticalCount: 0,
-  advisoryCriticalCount: 0,
-  unverifiedCriticalCount: 0,
-  orgBlockedBy: [],
-  refutedOrgBlockingCount: 0,
-  authorWaivedBlocking: [],
-  ...over,
-});
+const gateOf = (over: Partial<MergeGate> = {}): MergeGate => ({ ...emptyGate(), ...over });
 
 const basePipelineResult = {
   summary: 'All good',
   findings: [],
   gate: gateOf(),
+  agentFailures: [],
   // FB-A / FB-B downstream readers expect this map (changedLines drives the
   // quiet-drop detection). Empty map = "no files changed" — sufficient for
   // these unit-level tests that never assert on the analytics writers.
@@ -1642,6 +1639,111 @@ describe('processReviewJob — the gate comes from the pipeline (#662)', () => {
     }
     for (const required of ['buildCheckOutcome(', 'reviewEventForGate(', 'formatGateLog(', 'REVIEW_FAILED_CHECK_TITLE']) {
       expect(src, `review-processor.ts lacks ${required}`).toContain(required);
+    }
+  });
+});
+
+// ─── #664 — a failing custom agent fails the gate closed ───────────────────
+
+describe('processReviewJob — custom agent failures (#664)', () => {
+  const T = () => Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' });
+  const G: CustomAgentFailure = { agent: 'no-todo', source: { kind: 'org', agent: 'no-todo', enforcement: 'blocking' }, reason: 'error' };
+  const A: CustomAgentFailure = { agent: 'style-guide', source: { kind: 'org', agent: 'style-guide', enforcement: 'advisory' }, reason: 'error' };
+  const P = { title: 'PRIOR', category: 'no-todo', severity: 'critical', file: 'foo.ts', line: 3, source: G.source };
+  const gating = () => pipelineResult({ agentFailures: [G], gate: gateOf({ fails: true, failedGatingAgents: ['no-todo'] }) });
+  const completion = () => {
+    const calls = (createCheckRun as any).mock.calls.filter((c: any[]) => c[4]?.status === 'completed');
+    return calls[calls.length - 1]?.[4];
+  };
+  /** Every method a no-op spy, so any analytics write the processor makes is observable. */
+  const dispositionStore = () => {
+    const fns: Record<string, ReturnType<typeof vi.fn>> = {};
+    return new Proxy(fns, { get: (t, k: string) => (t[k] ??= vi.fn().mockResolvedValue(undefined)) }) as any;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+  });
+
+  it('an org-agent store error fails the review, instead of running with no org agents', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.installationStore.getCustomAgents!).mockRejectedValue(new Error('ddb down'));
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({}));
+    await processReviewJob(makeJob(), deps).catch(() => {});
+    expect(completion()?.title).toBe('Review failed');
+    expect(runReviewPipeline).not.toHaveBeenCalled();
+  });
+
+  it('an org-agent store throttle parks the review', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.installationStore.getCustomAgents!).mockRejectedValue(T());
+    await processReviewJob(makeJob(), deps).catch(() => {});
+    expect(vi.mocked(deps.reviewStore.updateStatus).mock.calls.map((c) => c[2])).toContain('pending');
+    expect(runReviewPipeline).not.toHaveBeenCalled();
+  });
+
+  it('a failed agent\'s prior is withheld from the delta and quiet drops, and its thread stays open', async () => {
+    const deps = { ...makeDeps(), dispositionStore: dispositionStore() };
+    vi.mocked(deps.reviewStore.queryByPR).mockResolvedValue([
+      { status: 'complete', prNumberCommitSha: '1#old', findings: [P] } as any,
+    ]);
+    vi.mocked(resolveAppLogin).mockResolvedValue('mergewatch[bot]');
+    vi.mocked(runReviewPipeline).mockResolvedValue(gating());
+    await processReviewJob(makeJob(), deps as any);
+
+    expect(vi.mocked(computeReviewDelta)).toHaveBeenCalled();
+    // Soft, so each of the three is reported on its own.
+    for (const call of vi.mocked(computeReviewDelta).mock.calls) {
+      expect.soft(call[1], 'delta priors').not.toContainEqual(expect.objectContaining({ title: 'PRIOR' }));
+    }
+    expect.soft(deps.dispositionStore.incrementSilentDrop, 'quiet drop').not.toHaveBeenCalled();
+    const active = vi.mocked(resolveWithdrawnFindingThreads).mock.calls[0][4] as Set<string>;
+    expect.soft(active.has('foo.ts::prior'), 'thread kept open').toBe(true);
+  });
+
+  it('postSummaryOnClean:false does not silence a gating failure', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    vi.mocked(runReviewPipeline).mockResolvedValue(gating());
+    await processReviewJob(makeJob(), makeDeps());
+    expect(postReviewComment).toHaveBeenCalled();
+  });
+
+  it('control: postSummaryOnClean:false still silences an advisory failure alone', async () => {
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    vi.mocked(runReviewPipeline).mockResolvedValue(pipelineResult({
+      agentFailures: [A], gate: gateOf({ failedAdvisoryAgents: ['style-guide'] }),
+    }));
+    await processReviewJob(makeJob(), makeDeps());
+    expect(postReviewComment).not.toHaveBeenCalled();
+  });
+
+  it('wiring: check title, comment and log all carry the failure', async () => {
+    const log = vi.spyOn(console, 'log');
+    vi.mocked(runReviewPipeline).mockResolvedValue(gating());
+    try {
+      await processReviewJob(makeJob(), makeDeps());
+      expect(completion()).toMatchObject({ conclusion: 'failure', title: '5/5 — Custom agent failed: no-todo' });
+      expect(vi.mocked(formatReviewComment).mock.calls[0][0].agentFailures).toEqual([G]);
+      expect(log.mock.calls.some((c) => c.map(String).join(' ').includes('failedGating=no-todo'))).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('(pin) status writes carry neither agentFailures nor the gate', async () => {
+    const deps = makeDeps();
+    vi.mocked(runReviewPipeline).mockResolvedValue(gating());
+    await processReviewJob(makeJob(), deps);
+    expect(vi.mocked(deps.reviewStore.updateStatus)).toHaveBeenCalled();
+    for (const call of vi.mocked(deps.reviewStore.updateStatus).mock.calls) {
+      expect(JSON.stringify(call[3] ?? {})).not.toMatch(/agentFailures|failedGatingAgents/);
     }
   });
 });

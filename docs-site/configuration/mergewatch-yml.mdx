@@ -203,7 +203,7 @@ customAgents:
     enabled: true
 ```
 
-A **critical** finding from a repo custom agent fails the MergeWatch check run, like a critical from a built-in agent. Repo agents have no advisory mode; to report without gating, set `severityDefault` below `critical`. Findings from repo agents are not sent to the verifier.
+A **critical** finding from a repo custom agent fails the MergeWatch check run, like a critical from a built-in agent. Repo agents have no advisory mode; to report without gating, set `severityDefault` below `critical`. Findings from repo agents are not sent to the verifier. A repo agent that fails to answer (the model call errors, or the reply is not usable) also fails the check, titled `Custom agent failed: <name>`, because its rule was not evaluated. See [When an agent fails](/dashboard/custom-agents#when-an-agent-fails).
 
 ### Rules
 

@@ -9,6 +9,7 @@ import type { UXConfig } from './config/defaults.js';
 import type { ReviewDelta } from './review-delta.js';
 import type { FindingEvidence } from './types/db.js';
 import { isValidMermaidDiagram } from './agents/reviewer.js';
+import { describeFailures, agentFailureRetryHint, isGatingFailure, type CustomAgentFailure } from './gate.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,12 @@ export function buildCheckTitle(input: {
 interface FormatOptions {
   /** Markdown summary text from the summary agent */
   summary: string;
+  /**
+   * #664 — custom agents that produced no usable answer. A gating one gets a
+   * notice under the score and suppresses the all-clear: its policy was not
+   * evaluated. An advisory one gets a quiet line.
+   */
+  agentFailures?: ReadonlyArray<CustomAgentFailure>;
   /** Deduplicated + ranked findings from the orchestrator */
   findings: Finding[];
   /** Optional custom footer line from installation settings */
@@ -691,7 +698,10 @@ export function formatReviewComment(options: FormatOptions): string {
     model,
     conventionsSource,
     conventionsTruncated,
+    agentFailures = [],
   } = options;
+  const gatingFailures = agentFailures.filter(isGatingFailure);
+  const advisoryFailures = agentFailures.filter((f) => !isGatingFailure(f));
 
   const sections: Section[] = [];
   const section = (id: string, priority: number, label?: string): string[] => {
@@ -761,7 +771,8 @@ export function formatReviewComment(options: FormatOptions): string {
     const score = section('score', KEEP);
     // Anything to report — a rendered finding, or a reason explaining what
     // happened to the ones there were.
-    const hasNotes = findings.length > 0 || Boolean(mergeScoreReason);
+    // #664 — a failed gating agent is something to report even with no findings.
+    const hasNotes = findings.length > 0 || Boolean(mergeScoreReason) || gatingFailures.length > 0;
     const scoreDisplay = renderMergeScore(mergeScore, hasNotes);
     // #617 — the reason can carry trailing paragraphs: FP-L's narrative
     // staleness note is appended after a blank line when the orchestrator's
@@ -798,6 +809,20 @@ export function formatReviewComment(options: FormatOptions): string {
     score.push('');
   }
 
+  // #664 — directly under the score, and never shed: the verdict above only
+  // covers the agents that answered.
+  if (agentFailures.length > 0) {
+    const notice = section('agent-failures', KEEP);
+    if (gatingFailures.length > 0) {
+      notice.push(`> \u26A0\uFE0F **Custom agent failed:** ${describeFailures(gatingFailures)} \u2014 policy not evaluated; this check fails. ${agentFailureRetryHint(gatingFailures)}`);
+      notice.push('');
+    }
+    if (advisoryFailures.length > 0) {
+      notice.push(`<sub>Advisory org agent failed (does not affect the check): ${describeFailures(advisoryFailures)}.</sub>`);
+      notice.push('');
+    }
+  }
+
   // 5. Diagram (moved up — appears right after merge score)
   if (diagram && showDiagram && isValidMermaidDiagram(diagram)) {
     const diagramSec = section('diagram', 10, 'the diagram');
@@ -831,8 +856,13 @@ export function formatReviewComment(options: FormatOptions): string {
   // the score is W7-clamped to advisory, so say that instead.
   const action = section('action-items', KEEP);
   const pushAllClearOrAdvisory = () => {
+    // #664 — with a gating agent failed, nothing here may read as an
+    // all-clear: only the agents that ran found nothing.
+    const failed = gatingFailures.length > 0;
     if (unverifiedCriticalCount > 0) {
-      action.push('No blocking issues \u2014 see unverified concerns below.');
+      action.push(failed
+        ? 'No blocking issues from the agents that ran \u2014 see the notice and unverified concerns.'
+        : 'No blocking issues \u2014 see unverified concerns below.');
       action.push('');
     // `?? 5` keeps callers that omit mergeScore on the pre-#385 behavior.
     } else if (findings.length === 0 && (mergeScore ?? 5) <= 3) {
@@ -842,7 +872,12 @@ export function formatReviewComment(options: FormatOptions): string {
       // "Looks good to me" four lines under that subtitle contradicts it, and
       // a reader who skims to the body merges on the strength of the wrong
       // half. Defer to the verdict line rather than talking over it.
-      action.push('Nothing rendered \u2014 see the verdict above before merging.');
+      action.push(failed
+        ? 'Nothing rendered \u2014 see the notice and verdict above.'
+        : 'Nothing rendered \u2014 see the verdict above before merging.');
+      action.push('');
+    } else if (failed) {
+      action.push('No blocking findings from the agents that ran.');
       action.push('');
     } else if (ux?.allClearMessage !== false) {
       action.push('\uD83D\uDC4D **Looks good to me!** I didn\u2019t find anything worth raising in this diff.');

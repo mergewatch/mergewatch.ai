@@ -74,7 +74,9 @@ function mockPipelineResult() {
     gate: {
       fails: true, blockingCriticalCount: 1, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
       orgBlockedBy: [], refutedOrgBlockingCount: 0, authorWaivedBlocking: [],
+      failedGatingAgents: [], failedAdvisoryAgents: [],
     },
+    agentFailures: [],
     diagram: '',
     diagramCaption: '',
     mergeScore: 3,

@@ -51,6 +51,17 @@ Before a blocking agent's critical can fail a check, MergeWatch sends it, with t
 - **Could not be confirmed**: the verifier errored, gave no usable verdict, or dismissed the finding only because the code claims to be intentional. The finding **blocks**. A verifier failure never lets a blocking finding through.
 - **Confirmed**, or not verifiable (the file could not be read): the finding **blocks**.
 
+### When an agent fails
+
+An agent can fail to answer: the model call errors, the reply is not the JSON it was asked for, or the reply has no usable findings in it. MergeWatch does not read a failed agent as "nothing found":
+
+- **Blocking agent failed:** its policy was not evaluated, so the check **fails**, titled `Custom agent failed: <name>`. The review comment says which agent failed. The review is posted as a comment, never an approval (a low merge score still requests changes). Re-running the check retries.
+- **Advisory agent failed:** a quiet line in the comment says so; the check is unaffected.
+- **Rate limited:** the review is queued and retried, as for the built-in agents.
+- **The org agents could not be loaded:** the review fails and can be re-run. It does not run without them.
+
+Findings a failed agent raised on an earlier commit are not treated as fixed, and their inline threads stay open until the agent answers again.
+
 <Warning>
 Blocking enforcement bypasses the normal scoring path. A PR that MergeWatch would otherwise consider ready to merge is still blocked by a single critical finding from a blocking agent. That is the point — but it also means a poorly-worded blocking prompt can stop every PR in the organization.
 

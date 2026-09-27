@@ -63,18 +63,19 @@ export class DynamoInstallationStore implements IInstallationStore {
     );
   }
 
+  /**
+   * A missing row is `[]`: no org agents. A read error is thrown (#664) — the
+   * review runtimes treat it as a failed review, since reading it as `[]`
+   * would silently skip every org policy, blocking ones included.
+   */
   async getCustomAgents(installationId: string): Promise<OrgCustomAgent[]> {
-    try {
-      const result = await this.client.send(
-        new GetCommand({
-          TableName: this.tableName,
-          Key: { installationId, repoFullName: '#AGENTS' },
-        }),
-      );
-      return sanitizeOrgCustomAgents(result.Item?.agents);
-    } catch {
-      return [];
-    }
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { installationId, repoFullName: '#AGENTS' },
+      }),
+    );
+    return sanitizeOrgCustomAgents(result.Item?.agents);
   }
 
   async upsertCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void> {
