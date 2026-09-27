@@ -344,6 +344,15 @@ jobs:
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Selected $COUNT graded fixture(s)."; cat /tmp/sel.txt
 
+      # #660 — structural rules on expect.json, before any fixture spends LLM
+      # budget. Fixtures CI is path-filtered to scripts/**, so a fixture-only
+      # change (a missing `_determinism` label, a bad overlay) is otherwise
+      # first noticed as a red gate after a full suite run.
+      - name: Check fixture expectations
+        if: steps.select.outputs.count != '0'
+        working-directory: fixtures-repo
+        run: node --test scripts/expectations.test.mjs
+
       - name: Reset the fixtures environment
         working-directory: fixtures-repo
         run: scripts/reset-env.sh

@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, mkdtempSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
 
 /**
  * #576 — the factual half of the pre-release docs audit.
@@ -82,7 +84,7 @@ describe('docs audit — the three outcomes stay distinguishable', () => {
 
 describe('docs audit — the script itself', () => {
   it('dry-runs without calling the model, and reports its grounding', () => {
-    const r = spawnSync('node', [SCRIPT, '--dry-run'], { cwd: REPO, encoding: 'utf8' });
+    const r = runBounded('node', [SCRIPT, '--dry-run'], { cwd: REPO });
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/Would audit \d+ page\(s\)/);
     // Grounding is the design: an auditor given only the page confabulates.
@@ -97,7 +99,7 @@ describe('docs audit — the script itself', () => {
     mkdirSync(join(dir, 'docs-site'), { recursive: true });
     writeFileSync(join(dir, 'docs-site/x.mdx'), '---\ntitle: "T"\ndescription: "D"\n---\n');
     copyFileSync(SCRIPT, join(dir, 'scripts/audit-docs.mjs'));
-    const r = spawnSync('node', [join(dir, 'scripts/audit-docs.mjs')], { cwd: dir, encoding: 'utf8' });
+    const r = runBounded('node', [join(dir, 'scripts/audit-docs.mjs')], { cwd: dir });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/AUDIT DID NOT RUN/);
     expect(r.stderr).toMatch(/NOT a clean result/i);

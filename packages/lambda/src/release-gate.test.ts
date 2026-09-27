@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
 
 /**
  * #505 — invariants of the release gate that are easy to break by editing the
@@ -188,11 +190,8 @@ describe('release gate — the release step cannot strand a tag', () => {
       'printf "%s" "$fence"',
     ].join('\n');
 
-    const r = spawnSync('bash', ['-e', '-c', snippet], {
-      encoding: 'utf8',
-      env: { ...process.env, GRADED: graded },
-    });
-    return { status: r.status ?? -1, out: r.stdout };
+    const r = runBounded('bash', ['-e', '-c', snippet], { env: { ...process.env, GRADED: graded } });
+    return { status: r.status, out: r.stdout };
   }
 
   it('sizes the fence when the summary has NO backticks', () => {

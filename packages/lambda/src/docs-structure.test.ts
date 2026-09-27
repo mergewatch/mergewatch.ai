@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
 
 /**
  * #576 — the structural half of the pre-release docs audit.
@@ -19,7 +21,7 @@ const REPO = resolve(__dirname, '../../..');
 const SCRIPT = join(REPO, 'scripts/check-docs-structure.mjs');
 
 const run = (cwd: string) => {
-  const r = spawnSync('node', [SCRIPT], { cwd, encoding: 'utf8' });
+  const r = runBounded('node', [SCRIPT], { cwd });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 

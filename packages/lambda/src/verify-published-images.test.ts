@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { execFile, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import { runBounded, runBoundedAsync, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';
+
+vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });
 
 /**
  * #665 — `scripts/verify-published-images.sh`, exercised end to end.
@@ -119,18 +121,11 @@ type Result = { status: number; out: string; err: string };
  * process's event loop, and a synchronous child blocks it, so the script's first
  * request never gets an answer and the whole file hangs.
  */
-function exec(args: string[], registryBase = base): Promise<Result> {
-  return new Promise((done) => {
-    execFile(
-      'bash',
-      [SCRIPT, ...args],
-      { encoding: 'utf8', env: { ...process.env, REGISTRY_BASE: registryBase } },
-      (err, stdout, stderr) => {
-        const status = err ? (typeof (err as any).code === 'number' ? (err as any).code : -1) : 0;
-        done({ status, out: stdout, err: stderr });
-      },
-    );
+async function exec(args: string[], registryBase = base): Promise<Result> {
+  const r = await runBoundedAsync('bash', [SCRIPT, ...args], {
+    env: { ...process.env, REGISTRY_BASE: registryBase },
   });
+  return { status: r.status, out: r.stdout, err: r.stderr };
 }
 
 const run = (version: string, ...repos: string[]) => exec([version, ...repos]);
@@ -140,7 +135,7 @@ describe('#665 — the verifier exists and is wired to be run', () => {
     // The gate calls it as `scripts/verify-published-images.sh`, not `bash …`.
     // A committed file without the mode bit fails at release time only.
     expect(existsSync(SCRIPT)).toBe(true);
-    const r = spawnSync('test', ['-x', SCRIPT]);
+    const r = runBounded('test', ['-x', SCRIPT]);
     expect(r.status, 'script is not executable — the release step would fail').toBe(0);
   });
 });
