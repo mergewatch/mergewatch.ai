@@ -119,12 +119,13 @@ transient error cancels the other leg mid-push, which can leave a tag resolving
 to a manifest whose layers are incomplete — worse than a red job. On v0.6.5 the
 dashboard image survived only because its push finished before the cancel landed.
 
-## The gate's four outcomes are not interchangeable
+## The gate's outcomes are not interchangeable
 
 | Outcome | Meaning | Report it as |
 |---|---|---|
 | **success** | Selected fixtures ran and graded clean | Verified, **with the count** |
 | **failure** | A graded fixture failed | Stop. Do not retry hoping |
+| **failure, provider errors only** (GATE says UNVERIFIED) | The model provider failed on some fixtures (ERROR, no verdict); none that produced a verdict regressed | **Not verified.** At most one disclosed re-run of the full gate; never `skip_e2e_gate`. If GATE says *Investigate the ERROR notes*, investigate first |
 | **skipped** | Gate disabled, or bypassed via `skip_e2e_gate` | **Not verified.** Say so plainly |
 | **0 selected** | No fixture can observe these paths | A pass — and say why it was empty |
 

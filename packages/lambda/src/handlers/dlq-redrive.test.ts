@@ -143,6 +143,10 @@ describe('dlq-redrive handler (#398)', () => {
     expect(checkArgs[3]).toBe('abc123');
     expect(checkArgs[4].status).toBe('completed');
     expect(checkArgs[4].conclusion).toBe('failure');
+    // #659 — the E2E grader copies this literal (fixtures scripts/no-verdict.mjs
+    // ABANDONED_TITLE) to grade an abandoned review ERROR, not FAIL. Changing
+    // it here without changing it there turns every outage into a regression.
+    expect(checkArgs[4].title).toBe('Review abandoned — provider unavailable');
   });
 
   it('corrects the re-run job\'s OWN run, on the PR\'s current head (#639)', async () => {

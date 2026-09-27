@@ -87,12 +87,13 @@ gh run list --workflow=deploy.yml --branch=main --limit 1 --json databaseId,stat
 gh run view <id> --json jobs -q '.jobs[] | "\(.name): \(.status)/\(.conclusion // "")"'
 ```
 
-**Report the gate's verdict precisely.** It has four outcomes and they are not interchangeable:
+**Report the gate's verdict precisely.** Its outcomes are not interchangeable:
 
 | Outcome | What it means | How to report it |
 |---|---|---|
 | success | Selected fixtures ran and graded clean | Verified, with the count |
 | failure | A graded fixture failed — **prod is blocked** | Stop and surface it; do not retry hoping |
+| failure, provider errors only (GATE says UNVERIFIED) | The model provider failed on some fixtures, so they have no verdict; none that produced one regressed | **Not verified.** Re-run the gate at most once and say so; never bypass with `skip_e2e_gate`. If GATE says *Investigate the ERROR notes*, do that before re-running |
 | skipped | Gate disabled, or bypassed via `skip_e2e_gate` | **Not verified.** Say so plainly |
 | 0 selected | No fixture can observe these paths | A pass, and say why it was empty |
 
@@ -165,7 +166,7 @@ Draft locally, check, then post once. Publishing a conclusion and then correctin
 - `aws logs filter-log-events --query 'length(events)'` returns a count **per page**, not a total. Sum it.
 - Range-limited greps (`sed -n '/X/,/^$/p'`) truncate at the first blank line and can hide findings that are actually present. Scan the whole body.
 
-**3. Report the four gate outcomes distinctly** — success, failure, skipped, 0-selected — and never let a `skipped` or degraded selection be written up as a pass. Read the review **verdict line**, not just the check status: a green check can carry a 3/5 with live findings.
+**3. Report the gate outcomes distinctly** — success, failure, failure on provider errors only, skipped, 0-selected — and never let a `skipped` or degraded selection be written up as a pass. Read the review **verdict line**, not just the check status: a green check can carry a 3/5 with live findings.
 
 **4. Adversarially verify anything going into the tracker.** A second pass whose job is to *refute* the first catches what review does not. It has caught a subagent fabricating an acceptance criterion and quoting it as real, and it catches tests that cannot fail. Cheap relative to a wrong issue someone else then works from.
 

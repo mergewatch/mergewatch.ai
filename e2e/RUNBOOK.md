@@ -3420,8 +3420,16 @@ A fixture with no `expect.json` reports **UNGRADED**, never PASS. 10 of 98 fixtu
 - [ ] Exit codes: 1 on any FAIL or ERROR, 0 when only PASS/UNGRADED/SKIP, 2 with no manifest
 - [ ] Reviews are matched by **App login**, not a bot heuristic — `gh` returns `author.is_bot: null` and a bare `mergewatch`, so heuristics silently match nothing
 - [ ] `--compare` reports both stages' scores and flags divergence
+- [ ] **ERROR has two sources (#659).** *Harness*: the PR could not be fetched, or `expect.json` is invalid. *Provider*: the review never produced a verdict, i.e. a `completed/failure` check titled `Review abandoned — provider unavailable`, or `Review failed` whose summary (after `MergeWatch encountered an error: `) matches the transient allowlist (`Bedrock is unable to process your request`). The note reads `provider error on <sha7> (head | earlier commit on shared PR): "<msg>" · <other stage> corroborated: yes|no|unknown`
+- [ ] Any other `Review failed` is **FAIL**, noted `review crashed on <sha7>: "<msg>"`: a crash is a regression, never model variance
+- [ ] Precedence across a PR's commits: crashed → FAIL, else provider → ERROR, else the `expect.json` verdict. Assertion failures under an ERROR follow as `also (may be stale): …`
+- [ ] A no-verdict fixture is left out of the suite cost and named under `cost not measured`; no `PARSER failure` on an outage
+- [ ] The **GATE block prints last**: `GATE: GREEN`, or `GATE: RED — N regression(s) (FAIL)[, P UNVERIFIED (provider error)][, H ERROR (harness)]`. With ERRORs only, every one corroborated and no harness error: `… UNVERIFIED …; 0 regressions among the V that produced a verdict. Re-run the gate once; do not bypass.` Otherwise `… Investigate the ERROR notes before re-running.`, plus `dev-only provider error: …` when the other stage reviewed the same commit. Then one line per distinct (kind, message) naming the fixtures and PRs. It never says "not a regression"
+- [ ] A red run emits exactly one `::error title=E2E gate::` line; `--json` stays one parseable document with `gate: {state, headline}` and a per-result `noVerdict`
 
 **Failure modes.**
+- ❌ A provider outage graded FAIL (every fixture reads as a regression), or a crash graded ERROR (a regression reads as bad luck)
+- ❌ An ERROR-only gate bypassed with `skip_e2e_gate` instead of re-run once
 - ❌ An UNGRADED fixture counted as PASS — makes the whole layer worthless
 - ❌ A fetch error reported as PASS: unverified is not the same as fine, so ERROR fails the gate
 - ❌ The grader agrees with itself on a deterministic field the LLM pass disagrees with — one of them has a bug worth reporting rather than papering over
