@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildMergeGate, buildCheckOutcome, reviewEventForGate, formatGateLog,
   ORG_BLOCKED_TITLE_PREFIX, REVIEW_FAILED_CHECK_TITLE, AGENT_FAILED_TITLE_PREFIX, emptyGate,
+  REVIEW_FAILED_PREFIX, reviewFailedCheckOutput,
   failedAgentPriors, runtimePriorView, shouldStaySilent,
   type MergeGate, type GateFinding, type CustomAgentFailure,
 } from './gate.js';
@@ -362,5 +363,18 @@ describe('#664 — shouldStaySilent', () => {
   it('a gating failure breaks the silence; an advisory one does not', () => {
     expect(shouldStaySilent({ ...clean, agentFailures: [G] })).toBe(false);
     expect(shouldStaySilent({ ...clean, agentFailures: [advisoryFail('a')] })).toBe(true);
+  });
+});
+
+describe('#659 — reviewFailedCheckOutput', () => {
+  it('an Error → the title constant and the prefixed message', () => {
+    expect(reviewFailedCheckOutput(new Error('x'))).toEqual({ title: REVIEW_FAILED_CHECK_TITLE, summary: `${REVIEW_FAILED_PREFIX}x` });
+  });
+  it('a non-Error throw → "Unknown error"', () => {
+    expect(reviewFailedCheckOutput('boom').summary).toBe(`${REVIEW_FAILED_PREFIX}Unknown error`);
+    expect(reviewFailedCheckOutput(undefined).summary).toBe(`${REVIEW_FAILED_PREFIX}Unknown error`);
+  });
+  it('(pin) the prefix is the literal the grader keys on', () => {
+    expect(REVIEW_FAILED_PREFIX).toBe('MergeWatch encountered an error: ');
   });
 });

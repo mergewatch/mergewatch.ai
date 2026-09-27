@@ -254,6 +254,21 @@ export function agentFailureRetryHint(gating: ReadonlyArray<CustomAgentFailure>)
 /** Check-run title when the review threw. */
 export const REVIEW_FAILED_CHECK_TITLE = 'Review failed';
 
+/**
+ * #659 — how the failed check's summary begins. The E2E grader keys on this
+ * exact prefix (fixtures `scripts/no-verdict.mjs` ERROR_PREFIX) to tell a
+ * provider outage from a crash, so it lives in one place.
+ */
+export const REVIEW_FAILED_PREFIX = 'MergeWatch encountered an error: ';
+
+/** #659 — title and summary of the check a thrown review completes with. */
+export function reviewFailedCheckOutput(error: unknown): { title: string; summary: string } {
+  return {
+    title: REVIEW_FAILED_CHECK_TITLE,
+    summary: `${REVIEW_FAILED_PREFIX}${error instanceof Error ? error.message : 'Unknown error'}`,
+  };
+}
+
 export interface CheckOutcomeInput {
   mergeScore?: number;
   findingCount: number;

@@ -30,7 +30,7 @@ import {
   buildCheckOutcome,
   reviewEventForGate,
   formatGateLog,
-  REVIEW_FAILED_CHECK_TITLE,
+  reviewFailedCheckOutput,
   runtimePriorView,
   shouldStaySilent,
   isReservedAgentName,
@@ -1350,8 +1350,7 @@ export async function handler(
     await writeCheckRun({
       status: 'completed',
       conclusion: 'failure',
-      title: REVIEW_FAILED_CHECK_TITLE,
-      summary: `MergeWatch encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      ...reviewFailedCheckOutput(error),
     });
 
     return {

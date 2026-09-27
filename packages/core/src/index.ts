@@ -73,6 +73,8 @@ export {
   formatGateLog,
   ORG_BLOCKED_TITLE_PREFIX,
   REVIEW_FAILED_CHECK_TITLE,
+  REVIEW_FAILED_PREFIX,
+  reviewFailedCheckOutput,
   // #664 — a failing custom agent fails the gate closed.
   AGENT_FAILED_TITLE_PREFIX,
   emptyGate,
