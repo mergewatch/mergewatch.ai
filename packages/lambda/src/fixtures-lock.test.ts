@@ -177,3 +177,68 @@ describe('the lock is never held across a human wait', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * #584 — the gate must opt IN to the fixture snapshot, or a merged fixture fix
+ * never reaches a run.
+ *
+ * `run-suite.sh` snapshots only when `--snapshot-ref` is passed (`:107`). Without
+ * it, SNAP stays empty, E2E_CONTENT_ROOT is never exported, and every consumer
+ * falls back to REPO_ROOT — the working tree that `apply-fixture.sh` has by then
+ * checked out to `e2e-baseline`. So the overlay applied is the TAG's copy, which
+ * is the entire defect.
+ *
+ * fixtures#3866 shipped the capability and this workflow did not use it: deploy
+ * #579 ran AFTER that merge and still printed "the run manifest records no
+ * `snapshot`". The fix compiled, was tested, reviewed clean, and did nothing —
+ * because the opt-in lives in a different repo from the change.
+ *
+ * Asserted at the workflow level because that is where the gap was.
+ */
+describe('#584 — the gate passes the fixture snapshot refs', () => {
+  const deploy = yaml.load(
+    readFileSync(resolve(__dirname, '../../../.github/workflows/deploy.yml'), 'utf8'),
+  ) as any;
+
+  const gateSteps: any[] = Object.values(deploy.jobs)
+    .flatMap((j: any) => j.steps ?? [])
+    .filter(Boolean);
+
+  // ALL matching steps, not the first. Several `run` blocks mention
+  // `run-suite.sh` in a shell comment (the git-identity step explains why it
+  // commits), so `.find` returns a step that never invokes it — and the
+  // assertion then fails for the wrong reason. Learned by writing it that way.
+  const stepsRunning = (needle: string) =>
+    gateSteps.filter((st: any) => typeof st.run === 'string' && st.run.includes(needle));
+  const anyRunMatches = (needle: string, re: RegExp) =>
+    stepsRunning(needle).some((st: any) => re.test(st.run));
+
+  it('pins the fixtures commit before anything moves the working tree', () => {
+    const pin = gateSteps.find((st: any) => st.id === 'fixref');
+    expect(pin, 'no step with id "fixref" — nothing captures the fixtures SHA').toBeTruthy();
+    expect(pin.run).toMatch(/git rev-parse HEAD/);
+    // It must run in the fixtures checkout, not this repo's.
+    expect(pin['working-directory']).toBe('fixtures-repo');
+  });
+
+  it('passes --snapshot-ref to run-suite.sh', () => {
+    expect(stepsRunning('run-suite.sh').length, 'no step mentions run-suite.sh').toBeGreaterThan(0);
+    // Without this flag run-suite.sh silently does not snapshot: `if [ -n
+    // "$SNAPSHOT_REF" ]`. The failure is a warning in the grade output, not an
+    // error, so nothing else here would catch its removal.
+    expect(anyRunMatches('run-suite.sh', /--snapshot-ref/)).toBe(true);
+    expect(anyRunMatches('run-suite.sh', /steps\.fixref\.outputs\.sha/)).toBe(true);
+  });
+
+  it('grades against the SAME sha the suite snapshotted', () => {
+    expect(stepsRunning('grade-run.mjs').length, 'no step mentions grade-run.mjs').toBeGreaterThan(0);
+    expect(anyRunMatches('grade-run.mjs', /--expect-ref/)).toBe(true);
+    expect(anyRunMatches('grade-run.mjs', /steps\.fixref\.outputs\.sha/)).toBe(true);
+  });
+
+  it('uses one sha for both, so overlays and expectations cannot disagree', () => {
+    const ref2 = /steps\.fixref\.outputs\.sha/;
+    expect(anyRunMatches('run-suite.sh', ref2)).toBe(true);
+    expect(anyRunMatches('grade-run.mjs', ref2)).toBe(true);
+  });
+});

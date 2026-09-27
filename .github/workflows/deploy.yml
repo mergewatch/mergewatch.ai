@@ -388,6 +388,18 @@ jobs:
           path: fixtures-repo
           fetch-depth: 0
 
+      # #584 — pin the fixtures commit NOW, before anything moves the working
+      # tree. run-suite.sh resets to `e2e-baseline` and apply-fixture.sh checks
+      # the tree out to the tag, so by the time the suite runs HEAD is no longer
+      # the commit fixtures were selected from. Without passing this SHA,
+      # run-suite.sh leaves SNAP empty, never exports E2E_CONTENT_ROOT, and every
+      # consumer falls back to REPO_ROOT — the tree now at the TAG. That is the
+      # whole bug: a merged fixture fix that never reaches a run.
+      - name: Pin the fixtures commit
+        id: fixref
+        working-directory: fixtures-repo
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -457,7 +469,7 @@ jobs:
           # review queue, not the product, decides the result.
           SLEEP: 45
         run: |
-          xargs scripts/run-suite.sh < /tmp/sel.txt
+          xargs scripts/run-suite.sh --snapshot-ref "${{ steps.fixref.outputs.sha }}" < /tmp/sel.txt
 
       - name: Restore the tooling checkout
         if: steps.select.outputs.count != '0'
@@ -510,7 +522,11 @@ jobs:
         working-directory: fixtures-repo
         run: |
           set -o pipefail
-          scripts/grade-run.mjs --stage dev | tee /tmp/grade.txt
+          # The SAME sha the suite snapshotted. Grading against origin/main while
+          # the suite ran from a snapshot is how expectations and overlays
+          # silently disagree — grade-run.mjs warns when they do.
+          scripts/grade-run.mjs --stage dev \
+            --expect-ref "${{ steps.fixref.outputs.sha }}" | tee /tmp/grade.txt
 
       - name: Summary
         if: always()
