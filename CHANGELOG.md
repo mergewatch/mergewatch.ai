@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.6](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.5...v0.6.6) (2026-09-27)
+
+### Bug Fixes
+- fix(release): pass the fixture snapshot refs in the release gate too (#584) (#675) (bdaf32b)
+- fix(gate): pass the fixture snapshot refs, so a merged fixture fix reaches a run (#584) (#673) (8763d15)
+- fix(server): make the Checks Re-run button work on self-hosted (#672) (744f521)
+- fix(checks): a Re-run refreshes the check run, not only the review and comment (#669) (212b5a3)
+- fix(release): decide the release from the images, not the publisher's exit code (#668) (192444e)
+- fix(deps): unbundle vitest from grouped security updates (#667) (b90951f)
 ## [0.6.5](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.4...v0.6.5) (2026-09-26)
 
 ### Bug Fixes
