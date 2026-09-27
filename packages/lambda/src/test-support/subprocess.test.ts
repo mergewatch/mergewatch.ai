@@ -59,6 +59,14 @@ describe('runBoundedAsync', () => {
     await expect(runBoundedAsync('definitely-not-a-command-660', [])).rejects.toThrow(/failed to spawn/);
   });
 
+  it('reports a SIGTERM it did not send as killed, not timed out', async () => {
+    // execFile's timeout also sends SIGTERM; only its own kill sets `killed: true`.
+    // A SIGTERM from anywhere else must not be reported as a timeout.
+    await expect(
+      runBoundedAsync('node', ['-e', 'process.kill(process.pid, "SIGTERM"); setTimeout(() => {}, 60000)']),
+    ).rejects.toThrow(/killed by SIGTERM/);
+  });
+
   it('names a child killed by a signal, distinct from a timeout', async () => {
     await expect(
       runBoundedAsync('node', ['-e', 'process.kill(process.pid, "SIGKILL")']),

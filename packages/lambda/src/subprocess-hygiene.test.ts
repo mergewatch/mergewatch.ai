@@ -20,7 +20,7 @@ const SKIP = new Set(['node_modules', 'dist', '.next', 'coverage']);
 // Split so this file does not match its own rule.
 const SPAWN_MODULE = 'child_' + 'process';
 const HELPER = /test-support\/subprocess['"]/;
-const SET_CONFIG = /vi\.setConfig\(\s*\{\s*testTimeout:\s*SUBPROCESS_TEST_TIMEOUT_MS\s*\}\s*\)/;
+const SET_CONFIG = /vi\.setConfig\(\s*\{\s*testTimeout:\s*SUBPROCESS_TEST_TIMEOUT_MS\s*,?\s*\}\s*\)/;
 
 export function violations(file: string, src: string): string[] {
   const found: string[] = [];
@@ -62,6 +62,16 @@ describe('#660 — subprocess hygiene', () => {
     const src = [
       "import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';",
       'vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });',
+    ].join('\n');
+    expect(violations('x.test.ts', src)).toEqual([]);
+  });
+
+  it('accepts the multi-line form with a trailing comma', () => {
+    const src = [
+      "import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';",
+      'vi.setConfig({',
+      '  testTimeout: SUBPROCESS_TEST_TIMEOUT_MS,',
+      '});',
     ].join('\n');
     expect(violations('x.test.ts', src)).toEqual([]);
   });
