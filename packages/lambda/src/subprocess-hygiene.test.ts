@@ -20,7 +20,9 @@ const SKIP = new Set(['node_modules', 'dist', '.next', 'coverage']);
 // Split so this file does not match its own rule.
 const SPAWN_MODULE = 'child_' + 'process';
 const HELPER = /test-support\/subprocess['"]/;
-const SET_CONFIG = /vi\.setConfig\(\s*\{\s*testTimeout:\s*SUBPROCESS_TEST_TIMEOUT_MS\s*,?\s*\}\s*\)/;
+// `testTimeout` anywhere in the config object: other keys, order and trailing
+// commas are the author's business.
+const SET_CONFIG = /vi\.setConfig\(\s*\{[^}]*\btestTimeout:\s*SUBPROCESS_TEST_TIMEOUT_MS\b/;
 
 export function violations(file: string, src: string): string[] {
   const found: string[] = [];
@@ -74,6 +76,24 @@ describe('#660 — subprocess hygiene', () => {
       '});',
     ].join('\n');
     expect(violations('x.test.ts', src)).toEqual([]);
+  });
+
+  it('accepts testTimeout alongside other settings, in any position', () => {
+    const helper = "import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';";
+    for (const call of [
+      'vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS, hookTimeout: 30_000 });',
+      'vi.setConfig({ hookTimeout: 30_000, testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });',
+    ]) {
+      expect(violations('x.test.ts', `${helper}\n${call}`)).toEqual([]);
+    }
+  });
+
+  it('still flags a setConfig that does not raise testTimeout', () => {
+    const src = [
+      "import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';",
+      'vi.setConfig({ hookTimeout: SUBPROCESS_TEST_TIMEOUT_MS });',
+    ].join('\n');
+    expect(violations('x.test.ts', src)).toHaveLength(1);
   });
 
   it('flags a direct spawn import', () => {
