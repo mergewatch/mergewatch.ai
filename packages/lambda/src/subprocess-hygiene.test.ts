@@ -29,7 +29,10 @@ export function violations(file: string, src: string): string[] {
   if (src.includes(SPAWN_MODULE)) {
     found.push(`${file}: imports ${SPAWN_MODULE} directly; use test-support/subprocess`);
   }
-  if (HELPER.test(src) && !SET_CONFIG.test(src)) {
+  // Comments stripped for this rule only, so a comment quoting the call does
+  // not count as making it. The spawn rule above stays fail-closed.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  if (HELPER.test(src) && !SET_CONFIG.test(code)) {
     found.push(`${file}: uses the subprocess helper without vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS })`);
   }
   return found;
@@ -94,6 +97,16 @@ describe('#660 — subprocess hygiene', () => {
       'vi.setConfig({ hookTimeout: SUBPROCESS_TEST_TIMEOUT_MS });',
     ].join('\n');
     expect(violations('x.test.ts', src)).toHaveLength(1);
+  });
+
+  it('does not count a commented-out setConfig as raising the timeout', () => {
+    for (const comment of [
+      '// vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS });',
+      '/* vi.setConfig({ testTimeout: SUBPROCESS_TEST_TIMEOUT_MS }); */',
+    ]) {
+      const src = `import { runBounded, SUBPROCESS_TEST_TIMEOUT_MS } from './test-support/subprocess';\n${comment}`;
+      expect(violations('x.test.ts', src)).toHaveLength(1);
+    }
   });
 
   it('flags a direct spawn import', () => {
