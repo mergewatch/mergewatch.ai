@@ -47,11 +47,18 @@ export interface GateFinding {
 export interface MergeGate {
   /** The check fails. Always `blockingCriticalCount > 0`. */
   fails: boolean;
-  /** Criticals that block: built-in or repo not refuted, and org-blocking not refuted. */
+  /**
+   * Criticals that block: built-in or repo ones not tagged unverified, and
+   * org-blocking ones not refuted — including those the verifier skipped (no
+   * file content) or could not decide (`inconclusive`), which fail closed.
+   */
   blockingCriticalCount: number;
   /** Criticals from advisory org agents: rendered, never blocking. */
   advisoryCriticalCount: number;
-  /** Built-in/repo criticals the verifier could not confirm (#240), and refuted org-blocking ones. */
+  /**
+   * Built-in/repo criticals the verifier could not confirm (#240), and
+   * org-blocking ones it explicitly refuted. Nothing else.
+   */
   unverifiedCriticalCount: number;
   /** Blocking org agents with at least one blocking critical. Distinct, sorted. */
   orgBlockedBy: string[];

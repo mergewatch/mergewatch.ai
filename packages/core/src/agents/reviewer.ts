@@ -3922,8 +3922,14 @@ export async function runReviewPipeline(
       const missing = blocking
         .filter((f) => !returnedKeys.has(outcomeKey(f)))
         // #662 — after D3, the only way a blocking finding is not returned is
-        // an explicit valid:false drop (a refuted warning): a refutation.
-        .map((f) => ({ ...f, verification: 'unverified' as const, verificationOutcome: 'refuted' as const }));
+        // an explicit valid:false drop of a warning: a refutation. A refuted
+        // critical is demoted, never dropped, so a missing critical means
+        // something else lost it — that fails closed (#382), not open.
+        .map((f) => ({
+          ...f,
+          verification: 'unverified' as const,
+          verificationOutcome: f.severity === 'critical' ? 'inconclusive' as const : 'refuted' as const,
+        }));
       for (const f of missing) {
         trace.record(f, 'demoted', 'finding-verify', {
           reason: 'the verifier did not return this blocking custom finding — kept as unverified rather than lost',
