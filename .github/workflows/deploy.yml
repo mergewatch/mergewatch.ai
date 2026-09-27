@@ -465,9 +465,23 @@ jobs:
         if: steps.select.outputs.count != '0'
         working-directory: fixtures-repo
         env:
-          # Reviews take 30-60s; without pacing every PR lands at once and the
-          # review queue, not the product, decides the result.
-          SLEEP: 45
+          # 45 -> 10 (#582). Measured on deploy #581 and #579: the apply step is
+          # ~90% of a 44-minute gate, and 93% of THAT is this sleep —
+          # 49 x 45s = 36.8 min of the 39.6 min step. The real work, git plus PR
+          # creation, is 171s total (~3.5s per fixture).
+          #
+          # 45 was chosen to stop every PR landing at once so "the review queue,
+          # not the product, decides the result". That concern is real but the
+          # margin was large: the "Wait for every review to complete" step takes
+          # 54-59s, i.e. every review has already finished by the time the last
+          # fixture is applied, and the queue is bounded at MaximumConcurrency: 8
+          # (infra/template.yaml) which paces the reviews independently of this.
+          #
+          # NOT 0. Zero disables pacing entirely and hands the queue 49 PRs at
+          # once; 10s keeps ~8 in flight, matching the queue's own ceiling.
+          # Revert to 45 if reviews start contending — the tell is the wait step
+          # growing from ~1 min, or Bedrock throttling in the check-run output.
+          SLEEP: 10
         run: |
           xargs scripts/run-suite.sh --snapshot-ref "${{ steps.fixref.outputs.sha }}" < /tmp/sel.txt
 
