@@ -242,3 +242,50 @@ describe('#584 — the gate passes the fixture snapshot refs', () => {
     expect(anyRunMatches('grade-run.mjs', ref2)).toBe(true);
   });
 });
+
+/**
+ * #584 — the RELEASE gate needs the same opt-in as the deploy gate.
+ *
+ * #673 wired `deploy.yml` and left `release-gate.yml` alone, so the release
+ * suite still read fixture definitions from the tag. That is worse here than in
+ * the deploy gate: the graded-suite block a release produces is embedded
+ * verbatim in the release notes, so a release could report grading overlays it
+ * never ran.
+ */
+describe('#584 — the release gate passes the fixture snapshot refs too', () => {
+  const gate = yaml.load(
+    readFileSync(resolve(__dirname, '../../../.github/workflows/release-gate.yml'), 'utf8'),
+  ) as any;
+
+  const steps: any[] = Object.values(gate.jobs)
+    .flatMap((j: any) => j.steps ?? [])
+    .filter(Boolean);
+
+  // Every step whose `run` mentions the needle, not the first — several blocks
+  // name these scripts in shell comments, and `.find` returns one that never
+  // invokes them. That mistake is how the deploy-gate version of this test
+  // failed for the wrong reason first time.
+  const running = (needle: string) =>
+    steps.filter((st: any) => typeof st.run === 'string' && st.run.includes(needle));
+  const anyMatches = (needle: string, re: RegExp) =>
+    running(needle).some((st: any) => re.test(st.run));
+
+  it('pins the fixtures commit before the suite moves the tree', () => {
+    const pin = steps.find((st: any) => st.id === 'fixref');
+    expect(pin, 'release gate has no fixref step').toBeTruthy();
+    expect(pin.run).toMatch(/git rev-parse HEAD/);
+    expect(pin['working-directory']).toBe('fixtures-repo');
+  });
+
+  it('passes --snapshot-ref to run-suite.sh', () => {
+    expect(running('run-suite.sh').length).toBeGreaterThan(0);
+    expect(anyMatches('run-suite.sh', /--snapshot-ref/)).toBe(true);
+  });
+
+  it('grades against the same sha, so a release cannot grade a tree it did not run', () => {
+    expect(running('grade-run.mjs').length).toBeGreaterThan(0);
+    expect(anyMatches('grade-run.mjs', /--expect-ref/)).toBe(true);
+    const ref = /steps\.fixref\.outputs\.sha/;
+    expect(anyMatches('run-suite.sh', ref) && anyMatches('grade-run.mjs', ref)).toBe(true);
+  });
+});

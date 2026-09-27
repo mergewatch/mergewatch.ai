@@ -296,6 +296,17 @@ jobs:
           path: fixtures-repo
           fetch-depth: 0
 
+      # #584 — same wiring the deploy gate got in #673, and for the same reason.
+      # `reset-env.sh` resets the tree to `e2e-baseline`, so without this SHA
+      # run-suite.sh leaves SNAP empty, never exports E2E_CONTENT_ROOT, and the
+      # suite reads fixture definitions from the TAG. A release would then grade
+      # overlays that are not the ones on main — and the graded-suite block it
+      # produces goes verbatim into the release notes.
+      - name: Pin the fixtures commit
+        id: fixref
+        working-directory: fixtures-repo
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -341,7 +352,7 @@ jobs:
         working-directory: fixtures-repo
         env:
           SLEEP: 45
-        run: xargs scripts/run-suite.sh < /tmp/sel.txt
+        run: xargs scripts/run-suite.sh --snapshot-ref "${{ steps.fixref.outputs.sha }}" < /tmp/sel.txt
 
       - name: Restore the tooling checkout
         working-directory: fixtures-repo
@@ -368,7 +379,10 @@ jobs:
         working-directory: fixtures-repo
         run: |
           set -uo pipefail
-          scripts/grade-run.mjs --stage "$MW_STAGE" | tee /tmp/grade.txt
+          # The SAME sha the suite snapshotted. A release must not grade one tree
+          # while having run another.
+          scripts/grade-run.mjs --stage "$MW_STAGE" \
+            --expect-ref "${{ steps.fixref.outputs.sha }}" | tee /tmp/grade.txt
           {
             echo 'summary<<EOF'
             grep -E 'passed ·|NOT VERIFIED' /tmp/grade.txt || true
