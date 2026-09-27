@@ -13,6 +13,7 @@ import type { LLMSamplingConfig } from '../llm/types.js';
 import type { Octokit } from '@octokit/rest';
 import type { ILLMProvider } from '../llm/types.js';
 import { normalizeLLMResult } from '../llm/types.js';
+import { isThrottleError } from '../llm/throttle.js';
 import { fetchFileContents } from './file-fetcher.js';
 import { sanitizeRelativePath } from './safe-path.js';
 
@@ -31,6 +32,11 @@ export interface AgenticInvokeResult {
   response: string;
   fetchedFiles: Record<string, string>;
   roundsUsed: number;
+  /**
+   * #664 — a round after the first threw, so `response` is empty rather than
+   * an answer. Absent when every round answered.
+   */
+  laterRoundFailed?: boolean;
 }
 
 // ─── Prompt instruction ─────────────────────────────────────────────────────
@@ -137,12 +143,15 @@ export async function invokeWithFileFetching(
       response = normalizeLLMResult(await llm.invoke(modelId, currentPrompt, maxTokens, sampling)).text;
     } catch (err) {
       console.warn('LLM invocation failed during agentic file fetching, falling back to no-context analysis:', err);
-      // Fall back to a simple invoke without file fetching context
-      if (round === 0) {
-        throw err; // First round failure — let the caller handle it
+      // First round failure — let the caller handle it. #664: a throttle on
+      // any round propagates too, so the review parks instead of reading as
+      // an agent that answered nothing.
+      if (round === 0 || isThrottleError(err)) {
+        throw err;
       }
-      // Subsequent round failure — return what we have from the previous round
-      return { response: '', fetchedFiles: allFetchedFiles, roundsUsed };
+      // Subsequent round failure — no answer. Flagged, so a caller that gates
+      // on the agent can tell it from an agent that found nothing.
+      return { response: '', fetchedFiles: allFetchedFiles, roundsUsed, laterRoundFailed: true };
     }
     roundsUsed++;
 

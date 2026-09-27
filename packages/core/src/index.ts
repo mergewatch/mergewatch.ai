@@ -73,9 +73,21 @@ export {
   formatGateLog,
   ORG_BLOCKED_TITLE_PREFIX,
   REVIEW_FAILED_CHECK_TITLE,
+  // #664 — a failing custom agent fails the gate closed.
+  AGENT_FAILED_TITLE_PREFIX,
+  emptyGate,
+  describeSource,
+  describeFailures,
+  isGatingFailure,
+  agentFailureRetryHint,
+  truncateAgentName,
+  failedAgentPriors,
+  runtimePriorView,
+  shouldStaySilent,
 } from './gate.js';
 export type {
   MergeGate, FindingSource, VerificationOutcome, GateFinding, CheckOutcome, CheckOutcomeInput,
+  CustomAgentFailure,
 } from './gate.js';
 export {
   handleInlineReply,

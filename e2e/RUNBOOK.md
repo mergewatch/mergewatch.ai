@@ -2538,12 +2538,14 @@ The env price becomes a `customPricing` entry keyed to the `LLM_MODEL` value, ap
 5. **Targeting:** add path glob `src/**`. A PR touching only `docs/**` does NOT trigger it; one touching `src/**` does.
 6. **Union + precedence:** define a repo `.mergewatch.yml` `customAgents` entry with the SAME name as an org agent → only the org definition runs (org wins).
 7. **Both backends:** repeat on a self-hosted (Postgres) instance — same behavior.
+8. **Failed agent (#664):** with no deploy or release-gate run active, set the blocking agent's prompt to `Reply in plain prose only; never output JSON.` and re-review. The check is **failure** titled `N/5 — Custom agent failed: no-todo`, the comment carries the `Custom agent failed` notice, the review is a COMMENT (not APPROVE), and the log has `[custom-agents] "no-todo" (org, blocking) failed (unparseable):` and `failedGating=no-todo`. Restore the prompt; a re-review clears it. As **advisory**, the same failure only adds a quiet line and the check passes.
 
 **Pass:**
 - [ ] Admins can CRUD org agents; members are read-only; the API rejects non-admin writes (403).
 - [ ] In-scope + targeting-matching agents run, in union with repo `customAgents` (org wins on name clash).
 - [ ] Advisory agent only surfaces findings; blocking agent's critical → REQUEST_CHANGES + failing check (`Blocked by org agent: …`) whatever the score, unless the verifier refuted it (then success + COMMENT); an undecided verification still blocks (#662).
 - [ ] Saving a new agent named `security` (or another built-in category) is rejected with 400 naming it (#662).
+- [ ] A blocking agent that fails to answer fails the check (`Custom agent failed: …`), never APPROVEs, and is named in the comment; an advisory one is only disclosed (#664).
 - [ ] Repo scope (all/selected) and path/language targeting gate execution correctly.
 - [ ] Last-edited-by/when recorded; soft-cap warning past the limit.
 - [ ] Identical behavior on DynamoDB (SaaS) and Postgres (self-hosted).

@@ -31,6 +31,8 @@ import {
   reviewEventForGate,
   formatGateLog,
   REVIEW_FAILED_CHECK_TITLE,
+  runtimePriorView,
+  shouldStaySilent,
   isReservedAgentName,
   formatReviewComment,
   isThrottleError,
@@ -595,14 +597,10 @@ export async function handler(
     const installation = await installationStore.get(String(installationId), repoFullName);
 
     const instSettings = await installationStore.getSettings(String(installationId));
-    // #235 — org custom agents (dashboard-defined). Best-effort; never break a
-    // review on a store read failure.
-    const orgCustomAgents = await installationStore
-      .getCustomAgents(String(installationId))
-      .catch((err) => {
-        console.warn('Failed to load org custom agents:', err);
-        return [];
-      });
+    // #235 — org custom agents (dashboard-defined). #664 — no longer
+    // best-effort: a failed read would silently skip every org policy, so it
+    // fails the review (or parks it, on a throttle) like any other error.
+    const orgCustomAgents = await installationStore.getCustomAgents(String(installationId));
 
     const severityMap = { Low: 'info', Med: 'warning', High: 'critical' } as const;
     const settingsOverrides: Partial<MergeWatchConfig> = {
@@ -943,9 +941,12 @@ export async function handler(
     );
 
     // Compute delta from previous review (reusing prevComplete fetched earlier)
+    // #664 — a failed custom agent's priors are withheld: the agent did not
+    // answer, so their absence is not a fix.
+    const priorView = runtimePriorView(prevComplete?.findings, result.agentFailures);
     let delta: ReviewDelta | null = null;
     if (prevComplete?.findings) {
-      delta = computeReviewDelta(result.findings, prevComplete.findings);
+      delta = computeReviewDelta(result.findings, priorView.priors);
     }
 
     // FB-A / FB-B / FB-C — best-effort analytics writes. Mirrors the server
@@ -954,8 +955,8 @@ export async function handler(
     // and never block the review path.
     const nowIso = new Date().toISOString();
     await recordFindingSurfacings(dispositionStore, installationId, repoFullName, result.findings, nowIso);
-    if (prevComplete?.findings && prevComplete.findings.length > 0) {
-      const quietDrops = detectQuietDrops(result.findings, prevComplete.findings, result.changedLines);
+    if (priorView.priors.length > 0) {
+      const quietDrops = detectQuietDrops(result.findings, priorView.priors, result.changedLines);
       if (quietDrops.length > 0) {
         console.log('[fb-b] %d quiet drop%s detected', quietDrops.length, quietDrops.length === 1 ? '' : 's');
         await recordQuietDrops(dispositionStore, installationId, repoFullName, quietDrops);
@@ -977,6 +978,7 @@ export async function handler(
 
     const commentBody = formatReviewComment({
       summary: result.summary,
+      agentFailures: result.agentFailures,
       findings: result.findings,
       commentFooter: instSettings.commentHeader || undefined,
       showSummary: instSettings.summary.prSummary,
@@ -1059,9 +1061,14 @@ export async function handler(
     // #350 — postSummaryOnClean: false means a clean PR gets no comment. Only
     // the INITIAL post is gated: an existing MergeWatch comment is always
     // updated, so a previously-dirty PR that comes back clean never keeps a
-    // stale review claiming old findings.
-    const stayingSilent =
-      result.findings.length === 0 && runtimeConfig.postSummaryOnClean === false && !targetCommentId;
+    // stale review claiming old findings. #664 — a failed gating agent breaks
+    // the silence.
+    const stayingSilent = shouldStaySilent({
+      findingCount: result.findings.length,
+      agentFailures: result.agentFailures,
+      postSummaryOnClean: runtimeConfig.postSummaryOnClean,
+      existingCommentId: targetCommentId,
+    });
     if (stayingSilent) {
       console.log(`[post-summary] clean PR and postSummaryOnClean=false — staying silent on ${repoFullName}#${prNumber}`);
     } else if (targetCommentId) {
@@ -1126,7 +1133,9 @@ export async function handler(
         (result.findings as Array<{ file?: unknown; title?: unknown }>)
           .filter((f) => typeof f.file === 'string' && f.file.length > 0
             && typeof f.title === 'string' && f.title.trim().length > 0)
-          .map((f) => withdrawnThreadKey(f.file as string, f.title as string)),
+          .map((f) => withdrawnThreadKey(f.file as string, f.title as string))
+          // #664 — a failed agent's prior threads stay open: not withdrawn, unevaluated.
+          .concat(priorView.withheldThreadKeys),
       );
       const closed = await resolveWithdrawnFindingThreads(
         octokit, owner, repo, prNumber, activeThreadKeys, selfLogin, STAGE,
@@ -1281,6 +1290,7 @@ export async function handler(
       infoCount,
       suppressedCount: result.suppressedCount,
       rejectedCustomAgents: runtimeConfig.rejectedCustomAgents,
+      agentFailures: result.agentFailures,
     });
     await writeCheckRun({
       status: 'completed',

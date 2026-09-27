@@ -1262,3 +1262,58 @@ describe('buildReviewDetailUrl (#486)', () => {
       .toBe(buildReviewDetailUrl('https://mw.example', 'o/r', '1#a'));
   });
 });
+
+// ─── #664 — a failed custom agent is disclosed, never read as an all-clear ──
+
+describe('formatReviewComment — custom agent failures (#664)', () => {
+  const G = { agent: 'no-todo', source: { kind: 'org' as const, agent: 'no-todo', enforcement: 'blocking' as const }, reason: 'error' as const };
+  const A = { agent: 'style-guide', source: { kind: 'org' as const, agent: 'style-guide', enforcement: 'advisory' as const }, reason: 'error' as const };
+  const F = () => formatReviewComment(baseOptions({ mergeScore: 5, agentFailures: [G] }));
+
+  it('a gating failure renders the notice and no all-clear', () => {
+    const out = F();
+    expect(out).toContain('**Custom agent failed:** no\\-todo (org, blocking) — policy not evaluated; this check fails. Re-run the check to retry.');
+    expect(out).not.toContain('**Looks good to me!**');
+    expect(out).toContain('No blocking findings from the agents that ran.');
+  });
+
+  it('the header does not say "Looks good to me"', () => {
+    expect(F()).toContain('5/5 — No action items in the diff');
+    expect(F()).not.toContain('5/5 — Looks good to me');
+  });
+
+  it('with allClearMessage off, no terse all-clear either', () => {
+    const out = formatReviewComment(baseOptions({ mergeScore: 5, agentFailures: [G], ux: { allClearMessage: false } }));
+    expect(out).not.toContain('Looks good to me — nothing raised');
+    expect(out).toContain('No blocking findings from the agents that ran.');
+  });
+
+  it('with an unverified critical, the advisory line points at the notice', () => {
+    const out = formatReviewComment(baseOptions({
+      mergeScore: 3,
+      agentFailures: [G],
+      findings: [makeFinding({ severity: 'critical', verification: 'unverified' })],
+    }));
+    expect(out).toContain('No blocking issues from the agents that ran — see the notice and unverified concerns.');
+  });
+
+  it('(pin) an advisory failure alone keeps the all-clear', () => {
+    expect(formatReviewComment(baseOptions({ mergeScore: 5, agentFailures: [A] }))).toContain('**Looks good to me!**');
+  });
+
+  it('an advisory failure renders the quiet notice', () => {
+    expect(formatReviewComment(baseOptions({ mergeScore: 5, agentFailures: [A] })))
+      .toContain('<sub>Advisory org agent failed (does not affect the check): style\\-guide (org, advisory).</sub>');
+  });
+
+  it('the notice survives when the body is shed to fit the budget', () => {
+    const many = Array.from({ length: 400 }, (_, i) => makeFinding({
+      severity: 'info', title: `Finding ${i}`, description: 'x'.repeat(400), line: i + 1,
+    }));
+    const out = formatReviewComment(baseOptions({ mergeScore: 4, agentFailures: [G], findings: many, diagram: 'graph TD\n  A --> B' }));
+    expect(out.length).toBeLessThanOrEqual(COMMENT_BODY_BUDGET);
+    // Positive control: something was actually shed.
+    expect(out).toMatch(/omitted|truncated to fit/);
+    expect(out).toContain('**Custom agent failed:** no\\-todo');
+  });
+});

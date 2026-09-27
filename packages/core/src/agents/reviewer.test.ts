@@ -41,7 +41,7 @@ import {
   type OrchestratedFinding,
 } from './reviewer.js';
 import { formatReviewComment } from '../comment-formatter.js';
-import { buildMergeGate } from '../gate.js';
+import { buildMergeGate, emptyGate } from '../gate.js';
 import { AGENT_MODE_SUFFIX, AGENT_MODE_PLACEHOLDER, FINDING_VERIFICATION_PROMPT } from './prompts.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -5085,6 +5085,7 @@ describe('runReviewPipeline — the merge gate (#662)', () => {
       const [todo] = todoOf(result);
       expect(todo).toMatchObject({ verification: 'unverified', verificationOutcome: 'refuted' });
       expect(result.gate).toEqual({
+        ...emptyGate(),
         fails: false, blockingCriticalCount: 0, advisoryCriticalCount: 0, unverifiedCriticalCount: 1,
         orgBlockedBy: [], refutedOrgBlockingCount: 1, authorWaivedBlocking: [],
       });
@@ -5092,6 +5093,7 @@ describe('runReviewPipeline — the merge gate (#662)', () => {
     });
 
     const failsClosed = {
+      ...emptyGate(),
       fails: true, blockingCriticalCount: 1, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
       orgBlockedBy: ['no-todo'], refutedOrgBlockingCount: 0, authorWaivedBlocking: [],
     };
@@ -5293,8 +5295,191 @@ describe('runReviewPipeline — the merge gate (#662)', () => {
     );
     expect(todoOf(result)).toHaveLength(0);
     expect(result.gate).toEqual({
+      ...emptyGate(),
       fails: false, blockingCriticalCount: 0, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
       orgBlockedBy: [], refutedOrgBlockingCount: 0, authorWaivedBlocking: ['no-todo'],
     });
+  });
+});
+
+// ─── #664 — a failing custom agent fails the gate closed ───────────────────
+
+describe('runReviewPipeline — custom agent failures (#664)', () => {
+  const allAgentsEnabled: ReviewPipelineOptions['enabledAgents'] = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+  const EMPTY = JSON.stringify({ findings: [] });
+  const T = () => Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' });
+  const TODO_PROMPT = 'Flag any new TODO comment';
+  const HOUSE_PROMPT = 'Flag violations of the house rule';
+  const blockingTodo: CustomAgentDef = { name: 'no-todo', prompt: TODO_PROMPT, severityDefault: 'critical', enabled: true, enforcement: 'blocking', origin: 'org' };
+  const advisoryTodo: CustomAgentDef = { ...blockingTodo, enforcement: 'advisory' };
+  const houseRule: CustomAgentDef = { name: 'house-rule', prompt: HOUSE_PROMPT, severityDefault: 'critical', enabled: true, origin: 'repo' };
+  const G = { agent: 'no-todo', source: { kind: 'org', agent: 'no-todo', enforcement: 'blocking' }, reason: 'error' } as const;
+
+  /** A custom agent's answer: a string, or a function of its call number (1-based) that may throw. */
+  type Answer = string | ((call: number) => string);
+  type Route = { custom?: Record<string, Answer>; security?: string; orchestrator?: string };
+
+  /** Routes by prompt content, as the #662 describe does; each custom agent counts its own calls. */
+  function routedLLM(route: Route) {
+    const calls: { prompt: string }[] = [];
+    const perAgent = new Map<string, number>();
+    const llm: ILLMProvider = {
+      async invoke(_m: string, prompt: PromptInput) {
+        const p = renderPrompt(prompt);
+        calls.push({ prompt: p });
+        if (p.includes('--- Finding ---')) return JSON.stringify({ valid: true, reason: 'Confirmed.' });
+        if (p.includes('--- Delta ---')) return 'Resolved one critical.';
+        if (p.includes('--- Findings from all agents')) {
+          return route.orchestrator ?? JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+        }
+        for (const [marker, answer] of Object.entries(route.custom ?? {})) {
+          if (!p.includes(marker)) continue;
+          const n = (perAgent.get(marker) ?? 0) + 1;
+          perAgent.set(marker, n);
+          return typeof answer === 'function' ? answer(n) : answer;
+        }
+        if (p.includes('specialised in application security')) return route.security ?? EMPTY;
+        if (p.includes('prose summary')) return JSON.stringify({ summary: 'Adds code.' });
+        if (p.includes('Mermaid diagram')) return '%% overview\nflowchart TD\n  A-->B';
+        return EMPTY;
+      },
+    };
+    return { llm, calls };
+  }
+
+  function expectNoUndefined(value: unknown, path: string): void {
+    if (Array.isArray(value)) { value.forEach((v, i) => expectNoUndefined(v, `${path}[${i}]`)); return; }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        expect(v, `${path}.${k}`).not.toBeUndefined();
+        expectNoUndefined(v, `${path}.${k}`);
+      }
+    }
+  }
+
+  async function run(route: Route, opts: Partial<ReviewPipelineOptions> = {}) {
+    const mock = routedLLM(route);
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light',
+        maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [blockingTodo], ...opts,
+      },
+      { llm: mock.llm },
+    );
+    // Every scenario, failed or not: an array, and nothing undefined in it or the gate.
+    expect(Array.isArray(result.agentFailures)).toBe(true);
+    expectNoUndefined(result.agentFailures, 'agentFailures');
+    expectNoUndefined(result.gate, 'gate');
+    return { result, ...mock };
+  }
+  const boom = () => { throw new Error('boom'); };
+
+  it('a throttle from a custom agent propagates, so the review parks', async () => {
+    await expect(run({ custom: { [TODO_PROMPT]: () => { throw T(); } } })).rejects.toThrow(/Too many requests/);
+  });
+
+  it('a blocking agent that throws fails the gate, not as an org block', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: boom } });
+    expect(result.mergeScore).toBe(5);
+    expect(result.agentFailures).toEqual([G]);
+    expect(result.gate).toMatchObject({ fails: true, failedGatingAgents: ['no-todo'], orgBlockedBy: [] });
+  });
+
+  it('control: the same agent answering a critical is an org block', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: validFindingsJson([{ severity: 'critical', title: 'TODO added', confidence: 95 }]) } });
+    expect(result.agentFailures).toEqual([]);
+    expect(result.gate).toMatchObject({ fails: true, orgBlockedBy: ['no-todo'], failedGatingAgents: [] });
+  });
+
+  it('an advisory agent that throws is disclosed, not gating', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: boom } }, { customAgents: [advisoryTodo] });
+    expect(result.gate).toMatchObject({ fails: false, failedGatingAgents: [], failedAdvisoryAgents: ['no-todo'] });
+  });
+
+  it('a repo agent that throws gates', async () => {
+    const { result } = await run({ custom: { [HOUSE_PROMPT]: boom } }, { customAgents: [houseRule] });
+    expect(result.gate).toMatchObject({ fails: true, failedGatingAgents: ['house-rule'] });
+    expect(result.agentFailures).toEqual([{ agent: 'house-rule', source: { kind: 'repo', agent: 'house-rule' }, reason: 'error' }]);
+  });
+
+  it('a blocking agent answering in prose → unparseable', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: 'I looked and there is nothing to report here.' } });
+    expect(result.agentFailures).toEqual([{ ...G, reason: 'unparseable' }]);
+    expect(result.gate.fails).toBe(true);
+    expect(result.parseFailureCount).toBe(1);
+  });
+
+  it('a blocking agent answering empty objects → degenerate', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: '{"findings":[{},{},{}]}' } });
+    expect(result.agentFailures).toEqual([{ ...G, reason: 'degenerate' }]);
+    expect(result.gate.fails).toBe(true);
+  });
+
+  it('a blocking agent answering findings:null → degenerate, though no counter moves', async () => {
+    const { result } = await run({ custom: { [TODO_PROMPT]: '{"findings":null}' } });
+    expect(result.agentFailures).toEqual([{ ...G, reason: 'degenerate' }]);
+    expect(result.gate.fails).toBe(true);
+    expect(result.degenerateResponseCount).toBe(0);
+  });
+
+  it('a file-fetch round after the first failing → error', async () => {
+    const octokit = {
+      repos: {
+        getContent: vi.fn(async () => ({ data: { type: 'file', content: Buffer.from('x').toString('base64'), encoding: 'base64' } })),
+      },
+    } as any;
+    const { result } = await run(
+      { custom: { [TODO_PROMPT]: (n) => { if (n === 1) return '{"requestFiles":["a.ts"]}'; throw new Error('boom'); } } },
+      { fileFetchOptions: { octokit, owner: 'o', repo: 'r', ref: 'sha', maxContextKB: 256, maxRounds: 3 } },
+    );
+    expect(result.agentFailures).toEqual([G]);
+    expect(result.gate.fails).toBe(true);
+  });
+
+  it('{"findings":[]} and a minority of malformed entries are answers, not failures', async () => {
+    for (const answer of [
+      EMPTY,
+      JSON.stringify({ findings: [{}, { file: 'foo.ts', line: 3, severity: 'info', title: 'A', description: '', suggestion: '' }, { file: 'foo.ts', line: 3, severity: 'info', title: 'B', description: '', suggestion: '' }] }),
+    ]) {
+      const { result } = await run({ custom: { [TODO_PROMPT]: answer } });
+      expect(result.agentFailures).toEqual([]);
+      // The two real findings are floored to critical (#543), so they may
+      // block as findings; what must not happen is a failure.
+      expect(result.gate.failedGatingAgents).toEqual([]);
+    }
+    expect((await run({ custom: { [TODO_PROMPT]: EMPTY } })).result.gate.fails).toBe(false);
+  });
+
+  it('a failed agent\'s prior is not read as resolved: no score lift, no claim, no delta call', async () => {
+    const P = { title: 'PRIOR', category: 'no-todo', severity: 'critical', file: 'foo.ts', line: 3 };
+    const { result, calls } = await run(
+      {
+        custom: { [TODO_PROMPT]: boom },
+        security: validFindingsJson([{ line: 5, severity: 'warning', title: 'W', confidence: 90 }]),
+        orchestrator: JSON.stringify({
+          findings: [{ file: 'foo.ts', line: 5, severity: 'warning', confidence: 90, category: 'security', title: 'W', description: '', suggestion: '' }],
+          mergeScore: 3, mergeScoreReason: 'A warning.',
+        }),
+      },
+      { previousFindings: [P] },
+    );
+    expect(result.mergeScore).toBe(3);
+    expect(result.mergeScoreReason).not.toContain('Resolved 1 critical');
+    expect(calls.filter((c) => c.prompt.includes('--- Delta ---'))).toHaveLength(0);
+  });
+
+  it('logs each failure with its source and reason', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await run({ custom: { [TODO_PROMPT]: boom, [HOUSE_PROMPT]: boom } }, { customAgents: [blockingTodo, houseRule] });
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines).toContain('[custom-agents] "no-todo" (org, blocking) failed (error):');
+      expect(lines).toContain('[custom-agents] "house-rule" (repo) failed (error):');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

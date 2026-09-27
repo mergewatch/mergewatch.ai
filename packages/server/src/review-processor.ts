@@ -3,7 +3,7 @@ import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, makeCheckRunWriter,
   resolveWithdrawnFindingThreads, withdrawnThreadKey, isStillPRHead,
-  formatReviewComment, buildCheckOutcome, reviewEventForGate, formatGateLog, REVIEW_FAILED_CHECK_TITLE, isReservedAgentName, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, extractSkipPatterns,
+  formatReviewComment, buildCheckOutcome, reviewEventForGate, formatGateLog, REVIEW_FAILED_CHECK_TITLE, runtimePriorView, shouldStaySilent, isReservedAgentName, isThrottleError, computeDiffStats, runReviewPipeline, shouldSkipPR, shouldSkipByRules, isAutoReviewOff, extractIncludePatterns, extractSkipPatterns,
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
@@ -436,16 +436,6 @@ export async function processReviewJob(
   // Load installation config
   const installation = await deps.installationStore.get(instId, repoFullName);
   const instSettings = await deps.installationStore.getSettings(instId);
-  // #235 — org custom agents (dashboard-defined). Best-effort: never break a
-  // review if the store read fails. Scope/targeting filtering happens below,
-  // once the changed files are known.
-  const orgCustomAgents = await deps.installationStore
-    .getCustomAgents(instId)
-    .catch((err) => {
-      console.warn('Failed to load org custom agents:', err);
-      return [];
-    });
-
   // Apply dashboard InstallationSettings as config overrides (matches Lambda pattern)
   // Field mapping: logic → security agent, syntax → bugs agent, style → style agent
   // Severity: Low → info, Med → warning, High → critical
@@ -558,6 +548,12 @@ export async function processReviewJob(
   const startTime = Date.now();
 
   try {
+    // #235 — org custom agents (dashboard-defined). Scope/targeting filtering
+    // happens below, once the changed files are known. #664 — no longer
+    // best-effort: a failed read would silently skip every org policy, so it
+    // fails the review (or parks it, on a throttle) like any other error.
+    const orgCustomAgents = await deps.installationStore.getCustomAgents(instId);
+
     // Build agentic file fetch options (agents will request files they need)
     const ref = headSha;
     const fileFetchOptions: FileFetchOptions | undefined = config.codebaseAwareness
@@ -766,9 +762,12 @@ export async function processReviewJob(
     );
 
     // Compute delta from previous review (reusing prevComplete fetched earlier)
+    // #664 — a failed custom agent's priors are withheld: the agent did not
+    // answer, so their absence is not a fix.
+    const priorView = runtimePriorView(prevComplete?.findings, result.agentFailures);
     let delta: ReviewDelta | null = null;
     if (prevComplete?.findings) {
-      delta = computeReviewDelta(result.findings, prevComplete.findings);
+      delta = computeReviewDelta(result.findings, priorView.priors);
     }
 
     // FB-A / FB-B / FB-C — analytics writes. All best-effort; failures inside
@@ -790,8 +789,8 @@ export async function processReviewJob(
     // possible on retries).
     const nowIso = new Date().toISOString();
     await recordFindingSurfacings(deps.dispositionStore, installationId, repoFullName, result.findings, nowIso);
-    if (prevComplete?.findings && prevComplete.findings.length > 0) {
-      const quietDrops = detectQuietDrops(result.findings, prevComplete.findings, result.changedLines);
+    if (priorView.priors.length > 0) {
+      const quietDrops = detectQuietDrops(result.findings, priorView.priors, result.changedLines);
       if (quietDrops.length > 0) {
         console.log('[fb-b] %d quiet drop%s detected', quietDrops.length, quietDrops.length === 1 ? '' : 's');
         await recordQuietDrops(deps.dispositionStore, installationId, repoFullName, quietDrops);
@@ -812,6 +811,7 @@ export async function processReviewJob(
     // Format comment
     const comment = formatReviewComment({
       summary: result.summary,
+      agentFailures: result.agentFailures,
       findings: result.findings,
       showSummary: instSettings.summary?.prSummary !== false,
       showIssuesTable: instSettings.summary?.issuesTable !== false,
@@ -887,9 +887,14 @@ export async function processReviewJob(
     // #350 — postSummaryOnClean: false means a clean PR gets no comment. Only
     // the INITIAL post is gated: an existing MergeWatch comment is always
     // updated, so a previously-dirty PR that comes back clean never keeps a
-    // stale review claiming old findings.
-    const stayingSilent =
-      result.findings.length === 0 && config.postSummaryOnClean === false && !targetCommentId;
+    // stale review claiming old findings. #664 — a failed gating agent breaks
+    // the silence.
+    const stayingSilent = shouldStaySilent({
+      findingCount: result.findings.length,
+      agentFailures: result.agentFailures,
+      postSummaryOnClean: config.postSummaryOnClean,
+      existingCommentId: targetCommentId,
+    });
     if (stayingSilent) {
       console.log('[post-summary] clean PR and postSummaryOnClean=false — staying silent on %s#%d', repoFullName, prNumber);
     } else if (targetCommentId) {
@@ -952,7 +957,9 @@ export async function processReviewJob(
         (result.findings as Array<{ file?: unknown; title?: unknown }>)
           .filter((f) => typeof f.file === 'string' && f.file.length > 0
             && typeof f.title === 'string' && f.title.trim().length > 0)
-          .map((f) => withdrawnThreadKey(f.file as string, f.title as string)),
+          .map((f) => withdrawnThreadKey(f.file as string, f.title as string))
+          // #664 — a failed agent's prior threads stay open: not withdrawn, unevaluated.
+          .concat(priorView.withheldThreadKeys),
       );
       const closed = await resolveWithdrawnFindingThreads(
         octokit, owner, repo, prNumber, activeThreadKeys, selfLogin, STAGE,
@@ -1080,6 +1087,7 @@ export async function processReviewJob(
       infoCount,
       suppressedCount: result.suppressedCount,
       rejectedCustomAgents: config.rejectedCustomAgents,
+      agentFailures: result.agentFailures,
     });
     await writeCheckRun({
       status: 'completed',

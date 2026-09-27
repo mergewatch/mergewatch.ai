@@ -36,10 +36,10 @@ describe('DynamoInstallationStore — org custom agents (#235)', () => {
     expect(await store.getCustomAgents('42')).toEqual([]);
   });
 
-  it('getCustomAgents returns [] (not throw) on a client error', async () => {
+  it('#664 — getCustomAgents rejects on a client error, rather than reading as no agents', async () => {
     const client = { send: vi.fn().mockRejectedValue(new Error('boom')) } as any;
     const store = new DynamoInstallationStore(client, 'tbl');
-    expect(await store.getCustomAgents('42')).toEqual([]);
+    await expect(store.getCustomAgents('42')).rejects.toThrow('boom');
   });
 
   it('getCustomAgents sanitizes a malformed stored blob', async () => {

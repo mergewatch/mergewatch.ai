@@ -57,9 +57,9 @@ import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/age
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
 import { extractChangedLines, isLineNearChange } from '../diff-filter.js';
-import { buildMergeGate } from '../gate.js';
+import { buildMergeGate, describeSource, failedAgentPriors } from '../gate.js';
 import { BUILTIN_FINDING_CATEGORIES } from '../builtin-categories.js';
-import type { FindingSource, VerificationOutcome, MergeGate } from '../gate.js';
+import type { FindingSource, VerificationOutcome, MergeGate, CustomAgentFailure } from '../gate.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -572,6 +572,16 @@ export interface AgentDiagnostics {
 }
 
 /**
+ * #664 — per-run facts the shared counters cannot carry, for a custom agent
+ * whose failure gates: a file-fetch round after the first threw (the answer
+ * is empty, not "no findings"), or `findings` came back null.
+ */
+export interface AgentRunFlags {
+  laterRoundFailed: boolean;
+  nullFindings: boolean;
+}
+
+/**
  * #401 — is this a usable finding, as opposed to a shape that merely occupies
  * an array slot?
  *
@@ -609,7 +619,7 @@ const DEGENERATE_USABLE_RATIO = 0.5;
  * here means only real findings ever reach the raw count, and a malfunctioning
  * agent is reported as a malfunction instead of as productive filtering.
  */
-export function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentFinding[] {
+export function parseAgentFindings(raw: string, diag?: AgentDiagnostics, flags?: AgentRunFlags): AgentFinding[] {
   const parsed = tryParseJson<{ findings: AgentFinding[] }>(raw, 'findings');
   if (parsed === null) {
     console.warn('Could not parse agent JSON response, using fallback:', raw.trim().slice(0, 200));
@@ -618,7 +628,10 @@ export function parseAgentFindings(raw: string, diag?: AgentDiagnostics): AgentF
   }
 
   const value = parsed.findings;
-  if (value == null) return [];
+  if (value == null) {
+    if (flags) flags.nullFindings = true;
+    return [];
+  }
 
   // `.length` exists on strings too, so an unchecked non-array silently
   // contributes its character count to the raw total.
@@ -663,9 +676,11 @@ async function invokeAgentText(
   fileFetchOptions?: FileFetchOptions,
   /** #518 — preserved across the fetch path; see invokeWithFileFetching. */
   sampling?: LLMSamplingConfig,
+  flags?: AgentRunFlags,
 ): Promise<string> {
   if (fileFetchOptions) {
     const result = await invokeWithFileFetching(llm, modelId, prompt, fileFetchOptions, undefined, sampling);
+    if (result.laterRoundFailed && flags) flags.laterRoundFailed = true;
     if (result.roundsUsed > 1) {
       const fileCount = Object.keys(result.fetchedFiles).length;
       console.log(
@@ -708,10 +723,11 @@ async function invokeAgent(
   prompt: PromptInput,
   fileFetchOptions?: FileFetchOptions,
   schema?: object,
+  flags?: AgentRunFlags,
 ): Promise<string> {
   if (schema && llm.invokeStructured) {
     try {
-      return await invokeAgentText(structuredAsText(llm, schema), modelId, prompt, fileFetchOptions);
+      return await invokeAgentText(structuredAsText(llm, schema), modelId, prompt, fileFetchOptions, undefined, flags);
     } catch (err) {
       if (isThrottleError(err)) throw err;
       if (!(err instanceof StructuredOutputUnsupportedError)) {
@@ -719,7 +735,7 @@ async function invokeAgent(
       }
     }
   }
-  return invokeAgentText(llm, modelId, prompt, fileFetchOptions);
+  return invokeAgentText(llm, modelId, prompt, fileFetchOptions, undefined, flags);
 }
 
 // ─── Individual agents ─────────────────────────────────────────────────────
@@ -1443,11 +1459,13 @@ export async function runCustomAgent(
   conventions?: string,
   agentAuthored?: boolean,
   diag?: AgentDiagnostics,
+  /** #664 — set when the answer was empty for a reason the counters miss. */
+  flags?: AgentRunFlags,
 ): Promise<AgentFinding[]> {
   const systemPrompt = `${agentDef.prompt}\n${CUSTOM_AGENT_RESPONSE_FORMAT}`;
   const prompt = buildPrompt(systemPrompt, diff, context, !!fileFetchOptions, undefined, conventions, agentAuthored);
-  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA);
-  const findings = parseAgentFindings(raw, diag);
+  const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, AGENT_FINDINGS_SCHEMA, flags);
+  const findings = parseAgentFindings(raw, diag, flags);
   // #543 — the configured severity is a FLOOR, not a fallback.
   //
   // This was `f.severity || agentDef.severityDefault`, which applied the admin's
@@ -1827,6 +1845,11 @@ export interface ReviewPipelineResult {
    * event from it; neither recomputes it.
    */
   gate: MergeGate;
+  /**
+   * #664 — custom agents that produced no usable answer this run. Always an
+   * array. A gating one fails `gate`; the runtimes disclose every one.
+   */
+  agentFailures: CustomAgentFailure[];
   /** Map of file → set of new-side line numbers that were actually changed */
   changedLines: Map<string, Set<number>>;
   diagram: string;
@@ -3306,16 +3329,44 @@ export async function runReviewPipeline(
   ];
 
   // Run enabled custom agents with the same concurrency cap.
+  //
+  // #664 — a custom agent that produced no usable answer is recorded, not
+  // read as "no findings": for a gating agent (repo, or blocking org) that
+  // would pass a policy nobody evaluated. Each run gets its own counters so
+  // the failure is attributed; they are added to the shared ones after. A
+  // throttle propagates, so the review parks and is retried.
   const enabledCustomAgents = customAgents.filter((a) => a.enabled);
+  const agentFailures: CustomAgentFailure[] = [];
   const customResults = enabledCustomAgents.length > 0
     ? await withConcurrency<AgentFinding[]>(
-        enabledCustomAgents.map((agentDef) => () =>
-          runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored, diag)
-            .catch((err) => {
-              console.warn(`Custom agent "${agentDef.name}" failed:`, err);
-              return [] as AgentFinding[];
-            })
-        ),
+        enabledCustomAgents.map((agentDef) => async () => {
+          const own: AgentDiagnostics = { parseFailures: 0, degenerateResponses: 0 };
+          const flags: AgentRunFlags = { laterRoundFailed: false, nullFindings: false };
+          let findings: AgentFinding[] = [];
+          let reason: CustomAgentFailure['reason'] | null = null;
+          let error: unknown;
+          try {
+            findings = await runCustomAgent(agentDef, diff, context, modelId, llm, fileFetchOptions, conventions, agentAuthored, own, flags);
+            reason = flags.laterRoundFailed ? 'error'
+              : own.parseFailures > 0 ? 'unparseable'
+                : own.degenerateResponses > 0 || flags.nullFindings ? 'degenerate'
+                  : null;
+          } catch (err) {
+            if (isThrottleError(err)) throw err;
+            reason = 'error';
+            error = err;
+          } finally {
+            diag.parseFailures += own.parseFailures;
+            diag.degenerateResponses += own.degenerateResponses;
+          }
+          if (reason) {
+            const source = sourceForAgent(agentDef);
+            console.warn(`[custom-agents] "${agentDef.name}" (${describeSource(source)}) failed (${reason}):`, error ?? '');
+            agentFailures.push({ agent: agentDef.name, source, reason });
+            return [];
+          }
+          return findings;
+        }),
         AGENT_CONCURRENCY,
       )
     : [];
@@ -3992,7 +4043,14 @@ export async function runReviewPipeline(
   trace.finalize(cappedFindings);
   const filterOutcomes = trace.outcomes();
 
-  const delta = computeReviewDelta(cappedFindings, previousFindings);
+  // #664 — a failed agent's priors are withheld from what reads them as
+  // resolved: the delta, its caption and the score. Verification (above)
+  // still sees every prior.
+  const withheldPriors = new Set(failedAgentPriors(previousFindings, agentFailures));
+  const scoringPriors = withheldPriors.size > 0
+    ? (previousFindings ?? []).filter((p) => !withheldPriors.has(p))
+    : previousFindings;
+  const delta = computeReviewDelta(cappedFindings, scoringPriors);
   const deltaCaption = delta
     ? await runDeltaCaptionAgent(delta, lightModelId, llm)
     : null;
@@ -4011,14 +4069,14 @@ export async function runReviewPipeline(
   ).length;
 
   // #662 — the merge gate, once, from what will be posted. #640 reuses it.
-  const gate = buildMergeGate(cappedFindings, triageSuppressed);
+  const gate = buildMergeGate(cappedFindings, triageSuppressed, agentFailures);
 
   // Reconcile the orchestrator's verdict with the post-filter findings.
   const { mergeScore, mergeScoreReason, disputeDisclosure } = reconcileMergeScore({
     // #569 — the verdict must describe what was POSTED. Scoring the uncapped
     // set would justify a score against findings the reader never sees.
     filteredFindings: cappedFindings,
-    previousFindings,
+    previousFindings: scoringPriors,
     orchestratorScore: orchestratorResult.mergeScore,
     orchestratorReason: orchestratorResult.mergeScoreReason,
     categoryDisputeRates: options.categoryDisputeRates,
@@ -4059,6 +4117,7 @@ export async function runReviewPipeline(
     summary,
     findings: cappedFindings,
     gate,
+    agentFailures,
     changedLines,
     diagram: diagramResult.diagram,
     diagramCaption: diagramResult.caption,

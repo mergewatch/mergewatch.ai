@@ -260,6 +260,36 @@ describe('invokeWithFileFetching', () => {
     ).rejects.toThrow('LLM down');
   });
 
+  // #664 — a later round that fails leaves no answer. A throttle must park
+  // the review; any other error is reported as a failed round, not as "no
+  // findings".
+  function failingOnRound1(err: Error): ILLMProvider & { calls: number } {
+    const llm = {
+      calls: 0,
+      async invoke() {
+        llm.calls++;
+        if (llm.calls === 1) return '{"requestFiles":["a.ts"]}';
+        throw err;
+      },
+    };
+    return llm as any;
+  }
+
+  it('#664 — a throttle on a later round propagates', async () => {
+    const T = Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' });
+    const llm = failingOnRound1(T);
+    await expect(invokeWithFileFetching(llm, 'model', 'prompt', makeFetchOptions({ 'a.ts': 'x' })))
+      .rejects.toThrow('Too many requests');
+    expect(llm.calls).toBe(2);
+  });
+
+  it('#664 (pin) — any other later-round error returns an empty response, flagged', async () => {
+    const llm = failingOnRound1(new Error('boom'));
+    const result = await invokeWithFileFetching(llm, 'model', 'prompt', makeFetchOptions({ 'a.ts': 'x' }));
+    expect(result).toMatchObject({ response: '', roundsUsed: 1, laterRoundFailed: true });
+    expect(llm.calls).toBe(2);
+  });
+
   it('handles all-invalid paths gracefully (forces analysis)', async () => {
     const llm = createMockLLM([
       '{"requestFiles": ["/abs/path", "../traversal", ""]}',
