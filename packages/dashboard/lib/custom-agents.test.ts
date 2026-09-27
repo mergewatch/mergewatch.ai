@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stampAudit, contentKey } from "./custom-agents";
+import { stampAudit, contentKey, reservedNameViolations, annotateNameCollisions } from "./custom-agents";
 import type { OrgCustomAgent } from "@mergewatch/core";
 
 function agent(over: Partial<OrgCustomAgent> = {}): OrgCustomAgent {
@@ -62,5 +62,49 @@ describe("contentKey", () => {
   });
   it("differs when a meaningful field changes", () => {
     expect(contentKey(agent())).not.toBe(contentKey(agent({ enforcement: "blocking" })));
+  });
+});
+
+describe("reservedNameViolations (#662)", () => {
+  const storedBug = agent({ id: "s1", name: "bug" });
+
+  it("flags a new agent named after a built-in category", () => {
+    expect(reservedNameViolations([{ id: "", name: "bug" }], [])).toEqual(["bug"]);
+  });
+
+  it("matches the trimmed name", () => {
+    expect(reservedNameViolations([{ id: "", name: " bug " }], [])).toEqual(["bug"]);
+  });
+
+  it("flags a reserved name under an id that is not stored", () => {
+    expect(reservedNameViolations([{ id: "unknown", name: "bug" }], [storedBug])).toEqual(["bug"]);
+  });
+
+  it("flags a rename to a reserved name", () => {
+    expect(reservedNameViolations([{ id: "a1", name: "bug" }], [agent({ id: "a1", name: "No console.log" })])).toEqual(["bug"]);
+  });
+
+  it("lets an unchanged stored agent keep its reserved name", () => {
+    expect(reservedNameViolations([{ ...storedBug }], [storedBug])).toEqual([]);
+  });
+
+  it("is case-sensitive: Bug is not reserved", () => {
+    expect(reservedNameViolations([{ id: "", name: "Bug" }], [])).toEqual([]);
+  });
+
+  it("ignores entries sanitizing would drop anyway", () => {
+    expect(reservedNameViolations([null, 3, { name: 7 }, { id: "", name: "perf" }], [])).toEqual([]);
+  });
+
+  it("names every offender", () => {
+    expect(reservedNameViolations([{ name: "security" }, { name: "style" }], [])).toEqual(["security", "style"]);
+  });
+});
+
+describe("annotateNameCollisions (#662)", () => {
+  it("marks only reserved names", () => {
+    const out = annotateNameCollisions([agent({ id: "a", name: "bug" }), agent({ id: "b", name: "perf" }), agent({ id: "c", name: "Bug" })]);
+    expect(out.map((a) => "nameCollision" in a)).toEqual([true, false, false]);
+    expect(out[0].nameCollision).toBe(true);
   });
 });

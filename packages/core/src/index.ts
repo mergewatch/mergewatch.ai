@@ -59,7 +59,24 @@ export {
   isValidMermaidDiagram,
   extractDiagramFilePaths,
   validateDiagramPaths,
+  orchestratorPriors,
+  isCustomReEmission,
+  sourceForAgent,
 } from './agents/reviewer.js';
+// #662 — the merge gate, defined once.
+export {
+  BUILTIN_FINDING_CATEGORIES,
+  isReservedAgentName,
+  buildMergeGate,
+  buildCheckOutcome,
+  reviewEventForGate,
+  formatGateLog,
+  ORG_BLOCKED_TITLE_PREFIX,
+  REVIEW_FAILED_CHECK_TITLE,
+} from './gate.js';
+export type {
+  MergeGate, FindingSource, VerificationOutcome, GateFinding, CheckOutcome, CheckOutcomeInput,
+} from './gate.js';
 export {
   handleInlineReply,
   detectResolveIntent,

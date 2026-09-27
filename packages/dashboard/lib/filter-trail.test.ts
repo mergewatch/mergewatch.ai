@@ -142,7 +142,7 @@ describe("stage list drift (#472)", () => {
     // presence in STAGE_LABELS is asserted separately.
     const stages = (Object.keys(STAGE_LABELS) as string[])
       .filter((s) => s !== UNKNOWN_STAGE) as FilterStage[];
-    expect(stages).toHaveLength(12);
+    expect(stages).toHaveLength(13); // #662 added custom-prior-reemission
     expect(Object.keys(STAGE_LABELS)).toContain(UNKNOWN_STAGE);
     for (const s of stages) {
       expect(() => recorder.record(

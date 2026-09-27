@@ -1,7 +1,7 @@
 /**
  * #470 — the filter outcome ledger.
  *
- * Twelve stages in `runReviewPipeline` can delete, merge, or demote a finding.
+ * Thirteen stages in `runReviewPipeline` can delete, merge, or demote a finding.
  * Every one announced its decision to `console.warn` and nowhere else, and
  * what survived to the reader was a single scalar:
  *
@@ -36,6 +36,7 @@ export type FilterStage =
   | 'finding-verify'        // W2 / FP-E verifier verdict
   | 'line-proximity'        // ±3 changed-line filter
   | 'custom-agent-dedup'    // #385 re-entry
+  | 'custom-prior-reemission' // #662 orchestrator re-emitted a custom prior
   | 'triage-suppressed'
   /** #569 — over the repo's `maxFindings` cap. */
   | 'max-findings';    // W3

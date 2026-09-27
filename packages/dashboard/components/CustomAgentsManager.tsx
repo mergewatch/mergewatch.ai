@@ -10,7 +10,8 @@ interface Props {
   repos: string[];
 }
 
-type Draft = OrgCustomAgent;
+/** `nameCollision` is set by the API on stored agents named like a built-in category (#662). */
+type Draft = OrgCustomAgent & { nameCollision?: true };
 
 function blankAgent(): Draft {
   return {
@@ -115,7 +116,9 @@ export default function CustomAgentsManager({ installationId, isAdmin, repos }: 
           Org-wide review agents enforced across your repositories. Each runs in
           addition to the built-in agents and any repo&apos;s <code>.mergewatch.yml</code>.
           {" "}Set an agent to <strong>blocking</strong> to fail the check run and request
-          changes when it flags a critical issue.
+          changes when it flags a critical issue, unless the verifier refuted it. The
+          built-in category names (security, bug, style, error-handling, test-coverage,
+          comment-accuracy) are reserved.
         </p>
       </header>
 
@@ -222,6 +225,14 @@ function AgentCard({
           disabled={disabled}
           onChange={(e) => onChange({ name: e.target.value })}
         />
+        {agent.nameCollision && (
+          <span
+            className="shrink-0 self-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600"
+            title="This name is a built-in review category. The agent still runs, but a new agent could not take this name; consider renaming it."
+          >
+            Reserved name
+          </span>
+        )}
         {!disabled && (
           <button type="button" onClick={onRemove} className="p-1.5 text-fg-tertiary transition hover:text-red-500" aria-label="Remove agent">
             <Trash2 className="h-4 w-4" />

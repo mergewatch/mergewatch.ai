@@ -17,7 +17,7 @@ Only **organization admins** can create or edit org agents. Other members see a 
 
 | Field | Notes |
 |---|---|
-| **Name** | Display name, and the category findings are filed under. |
+| **Name** | Display name, and the category findings are filed under. The built-in category names (`security`, `bug`, `style`, `error-handling`, `test-coverage`, `comment-accuracy`) are reserved and cannot be used for a new agent. An agent saved under one before this rule still runs, and is marked **Reserved name** in the dashboard. |
 | **Prompt** | The system prompt — what this agent looks for. |
 | **Default severity** | `info`, `warning`, or `critical`. |
 | **Enforcement** | `advisory` or `blocking`. See below. |
@@ -38,10 +38,18 @@ Findings appear in the review like any other. They feed the merge-readiness scor
 </Card>
 
 <Card title="Blocking" icon="shield-halved">
-A **critical** finding from this agent fails the check run **and** requests changes — **regardless of the overall merge score**.
+A **critical** finding from this agent fails the check run **and** requests changes, whatever the overall merge score, **unless the verifier refuted it**.
 </Card>
 
 </CardGroup>
+
+### What the verifier does to a blocking finding
+
+Before a blocking agent's critical can fail a check, MergeWatch sends it, with the file it cites, to a verifier model:
+
+- **Refuted**: the verifier read the code and found the claim false. The finding is still shown, marked unverified, and does not block. The review is posted as a comment and never approves.
+- **Could not be confirmed**: the verifier errored, gave no usable verdict, or dismissed the finding only because the code claims to be intentional. The finding **blocks**. A verifier failure never lets a blocking finding through.
+- **Confirmed**, or not verifiable (the file could not be read): the finding **blocks**.
 
 <Warning>
 Blocking enforcement bypasses the normal scoring path. A PR that MergeWatch would otherwise consider ready to merge is still blocked by a single critical finding from a blocking agent. That is the point — but it also means a poorly-worded blocking prompt can stop every PR in the organization.

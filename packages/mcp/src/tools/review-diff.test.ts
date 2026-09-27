@@ -22,6 +22,7 @@ import {
   splitOwnerRepo,
   validateInput,
 } from './review-diff.js';
+import type { ReviewPipelineResult } from '@mergewatch/core';
 import type { McpServerDeps } from '../server-deps.js';
 import type { AuthResolution } from '../middleware/auth.js';
 
@@ -69,17 +70,26 @@ function mockPipelineResult() {
       ['a.ts', new Set([1, 2, 3])],
       ['b.ts', new Set([5])],
     ]),
+    // #662 — the one critical is a built-in, untagged: it blocks.
+    gate: {
+      fails: true, blockingCriticalCount: 1, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
+      orgBlockedBy: [], refutedOrgBlockingCount: 0, authorWaivedBlocking: [],
+    },
     diagram: '',
     diagramCaption: '',
     mergeScore: 3,
     mergeScoreReason: 'meh',
     suppressedCount: 4,
+    filterOutcomes: [],
+    parseFailureCount: 0,
+    degenerateResponseCount: 0,
     enabledAgentCount: 6,
     inputTokens: 100,
     outputTokens: 50,
     estimatedCostUsd: 0.12,
     conventionsUsed: false,
-  } as const;
+    deltaCaption: null,
+  } satisfies ReviewPipelineResult;
 }
 
 describe('splitOwnerRepo', () => {
@@ -112,7 +122,7 @@ describe('validateInput', () => {
 
 describe('buildOutput', () => {
   it('shapes stats from the pipeline result', () => {
-    const out = buildOutput('sess-1', 2, mockPipelineResult() as any, 1234);
+    const out = buildOutput('sess-1', 2, mockPipelineResult(), 1234);
     expect(out.sessionId).toBe('sess-1');
     expect(out.iteration).toBe(2);
     expect(out.mergeScore).toBe(3);

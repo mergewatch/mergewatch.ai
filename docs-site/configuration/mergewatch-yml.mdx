@@ -185,7 +185,7 @@ You can define custom agents using the `customAgents` array. Custom agents run i
 
 | Property | Type | Default | Description |
 |---|---|---|---|
-| `name` | `string` | — | A unique identifier for the custom agent. |
+| `name` | `string` | — | A unique identifier for the custom agent. The built-in category names (`security`, `bug`, `style`, `error-handling`, `test-coverage`, `comment-accuracy`) are reserved: an agent using one is ignored, logged, and listed in the check summary as `ignored custom agents (reserved names)`. |
 | `prompt` | `string` | — | **(Required)** The system prompt for the agent. This defines what the agent looks for in the code. |
 | `severityDefault` | `string` | `"warning"` | Default severity for findings from this agent. One of: `"info"`, `"warning"`, `"critical"`. |
 | `enabled` | `boolean` | `true` | Set to `false` to disable the custom agent. |
@@ -202,6 +202,8 @@ customAgents:
     severityDefault: info
     enabled: true
 ```
+
+A **critical** finding from a repo custom agent fails the MergeWatch check run, like a critical from a built-in agent. Repo agents have no advisory mode; to report without gating, set `severityDefault` below `critical`. Findings from repo agents are not sent to the verifier.
 
 ### Rules
 

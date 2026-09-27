@@ -27,6 +27,12 @@ export interface DetailFinding {
   description?: string;
   suggestion?: string;
   verification?: "verified" | "unverified";
+  /** #662 — why a custom finding is unverified: only `refuted` stops a blocking one from blocking. */
+  verificationOutcome?: "refuted" | "inconclusive";
+  /** #662 — which custom agent reported it; absent on built-in findings. */
+  source?:
+    | { kind: "org"; agent: string; enforcement: "advisory" | "blocking" }
+    | { kind: "repo"; agent: string };
   /** #469 — per-finding proof, rendered in full here (#472 Part B). */
   evidence?: FindingEvidence;
 }

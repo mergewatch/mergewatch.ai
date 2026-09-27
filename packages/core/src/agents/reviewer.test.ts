@@ -41,6 +41,7 @@ import {
   type OrchestratedFinding,
 } from './reviewer.js';
 import { formatReviewComment } from '../comment-formatter.js';
+import { buildMergeGate } from '../gate.js';
 import { AGENT_MODE_SUFFIX, AGENT_MODE_PLACEHOLDER, FINDING_VERIFICATION_PROMPT } from './prompts.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -2147,8 +2148,9 @@ describe('runReviewPipeline', () => {
       { file: 'foo.ts', line: 3, severity: 'critical', title: 'New TODO comment added', confidence: 95 },
     ]);
     const orchestrator = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
-    // NOTE: no verifier response queued. If the pipeline called the verifier
-    // for an advisory agent, the mock would run dry and this would fail.
+    // NOTE: no verifier response queued. The mock never runs dry (it replays
+    // its last response), so this test does not by itself prove the verifier
+    // was skipped; the absent `verification` tag below does.
     const llm = createMockLLM([
       JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
       JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }), JSON.stringify({ findings: [] }),
@@ -2167,8 +2169,9 @@ describe('runReviewPipeline', () => {
   });
 
   it('#510 — a repo-level agent with no enforcement field is treated as advisory', async () => {
-    // Back-compat: `.mergewatch.yml` customAgents cannot block and carry no
-    // enforcement, so absent must never mean "verify".
+    // Back-compat: `.mergewatch.yml` customAgents carry no enforcement, so
+    // absent must never mean "verify". They are not advisory at the gate,
+    // though: a repo agent's critical fails the check (#662).
     const repoAgent = { name: 'house-rule', prompt: 'Flag X', severityDefault: 'critical' as const, enabled: true };
     const customResponse = validFindingsJson([
       { file: 'foo.ts', line: 3, severity: 'critical', title: 'House rule broken', confidence: 95 },
@@ -4972,5 +4975,326 @@ describe('ledger survives fingerprinting (#484)', () => {
     const surfaced = result.filterOutcomes.filter((o) => o.outcome === 'surfaced');
     expect(surfaced).toHaveLength(1);
     expect(surfaced[0].agents).toEqual(['security']);
+  });
+});
+
+// ─── #662 — one merge gate, read from provenance ────────────────────────────
+
+describe('runReviewPipeline — the merge gate (#662)', () => {
+  const allAgentsEnabled: ReviewPipelineOptions['enabledAgents'] = {
+    security: true, bugs: true, style: true, summary: true, diagram: true,
+    errorHandling: true, testCoverage: true, commentAccuracy: true,
+  };
+  const EMPTY = JSON.stringify({ findings: [] });
+  const CLEAN = JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'Clean.' });
+  const TODO_PROMPT = 'Flag any new TODO comment';
+  const TODO_TITLE = 'New TODO comment added';
+  const blockingTodo: CustomAgentDef = {
+    name: 'no-todo', prompt: TODO_PROMPT, severityDefault: 'critical', enabled: true, enforcement: 'blocking', origin: 'org',
+  };
+  const todoCritical = (over: Partial<AgentFinding> = {}) =>
+    validFindingsJson([{ file: 'foo.ts', line: 3, severity: 'critical', title: TODO_TITLE, confidence: 95, ...over }]);
+
+  type Route = {
+    security?: string;
+    bug?: string;
+    /** Custom-agent responses, keyed by a string unique to that agent's prompt. */
+    custom?: Record<string, string>;
+    orchestrator?: string;
+    verifier?: (prompt: string) => string;
+  };
+
+  /**
+   * Routes each call by what its prompt is, not by call order: agents run
+   * concurrently, and the orchestrator is skipped when it has nothing to do,
+   * so a positional queue says less about which response reached which call.
+   * Verifier calls are the ones carrying `--- Finding ---`.
+   */
+  function routedLLM(route: Route) {
+    const calls: { modelId: string; prompt: string }[] = [];
+    const llm: ILLMProvider = {
+      async invoke(modelId: string, prompt: PromptInput) {
+        const p = renderPrompt(prompt);
+        calls.push({ modelId, prompt: p });
+        if (p.includes('--- Finding ---')) return route.verifier ? route.verifier(p) : JSON.stringify({ valid: true, reason: 'Confirmed at the cited line.' });
+        if (p.includes('--- Findings from all agents')) return route.orchestrator ?? CLEAN;
+        for (const [marker, response] of Object.entries(route.custom ?? {})) {
+          if (p.includes(marker)) return response;
+        }
+        if (p.includes('specialised in application security')) return route.security ?? EMPTY;
+        if (p.includes('specialised in finding bugs and logical errors')) return route.bug ?? EMPTY;
+        if (p.includes('prose summary')) return JSON.stringify({ summary: 'Adds code.' });
+        if (p.includes('Mermaid diagram')) return '%% overview\nflowchart TD\n  A-->B';
+        return EMPTY;
+      },
+    };
+    const verifierCalls = () => calls.filter((c) => c.prompt.includes('--- Finding ---'));
+    const orchestratorCalls = () => calls.filter((c) => c.prompt.includes('--- Findings from all agents'));
+    return { llm, calls, verifierCalls, orchestratorCalls };
+  }
+
+  // foo.ts:3 holds `const c = 3;` and there is no TODO anywhere in the file.
+  const fileWithoutAnyTodo = ['const a = 1;', 'const b = 2;', 'const c = 3;', 'const d = 4;', 'const e = 5;'].join('\n');
+  const groundingFetch = () => ({
+    octokit: {
+      repos: {
+        getContent: vi.fn(async () => ({
+          data: { type: 'file', content: Buffer.from(fileWithoutAnyTodo, 'utf-8').toString('base64') },
+        })),
+      },
+    } as any,
+    owner: 'o', repo: 'r', ref: 'sha', maxContextKB: 256, maxRounds: 1,
+  });
+
+  function expectNoUndefined(value: unknown, path: string): void {
+    if (Array.isArray(value)) { value.forEach((v, i) => expectNoUndefined(v, `${path}[${i}]`)); return; }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        expect(v, `${path}.${k}`).not.toBeUndefined();
+        expectNoUndefined(v, `${path}.${k}`);
+      }
+    }
+  }
+
+  async function run(route: Route, opts: Partial<ReviewPipelineOptions> = {}) {
+    const mock = routedLLM(route);
+    const result = await runReviewPipeline(
+      {
+        diff: sampleDiff, context: sampleContext, modelId: 'heavy', lightModelId: 'light',
+        maxFindings: 25, enabledAgents: allAgentsEnabled, customAgents: [blockingTodo], ...opts,
+      },
+      { llm: mock.llm },
+    );
+    // Every scenario: the returned gate is the pure function of the posted
+    // findings (no disputes here, so nothing was suppressed), and neither the
+    // findings nor the gate carry an explicit undefined (#471).
+    if (!opts.disputedKeys) expect(result.gate).toEqual(buildMergeGate(result.findings));
+    expectNoUndefined(result.findings, 'findings');
+    expectNoUndefined(result.gate, 'gate');
+    return { result, ...mock };
+  }
+
+  const todoOf = (r: { findings: AgentFinding[] }) => r.findings.filter((f) => f.title === TODO_TITLE);
+
+  describe('a blocking org agent\'s critical, through the #510 verifier', () => {
+    it('refuted → passes, counted as refuted, one verifier call', async () => {
+      const { result, verifierCalls } = await run(
+        { custom: { [TODO_PROMPT]: todoCritical() }, verifier: () => JSON.stringify({ valid: false, reason: 'No TODO marker at or near foo.ts:3.' }) },
+        { groundingFetch: groundingFetch() },
+      );
+      const [todo] = todoOf(result);
+      expect(todo).toMatchObject({ verification: 'unverified', verificationOutcome: 'refuted' });
+      expect(result.gate).toEqual({
+        fails: false, blockingCriticalCount: 0, advisoryCriticalCount: 0, unverifiedCriticalCount: 1,
+        orgBlockedBy: [], refutedOrgBlockingCount: 1, authorWaivedBlocking: [],
+      });
+      expect(verifierCalls()).toHaveLength(1);
+    });
+
+    const failsClosed = {
+      fails: true, blockingCriticalCount: 1, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
+      orgBlockedBy: ['no-todo'], refutedOrgBlockingCount: 0, authorWaivedBlocking: [],
+    };
+    const inconclusive: Array<[string, () => string, number]> = [
+      ['the verifier throws', () => { throw new Error('boom'); }, 1],
+      ['the verifier dismisses it by an intent claim', () => JSON.stringify({ valid: false, reason: 'This is a test fixture / regression guard, not production code.' }), 1],
+      ['the verdict is unparseable twice', () => 'not json at all', 2],
+    ];
+    for (const [name, verifier, callCount] of inconclusive) {
+      it(`${name} → inconclusive, blocks (#382)`, async () => {
+        const { result, verifierCalls } = await run(
+          { custom: { [TODO_PROMPT]: todoCritical() }, verifier },
+          { groundingFetch: groundingFetch() },
+        );
+        expect(todoOf(result)[0]).toMatchObject({ verification: 'unverified', verificationOutcome: 'inconclusive' });
+        expect(result.gate).toEqual(failsClosed);
+        expect(verifierCalls()).toHaveLength(callCount);
+      });
+    }
+
+    it('without groundingFetch → not verified at all, blocks, no verification keys', async () => {
+      const { result, verifierCalls } = await run({ custom: { [TODO_PROMPT]: todoCritical() } });
+      const [todo] = todoOf(result);
+      expect('verification' in todo).toBe(false);
+      expect('verificationOutcome' in todo).toBe(false);
+      expect(result.gate).toEqual(failsClosed);
+      expect(verifierCalls()).toHaveLength(0);
+    });
+
+    it('D2: the blocking verifier gets no prior review context', async () => {
+      const { verifierCalls } = await run(
+        { custom: { [TODO_PROMPT]: todoCritical() } },
+        {
+          groundingFetch: groundingFetch(),
+          previousFindings: [{
+            file: 'foo.ts', line: 1, severity: 'warning', category: 'bug', title: 'Old import warning',
+            suggestion: 'Import bar lazily.',
+          }],
+        },
+      );
+      const blockingCall = verifierCalls().find((c) => c.prompt.includes(`Title: ${TODO_TITLE}`));
+      expect(blockingCall).toBeDefined();
+      expect(blockingCall!.prompt).not.toContain('--- Prior review context');
+    });
+
+    it('D3: a suggestion matching the cited line is still sent to the verifier, not dropped by FP-I L2', async () => {
+      const { result, verifierCalls } = await run(
+        { custom: { [TODO_PROMPT]: todoCritical({ suggestion: 'Use `const c = 3;` here' }) } },
+        { groundingFetch: groundingFetch() },
+      );
+      expect(verifierCalls()).toHaveLength(1);
+      expect(result.gate.orgBlockedBy).toEqual(['no-todo']);
+    });
+  });
+
+  it('D1: a blocking org critical is not dropped because a built-in finding shares its line', async () => {
+    const builtinInfo = { file: 'foo.ts', line: 3, severity: 'info', confidence: 90, category: 'security', title: 'Builtin note', description: '', suggestion: '' };
+    const { result } = await run(
+      {
+        security: validFindingsJson([{ severity: 'info', title: 'Builtin note', confidence: 90 }]),
+        custom: { [TODO_PROMPT]: todoCritical() },
+        orchestrator: JSON.stringify({ findings: [builtinInfo], mergeScore: 4, mergeScoreReason: 'Minor.' }),
+      },
+      { groundingFetch: groundingFetch() },
+    );
+    const atLine = result.findings.filter((f) => f.file === 'foo.ts' && f.line === 3).map((f) => f.title).sort();
+    expect(atLine).toEqual(['Builtin note', TODO_TITLE]);
+    expect(result.gate.orgBlockedBy).toEqual(['no-todo']);
+  });
+
+  describe('custom priors never reach the orchestrator', () => {
+    const oneBuiltin = validFindingsJson([{ line: 5, severity: 'warning', title: 'Builtin warning', confidence: 90 }]);
+    const prior = (over: Partial<PreviousFinding>): PreviousFinding => ({
+      file: 'foo.ts', line: 3, severity: 'critical', category: 'no-todo', title: 'PRIOR-TITLE', ...over,
+    });
+
+    it('a legacy prior (no source) whose category is an enabled custom agent is left out', async () => {
+      const { orchestratorCalls } = await run({ security: oneBuiltin }, { previousFindings: [prior({})] });
+      expect(orchestratorCalls()).toHaveLength(1);
+      expect(orchestratorCalls()[0].prompt).not.toContain('PRIOR-TITLE');
+    });
+
+    it('a sourced prior is left out whatever its category', async () => {
+      const { orchestratorCalls } = await run(
+        { security: oneBuiltin },
+        { previousFindings: [prior({ category: 'retired-agent', source: { kind: 'org', agent: 'retired-agent', enforcement: 'advisory' } })] },
+      );
+      expect(orchestratorCalls()).toHaveLength(1);
+      expect(orchestratorCalls()[0].prompt).not.toContain('PRIOR-TITLE');
+    });
+
+    it('(pin) a legacy security prior stays, even with an org agent named security', async () => {
+      const orgSecurity: CustomAgentDef = { name: 'security', prompt: 'Org security policy XYZ', severityDefault: 'warning', enabled: true, origin: 'org' };
+      const { orchestratorCalls } = await run(
+        { security: oneBuiltin },
+        { customAgents: [orgSecurity], previousFindings: [prior({ category: 'security' })] },
+      );
+      expect(orchestratorCalls()).toHaveLength(1);
+      expect(orchestratorCalls()[0].prompt).toContain('PRIOR-TITLE');
+    });
+
+    it('with no built-in findings and only a custom prior, the orchestrator is not called', async () => {
+      const { calls } = await run({ custom: { [TODO_PROMPT]: todoCritical() } }, { previousFindings: [prior({})] });
+      expect(calls.filter((c) => c.prompt.includes('Previously reported findings'))).toHaveLength(0);
+    });
+
+    it('a prior the orchestrator re-emits is dropped, and the fresh custom finding at that line survives', async () => {
+      const { result } = await run(
+        {
+          security: oneBuiltin,
+          custom: { [TODO_PROMPT]: todoCritical({ title: 'FRESH-TITLE' }) },
+          orchestrator: JSON.stringify({
+            findings: [
+              { file: 'foo.ts', line: 3, severity: 'critical', confidence: 95, category: 'no-todo', title: 'PRIOR-TITLE', description: '', suggestion: '' },
+              { file: 'foo.ts', line: 5, severity: 'warning', confidence: 90, category: 'security', title: 'Builtin warning', description: '', suggestion: '' },
+            ],
+            mergeScore: 2, mergeScoreReason: 'Critical.',
+          }),
+        },
+        { groundingFetch: groundingFetch(), previousFindings: [prior({})] },
+      );
+      expect(result.findings.filter((f) => f.line === 3).map((f) => f.title)).toEqual(['FRESH-TITLE']);
+      expect(result.gate.orgBlockedBy).toEqual(['no-todo']);
+      expect(result.filterOutcomes.some((o) => o.stage === 'custom-prior-reemission' && o.outcome === 'dropped')).toBe(true);
+    });
+  });
+
+  describe('a custom agent named like a built-in category', () => {
+    const repoSecurity: CustomAgentDef = { name: 'security', prompt: 'Repo rule: flag hardcoded tokens', severityDefault: 'critical', enabled: true, origin: 'repo' };
+    const route: Route = {
+      security: validFindingsJson([{ line: 5, severity: 'warning', title: 'BUILTIN-SEC', confidence: 90 }]),
+      custom: { 'Repo rule: flag hardcoded tokens': validFindingsJson([{ line: 3, severity: 'critical', title: 'CUSTOM-SEC', confidence: 95 }]) },
+      orchestrator: JSON.stringify({
+        findings: [{ file: 'foo.ts', line: 5, severity: 'warning', confidence: 90, category: 'security', title: 'BUILTIN-SEC', description: '', suggestion: '' }],
+        mergeScore: 3, mergeScoreReason: 'Warning.',
+      }),
+    };
+
+    it('the built-in security finding still reaches the orchestrator; the custom one does not', async () => {
+      const { result, orchestratorCalls } = await run(route, { customAgents: [repoSecurity] });
+      expect(orchestratorCalls()).toHaveLength(1);
+      expect(orchestratorCalls()[0].prompt).toContain('BUILTIN-SEC');
+      expect(orchestratorCalls()[0].prompt).not.toContain('CUSTOM-SEC');
+      expect(result.findings.filter((f) => f.title === 'CUSTOM-SEC')).toHaveLength(1);
+    });
+
+    it('the custom finding carries repo provenance', async () => {
+      const { result } = await run(route, { customAgents: [repoSecurity] });
+      expect(result.findings.find((f) => f.title === 'CUSTOM-SEC')!.source).toEqual({ kind: 'repo', agent: 'security' });
+      expect(result.gate).toMatchObject({ fails: true, blockingCriticalCount: 1, orgBlockedBy: [] });
+    });
+
+    it('an org agent named bug does not remove the built-in bug findings', async () => {
+      const orgBug: CustomAgentDef = { name: 'bug', prompt: 'Org bug policy QRS', severityDefault: 'warning', enabled: true, origin: 'org' };
+      const bugFinding = (line: number, title: string) =>
+        ({ file: 'foo.ts', line, severity: 'warning', confidence: 90, category: 'bug', title, description: '', suggestion: '' });
+      const { result } = await run(
+        {
+          bug: validFindingsJson([{ line: 2, title: 'Bug one', confidence: 90 }, { line: 4, title: 'Bug two', confidence: 90 }]),
+          orchestrator: JSON.stringify({ findings: [bugFinding(2, 'Bug one'), bugFinding(4, 'Bug two')], mergeScore: 3, mergeScoreReason: 'Warnings.' }),
+        },
+        { customAgents: [orgBug], maxFindings: 1 },
+      );
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0].category).toBe('bug');
+    });
+  });
+
+  it('an advisory and a blocking agent reporting the same line are both kept', async () => {
+    const advisoryTodo: CustomAgentDef = { ...blockingTodo, prompt: 'Advisory TODO watcher', enforcement: 'advisory' };
+    const { result } = await run(
+      { custom: { [TODO_PROMPT]: todoCritical(), 'Advisory TODO watcher': todoCritical({ title: 'Advisory TODO' }) } },
+      { customAgents: [advisoryTodo, blockingTodo] },
+    );
+    expect(result.findings.filter((f) => f.line === 3).map((f) => f.title).sort()).toEqual(['Advisory TODO', TODO_TITLE]);
+    expect(result.gate).toMatchObject({ fails: true, blockingCriticalCount: 1, advisoryCriticalCount: 1, orgBlockedBy: ['no-todo'] });
+  });
+
+  it('an orchestrator critical whose category names a silent blocking agent is built-in, not an org block', async () => {
+    const blockingPerf: CustomAgentDef = { name: 'performance', prompt: 'Org performance policy', severityDefault: 'critical', enabled: true, enforcement: 'blocking', origin: 'org' };
+    const { result } = await run(
+      {
+        security: validFindingsJson([{ line: 5, severity: 'warning', title: 'Builtin warning', confidence: 90 }]),
+        orchestrator: JSON.stringify({
+          findings: [{ file: 'foo.ts', line: 3, severity: 'critical', confidence: 95, category: 'performance', title: 'Hot loop', description: '', suggestion: '' }],
+          mergeScore: 2, mergeScoreReason: 'Critical.',
+        }),
+      },
+      { customAgents: [blockingPerf] },
+    );
+    expect(result.findings.map((f) => f.title)).toContain('Hot loop');
+    expect(result.gate).toMatchObject({ fails: true, blockingCriticalCount: 1, orgBlockedBy: [] });
+  });
+
+  it('D5: a blocking critical the author triaged away is waived, in no bucket', async () => {
+    const { result } = await run(
+      { custom: { [TODO_PROMPT]: todoCritical() } },
+      { disputedKeys: [`foo.ts::T::${TODO_TITLE}`] },
+    );
+    expect(todoOf(result)).toHaveLength(0);
+    expect(result.gate).toEqual({
+      fails: false, blockingCriticalCount: 0, advisoryCriticalCount: 0, unverifiedCriticalCount: 0,
+      orgBlockedBy: [], refutedOrgBlockingCount: 0, authorWaivedBlocking: ['no-todo'],
+    });
   });
 });

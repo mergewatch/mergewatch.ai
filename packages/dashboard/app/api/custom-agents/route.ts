@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { fetchUserInstallations, checkInstallationAdmin, TokenExpiredError } from "@/lib/github-repos";
 import { sanitizeOrgCustomAgents, ORG_CUSTOM_AGENT_SOFT_CAP } from "@mergewatch/core";
-import { stampAudit } from "@/lib/custom-agents";
+import { stampAudit, reservedNameViolations, annotateNameCollisions } from "@/lib/custom-agents";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     const store = await getDashboardStore();
     const agents = await store.installations.getCustomAgents(installationId);
     // `canEdit` lets the client render read-only for non-admins.
-    return NextResponse.json({ agents, canEdit: isAdmin, softCap: ORG_CUSTOM_AGENT_SOFT_CAP });
+    return NextResponse.json({ agents: annotateNameCollisions(agents), canEdit: isAdmin, softCap: ORG_CUSTOM_AGENT_SOFT_CAP });
   } catch {
     return NextResponse.json({ agents: [], canEdit: isAdmin, softCap: ORG_CUSTOM_AGENT_SOFT_CAP });
   }
@@ -80,6 +80,25 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Missing agents[]" }, { status: 400 });
   }
 
+  let existing;
+  try {
+    const store = await getDashboardStore();
+    existing = await store.installations.getCustomAgents(installationId);
+  } catch (err) {
+    console.error("Failed to load custom agents:", err);
+    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+  }
+
+  // #662 — checked on the raw body, before sanitizing, so the error names
+  // what the admin typed.
+  const reserved = reservedNameViolations(body.agents, existing);
+  if (reserved.length > 0) {
+    return NextResponse.json(
+      { error: `Reserved agent name${reserved.length === 1 ? "" : "s"} (a built-in review category): ${reserved.join(", ")}` },
+      { status: 400 },
+    );
+  }
+
   // Sanitize first so malformed entries can't reach storage.
   const incoming = sanitizeOrgCustomAgents(body.agents);
   const editor =
@@ -90,10 +109,9 @@ export async function PUT(req: NextRequest) {
 
   try {
     const store = await getDashboardStore();
-    const existing = await store.installations.getCustomAgents(installationId);
     const stamped = stampAudit(incoming, existing, editor, now);
     await store.installations.updateCustomAgents(installationId, stamped);
-    return NextResponse.json({ ok: true, agents: stamped });
+    return NextResponse.json({ ok: true, agents: annotateNameCollisions(stamped) });
   } catch (err) {
     console.error("Failed to save custom agents:", err);
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });

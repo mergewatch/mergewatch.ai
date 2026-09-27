@@ -38,6 +38,7 @@
 // Type-only, and erased at compile time — filter-trace.ts imports ReviewTraceItem
 // back from here, so a value import would be a runtime cycle. This is not.
 import type { FindingOutcome } from '../filter-trace.js';
+import type { FindingSource, VerificationOutcome } from '../gate.js';
 
 export interface RepoConfig {
   /** Whether MergeWatch is enabled for this repo (default: true) */
@@ -533,6 +534,10 @@ export interface ReviewFinding {
    * back-compat: findings stored before #469 simply have none.
    */
   evidence?: FindingEvidence;
+  /** #662 — which custom agent raised this finding; absent on built-in findings. */
+  source?: FindingSource;
+  /** #662 — why a custom finding is unverified: `refuted` or `inconclusive`. */
+  verificationOutcome?: VerificationOutcome;
 }
 
 // =============================================================================
