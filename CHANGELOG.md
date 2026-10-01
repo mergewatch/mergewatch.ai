@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.7](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.6...v0.6.7) (2026-10-01)
+
+### Bug Fixes
+- fix(gate): a failing custom agent fails the gate closed (#664) (#690) (57f89ce)
+- fix(gate): one merge gate, read from finding provenance (#662) (#685) (2131124)
+
+### Other Changes
+- refactor(gate): one source for the failed-review check output; document provider-error gates (#659) (#696) (1dd1df3)
+- perf(gate): pace the apply loop at 10s, not 45 (#582) (#676) (d981aef)
 ## [0.6.6](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.5...v0.6.6) (2026-09-27)
 
 ### Bug Fixes
