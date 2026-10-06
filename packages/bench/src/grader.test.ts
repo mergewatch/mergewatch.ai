@@ -112,6 +112,31 @@ describe('gradeCase', () => {
     expect(grade.falseNegatives).toBe(1);
   });
 
+  it('does not re-use one finding across two ground truths it only location-matches', () => {
+    // Both ground truths sit on the same line; the finding matches neither
+    // cause. Before the fix the single finding was reported as the
+    // right-line-wrong-reason match for BOTH.
+    const wrong = finding({ title: 'Rename this variable', description: 'readability' });
+    const gt2: GroundTruth = { ...SQLI, id: 'gt-sqli-2' };
+    const grade = gradeCase([wrong], [SQLI, gt2], 2);
+
+    expect(grade.groundTruths[0].outcome).toBe('right-line-wrong-reason');
+    expect(grade.groundTruths[1].outcome).toBe('missed');
+    expect(grade.truePositives).toBe(0);
+    expect(grade.falseNegatives).toBe(2);
+    // And it is STILL a false positive. Marking it "credited" to stop the
+    // re-use would have removed it from this count — under-counting FPs and
+    // contradicting the rule that such a finding costs twice.
+    expect(grade.falsePositives).toBe(1);
+  });
+
+  it('keeps a right-line-wrong-reason finding in the FP count', () => {
+    const wrong = finding({ title: 'Style nit', description: 'formatting' });
+    const grade = gradeCase([wrong], [SQLI], 2);
+    expect(grade.falsePositives).toBe(1);
+    expect(grade.truePositives).toBe(0);
+  });
+
   it('counts an unrelated finding as a false positive', () => {
     const unrelated = finding({ file: 'src/elsewhere.ts', line: 99, title: 'Unused import' });
     const grade = gradeCase([finding(), unrelated], [SQLI], 2);

@@ -36,6 +36,20 @@ import {
 } from './provider.js';
 import type { BenchCase, BenchManifest, BenchResult, CaseResult } from './types.js';
 
+/**
+ * Split `owner/name`, failing loudly on anything else. Silently yielding
+ * `undefined` for the repo would send the grounding fetch at a malformed
+ * target and read back as "file not found" — indistinguishable from a real
+ * miss, which is the failure mode this harness exists to rule out.
+ */
+export function parseRepo(repo: string): { owner: string; name: string } {
+  const parts = repo.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(`Case repo must be "owner/name", got "${repo}"`);
+  }
+  return { owner: parts[0], name: parts[1] };
+}
+
 /** Files touched by a unified diff, from its `+++ b/...` headers. */
 export function parseChangedFiles(diff: string): string[] {
   const files: string[] = [];
@@ -86,7 +100,9 @@ export async function runBench(opts: RunBenchOptions): Promise<BenchResult> {
   for (const bcase of opts.manifest.cases) {
     const diff = await opts.readDiff(bcase.diffPath);
     const result = await runOne(bcase, diff, config, opts, spendUsd, requireModelEcho);
-    if (result.estimatedCostUsd) spendUsd += result.estimatedCostUsd;
+    // Strict null check: a genuine 0 must still accumulate. A truthy test
+    // would silently drop it, and a cap is only as good as its running total.
+    if (result.estimatedCostUsd != null) spendUsd += result.estimatedCostUsd;
     cases.push(result);
   }
 
@@ -125,6 +141,7 @@ async function runOne(
   spentSoFar: number,
   requireModelEcho: boolean,
 ): Promise<CaseResult> {
+  const { owner, name: repoName } = parseRepo(bcase.repo);
   const files = parseChangedFiles(diff);
 
   // ── 1. The skip layer, exactly as the runtime handlers apply it ──────────
@@ -168,8 +185,8 @@ async function runOne(
   const grounding = opts.octokit
     ? buildGrounding({
         octokit: opts.octokit,
-        owner: bcase.repo.split('/')[0],
-        repo: bcase.repo.split('/')[1],
+        owner,
+        repo: repoName,
         ref: bcase.headRef,
         maxContextKB: config.maxContextKB,
         maxRounds: config.maxFileRequestRounds,
@@ -182,8 +199,8 @@ async function runOne(
     {
       diff,
       context: {
-        owner: bcase.repo.split('/')[0],
-        repo: bcase.repo.split('/')[1],
+        owner,
+        repo: repoName,
         prNumber: bcase.prNumber,
         prTitle: bcase.prTitle,
         prBody: bcase.prBody,

@@ -81,7 +81,23 @@ export function gradeCase(
   groundTruths: GroundTruth[],
   lineTolerance: number,
 ): CaseGrade {
+  /**
+   * Findings credited as a CATCH. Drives the false-positive count, so only
+   * true positives may ever go in here.
+   */
   const creditedFindings = new Set<number>();
+  /**
+   * Findings already attached to some ground truth, as a catch OR as a
+   * right-line-wrong-reason. Kept separate from `creditedFindings` because
+   * the two answer different questions: this one stops a single finding being
+   * re-used by a second ground truth, while that one decides precision.
+   *
+   * Collapsing them would under-count false positives — a
+   * right-line-wrong-reason finding would be treated as credited and vanish
+   * from the FP total, which contradicts the counting rule in this file's
+   * header (such a finding is meant to cost twice).
+   */
+  const consumedFindings = new Set<number>();
   const graded: GradedGroundTruth[] = [];
 
   for (const gt of groundTruths) {
@@ -92,7 +108,7 @@ export function gradeCase(
     let locationOnlyIdx = -1;
 
     for (let i = 0; i < findings.length; i++) {
-      if (creditedFindings.has(i)) continue;
+      if (consumedFindings.has(i)) continue;
       if (!locationMatches(findings[i], gt, lineTolerance)) continue;
       if (causeMatches(findings[i], gt)) {
         caughtIdx = i;
@@ -103,6 +119,7 @@ export function gradeCase(
 
     if (caughtIdx !== -1) {
       creditedFindings.add(caughtIdx);
+      consumedFindings.add(caughtIdx);
       const f = findings[caughtIdx];
       graded.push({
         id: gt.id,
@@ -112,6 +129,7 @@ export function gradeCase(
         inline: isInline(f),
       });
     } else if (locationOnlyIdx !== -1) {
+      consumedFindings.add(locationOnlyIdx);
       const f = findings[locationOnlyIdx];
       graded.push({
         id: gt.id,

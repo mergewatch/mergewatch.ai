@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '@mergewatch/core';
 import type { ILLMProvider } from '@mergewatch/core';
-import { parseChangedFiles, runBench } from './runner.js';
+import { parseChangedFiles, parseRepo, runBench } from './runner.js';
 import { createCaseStub } from './stub.js';
 import {
   ModelEchoMismatchError,
@@ -69,6 +69,38 @@ describe('parseChangedFiles', () => {
 
   it('returns nothing for an empty diff', () => {
     expect(parseChangedFiles('')).toEqual([]);
+  });
+});
+
+describe('parseRepo', () => {
+  it('splits owner/name', () => {
+    expect(parseRepo('mergewatch/bench')).toEqual({ owner: 'mergewatch', name: 'bench' });
+  });
+
+  it.each(['owner', 'owner/', '/name', 'a/b/c', ''])(
+    'fails loudly on malformed input: %o',
+    (bad) => {
+      // Yielding undefined would point the grounding fetch at a malformed
+      // target, which reads back as "file not found" — a silent miss.
+      expect(() => parseRepo(bad)).toThrow(/must be "owner\/name"/);
+    },
+  );
+});
+
+describe('spend accumulation', () => {
+  it('accumulates a genuine zero rather than skipping it on a truthy test', async () => {
+    // A skipped case reports exactly 0. The total must still be well-defined.
+    const bigDiff = Array.from(
+      { length: 60 },
+      (_, i) => `diff --git a/src/m${i}.ts b/src/m${i}.ts\n--- a/src/m${i}.ts\n+++ b/src/m${i}.ts\n@@ -1 +1 @@\n-a\n+b\n`,
+    ).join('');
+    const result = await runBench({
+      manifest: manifest([caseWithCatch({ id: 'skipped' })]),
+      readDiff: async () => bigDiff,
+      llm: (c) => createCaseStub(c),
+    });
+    expect(result.cases[0].estimatedCostUsd).toBe(0);
+    expect(result.totals.spendUsd).toBe(0);
   });
 });
 
