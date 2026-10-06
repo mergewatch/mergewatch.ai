@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
-import { assertExpectations, findRepoRoot, parseArgs } from './cli.js';
+import { assertExpectations, findRepoRoot, parseArgs, resolveInRepo } from './cli.js';
 import type { BenchResult } from './types.js';
 
 describe('parseArgs', () => {
@@ -71,6 +71,32 @@ describe('assertExpectations', () => {
 
   it('is tight enough to catch a 4dp difference', () => {
     expect(assertExpectations(result({ recall: 0.5001 }), { recall: 0.5 })).toHaveLength(1);
+  });
+});
+
+describe('resolveInRepo', () => {
+  it('accepts a path inside the repo', () => {
+    expect(resolveInRepo('/repo', 'packages/bench/fixtures/smoke.json', '--corpus')).toBe(
+      '/repo/packages/bench/fixtures/smoke.json',
+    );
+  });
+
+  it('accepts the repo root itself', () => {
+    expect(resolveInRepo('/repo', '.', '--corpus')).toBe('/repo');
+  });
+
+  it.each(['../../../../etc/passwd', '/etc/passwd', 'packages/../../outside.json'])(
+    'refuses a path that escapes the repo: %o',
+    (bad) => {
+      expect(() => resolveInRepo('/repo', bad, '--corpus')).toThrow(/must stay inside the repo/);
+    },
+  );
+
+  it('does not treat a sibling directory with a shared prefix as inside', () => {
+    // /repo-other must not pass a naive startsWith('/repo') check.
+    expect(() => resolveInRepo('/repo', '../repo-other/x.json', '--corpus')).toThrow(
+      /must stay inside the repo/,
+    );
   });
 });
 

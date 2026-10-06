@@ -9,7 +9,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { runBench } from './runner.js';
 import { createCaseStub } from './stub.js';
 import type { BenchManifest, BenchResult } from './types.js';
@@ -24,6 +24,22 @@ export function findRepoRoot(startDir: string): string {
     dir = parent;
   }
   throw new Error(`Could not find pnpm-workspace.yaml above ${startDir}`);
+}
+
+/**
+ * Resolve a path and refuse to leave the repo.
+ *
+ * Less about an attacker than about a misconfigured CI invocation: a wrong
+ * `--corpus` would silently read some other file, parse it as a manifest and
+ * bake whatever it found into a published artifact. A benchmark that can read
+ * outside its own corpus cannot vouch for what it measured.
+ */
+export function resolveInRepo(repoRoot: string, candidate: string, flag: string): string {
+  const resolved = resolve(repoRoot, candidate);
+  if (resolved !== repoRoot && !resolved.startsWith(repoRoot + sep)) {
+    throw new Error(`${flag} must stay inside the repo: "${candidate}" resolves to ${resolved}`);
+  }
+  return resolved;
 }
 
 interface Args {
@@ -112,7 +128,13 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const repoRoot = findRepoRoot(process.cwd());
-  const corpusPath = resolve(repoRoot, args.corpus);
+  let corpusPath: string;
+  try {
+    corpusPath = resolveInRepo(repoRoot, args.corpus, '--corpus');
+  } catch (err) {
+    console.error(`bench: ${(err as Error).message}`);
+    return 2;
+  }
   const manifest = JSON.parse(readFileSync(corpusPath, 'utf-8')) as BenchManifest;
   const manifestDir = dirname(corpusPath);
 
@@ -153,7 +175,13 @@ export async function main(argv: string[]): Promise<number> {
   console.log(summarize(result));
 
   if (args.out) {
-    const outPath = resolve(repoRoot, args.out);
+    let outPath: string;
+    try {
+      outPath = resolveInRepo(repoRoot, args.out, '--out');
+    } catch (err) {
+      console.error(`bench: ${(err as Error).message}`);
+      return 2;
+    }
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, `${JSON.stringify(result, null, 2)}\n`);
     console.log(`\nwrote ${args.out}`);

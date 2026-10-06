@@ -230,6 +230,34 @@ describe('the spend cap', () => {
     expect(result.totals.casesGraded).toBe(1);
   });
 
+  it('refuses pre-flight when the LIGHT model is unpriced, before invoking anything', async () => {
+    // The hole this closes: a priced main model and an unpriced light model
+    // used to pass pre-flight, run the pipeline, spend, and only then fail.
+    const stub = createCaseStub(caseWithCatch());
+    await expect(
+      runBench({
+        manifest: manifest([caseWithCatch()]),
+        readDiff,
+        llm: stub,
+        config: { lightModel: 'not-a-real-light-model' },
+        maxSpendUsd: 1000,
+      }),
+    ).rejects.toThrow(UnpricedModelError);
+    expect(stub.invocations).toBe(0);
+  });
+
+  it('names both models when either is unpriced', async () => {
+    await expect(
+      runBench({
+        manifest: manifest([caseWithCatch()]),
+        readDiff,
+        llm: (c) => createCaseStub(c),
+        config: { lightModel: 'not-a-real-light-model' },
+        maxSpendUsd: 1000,
+      }),
+    ).rejects.toThrow(/not-a-real-light-model/);
+  });
+
   it('projects a cost that grows with diff size', () => {
     const small = projectCaseCostUsd('a'.repeat(100), DEFAULT_CONFIG.model);
     const large = projectCaseCostUsd('a'.repeat(100_000), DEFAULT_CONFIG.model);

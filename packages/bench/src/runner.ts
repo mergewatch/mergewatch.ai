@@ -179,8 +179,16 @@ async function runOne(
 
   // ── 2. Pre-flight spend cap, BEFORE any provider call ────────────────────
   if (opts.maxSpendUsd !== undefined) {
+    // Both models must be priced BEFORE anything is invoked. The pipeline
+    // uses `lightModel` for its cheaper passes, so checking only `model`
+    // left a hole: a priced main model and an unpriced light model passed
+    // pre-flight, the pipeline ran and spent, and only the post-hoc check
+    // then failed — breaking this cap's one promise, that `0` spends nothing.
     const projected = projectCaseCostUsd(diff, config.model, config.pricing);
-    if (projected === null) throw new UnpricedModelError([config.model], bcase.id);
+    const projectedLight = projectCaseCostUsd(diff, config.lightModel, config.pricing);
+    if (projected === null || projectedLight === null) {
+      throw new UnpricedModelError([config.model, config.lightModel], bcase.id);
+    }
     if (spentSoFar + projected > opts.maxSpendUsd) {
       throw new SpendCapExceededError(opts.maxSpendUsd, spentSoFar, projected, bcase.id);
     }
