@@ -194,6 +194,8 @@ function buildRequestBody(
 interface ParsedResponse {
   text: string;
   usage?: TokenUsage;
+  /** #699 — model id echoed by the response body, when present. */
+  modelId?: string;
   stopReason?: string;
 }
 
@@ -211,7 +213,14 @@ function parseAnthropicResponse(raw: string): ParsedResponse {
         cacheWriteInputTokens: parsed.usage.cache_creation_input_tokens ?? 0,
       }
     : undefined;
-  return { text, usage, stopReason: parsed.stop_reason ?? undefined };
+  return {
+    text,
+    usage,
+    stopReason: parsed.stop_reason ?? undefined,
+    // #699 — echoed by the Anthropic-on-Bedrock response body; absent for
+    // model families whose body omits it, which reads as unverified.
+    modelId: typeof parsed.model === 'string' ? parsed.model : undefined,
+  };
 }
 
 function parseTitanResponse(raw: string): ParsedResponse {

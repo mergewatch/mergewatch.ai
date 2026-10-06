@@ -42,6 +42,15 @@ export interface LLMInvokeResult {
   text: string;
   usage?: TokenUsage;
   /**
+   * #699 — the model id the PROVIDER reported back, read from its own
+   * response body, not the id we asked for. The two can differ (an alias
+   * resolving elsewhere, a gateway rerouting, a stale deployment), and when
+   * a published benchmark number depends on which model produced it, the
+   * requested id is not evidence. Absent on providers whose API does not
+   * echo it, which the bench records as unverified rather than as a match.
+   */
+  modelId?: string;
+  /**
    * Why generation stopped, normalized to Anthropic vocabulary where the
    * provider uses different names ('length' → 'max_tokens'). 'max_tokens'
    * means the response was TRUNCATED at the output cap — the tail was never
@@ -77,6 +86,8 @@ export interface LLMSamplingConfig {
 export interface LLMStructuredResult<T = unknown> {
   object: T;
   usage?: TokenUsage;
+  /** #699 — see LLMInvokeResult.modelId. */
+  modelId?: string;
   stopReason?: string;
 }
 

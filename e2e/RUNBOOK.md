@@ -3611,6 +3611,72 @@ This also repairs the **Unverified concerns** section, which explained every ite
 
 ---
 
+## Benchmark corpora (offline, `@mergewatch/bench`)
+
+Distinct from everything above. The fixtures in this runbook exercise the
+product end to end on real PRs; a **benchmark corpus** runs diffs through
+`runReviewPipeline` offline and grades the findings against known ground
+truth. It needs no GitHub App installation, no open PR and no billing
+headroom — the pipeline takes a diff plus an injected `ILLMProvider`, and the
+billing gate is not in its call tree.
+
+Harness: `packages/bench` (#699). Corpora are owned by their consuming
+tickets — #314 (withmartian), #610 (OpenSSF), #700 (escape replay).
+
+### Running the smoke corpus (zero cost)
+
+```bash
+pnpm --filter @mergewatch/bench run bench -- \
+  --corpus packages/bench/fixtures/smoke.json \
+  --stub \
+  --expect-precision 1.0 --expect-recall 0.5 --expect-f1 0.6666666666666666
+```
+
+Corpus paths are **repo-root-relative**: `pnpm --filter` runs with cwd at the
+package directory. `--stub` runs against a scripted provider — no network, no
+AWS, no spend. The smoke corpus carries one case the stub catches and one it
+misses, so the expected metrics are fixed by the corpus and the run can fail.
+
+### The spend cap
+
+`--max-spend-usd <n>` is enforced **pre-flight, per case**: the harness
+projects a case's cost from its diff size and refuses to invoke the provider
+at all if the run total would exceed the cap, exiting non-zero. A cap checked
+after a case returns cannot prevent that case's spend, so `--max-spend-usd 0`
+genuinely means "spend nothing" — verified by a test asserting zero provider
+invocations.
+
+Two failure modes that exit non-zero rather than quietly producing a number:
+
+- **Unpriced model.** `estimatedCostUsd` is `null` whenever any model lacks
+  pricing, so treating it as zero spend would let the cap stop enforcing
+  silently (LiteLLM, Ollama, an unlisted alias). The run fails instead.
+- **Unattributable model.** Every model id the provider echoes must be one of
+  the two requested (`model` for the finding agents, `lightModel` for the
+  cheaper passes). Note `aws lambda get-function-configuration` verifies
+  nothing here — the injected provider governs the run, not the deployed
+  function.
+
+### Reading the grounding columns
+
+`bench-result.json` records fetch **outcomes** per case, not a boolean:
+`attempted` / `succeeded` / `failed` plus `filesFetched`. This matters because
+`packages/core/src/context/file-fetcher.ts:67` swallows every fetch error — a
+403 secondary-rate-limit, a 404 and an oversized file all look like "no such
+file", so a rate-limited run would otherwise report itself grounded while
+having fetched nothing. `grounding.enabled` is a claim; `filesFetched` is the
+evidence. Budget roughly 80 `getContent` calls per case against a PAT's
+5,000/hour.
+
+### Skips are part of the measurement
+
+The harness applies `shouldSkipPR` and `shouldSkipByRules` and scores a
+skipped case as **zero recall**, because that is production behaviour: a
+skipped PR contributes no comments, so it is a recall failure rather than a
+"correctly declined to review". `bench-result.json` records the skip kind.
+A benchmark arm that did not apply the skip layer could not honestly be
+called "shipped defaults" — it would be a configuration no user has run.
+
 ## Update protocol
 
 When you ship a new user-visible behavior:

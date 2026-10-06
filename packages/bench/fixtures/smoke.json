@@ -1,0 +1,52 @@
+{
+  "name": "bench-smoke",
+  "lineTolerance": 2,
+  "cases": [
+    {
+      "id": "catch-sql-injection",
+      "repo": "mergewatch/bench-smoke",
+      "prNumber": 101,
+      "prTitle": "Look up a user by id",
+      "headRef": "0000000000000000000000000000000000000001",
+      "diffPath": "diffs/sql-injection.diff",
+      "groundTruth": [
+        {
+          "id": "gt-sqli",
+          "file": "src/db.ts",
+          "line": 3,
+          "cause": "User input concatenated into a SQL string",
+          "causeKeywords": ["sql injection", "concatenation"],
+          "severity": "critical"
+        }
+      ],
+      "stubFindings": [
+        {
+          "file": "src/db.ts",
+          "line": 3,
+          "severity": "info",
+          "title": "SQL injection via string concatenation",
+          "description": "The id parameter is concatenated directly into the query, allowing SQL injection."
+        }
+      ]
+    },
+    {
+      "id": "miss-dropped-await",
+      "repo": "mergewatch/bench-smoke",
+      "prNumber": 102,
+      "prTitle": "Simplify admin check",
+      "headRef": "0000000000000000000000000000000000000002",
+      "diffPath": "diffs/missing-await.diff",
+      "groundTruth": [
+        {
+          "id": "gt-await",
+          "file": "src/auth.ts",
+          "line": 4,
+          "cause": "await dropped, so claims is a Promise and the role check is always false",
+          "causeKeywords": ["await", "promise"],
+          "severity": "critical"
+        }
+      ],
+      "stubFindings": []
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "name": "bench-smoke-skip",
+  "lineTolerance": 2,
+  "cases": [
+    {
+      "id": "skip-max-files",
+      "repo": "mergewatch/bench-smoke",
+      "prNumber": 103,
+      "prTitle": "Bump a constant across the codebase",
+      "headRef": "0000000000000000000000000000000000000003",
+      "diffPath": "diffs/too-many-files.diff",
+      "groundTruth": [
+        {
+          "id": "gt-skipped",
+          "file": "src/mod7.ts",
+          "line": 1,
+          "cause": "A defect nobody will ever see, because the PR is skipped",
+          "causeKeywords": ["constant"]
+        }
+      ],
+      "stubFindings": [
+        {
+          "file": "src/mod7.ts",
+          "line": 1,
+          "severity": "info",
+          "title": "Wrong constant value",
+          "description": "The constant was changed incorrectly."
+        }
+      ]
+    }
+  ]
+}

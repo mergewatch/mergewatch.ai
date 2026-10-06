@@ -1,0 +1,22 @@
+{
+  "name": "@mergewatch/bench",
+  "version": "0.6.8",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@mergewatch/core": "workspace:*",
+    "@octokit/rest": "^21.0.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
