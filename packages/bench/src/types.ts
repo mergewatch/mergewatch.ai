@@ -173,7 +173,10 @@ export interface BenchResult {
   /** Commit the harness ran at. */
   commitSha?: string;
   arm?: string;
+  /** Captured BEFORE the first case runs. */
   startedAt: string;
+  /** Captured after the last case. With `startedAt`, gives elapsed time. */
+  finishedAt: string;
   totals: BenchTotals;
   cases: CaseResult[];
 }

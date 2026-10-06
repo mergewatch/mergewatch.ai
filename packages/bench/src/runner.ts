@@ -96,6 +96,10 @@ export async function runBench(opts: RunBenchOptions): Promise<BenchResult> {
   const requireModelEcho = opts.requireModelEcho ?? true;
   const cases: CaseResult[] = [];
   let spendUsd = 0;
+  // Captured before the loop. Read inside the `return` it would record the
+  // END of the run, which is useless for elapsed time or for correlating a
+  // long corpus run against external logs.
+  const startedAt = new Date().toISOString();
 
   for (const bcase of opts.manifest.cases) {
     const diff = await opts.readDiff(bcase.diffPath);
@@ -116,7 +120,8 @@ export async function runBench(opts: RunBenchOptions): Promise<BenchResult> {
     corpus: opts.manifest.name,
     commitSha: opts.commitSha,
     arm: opts.arm,
-    startedAt: new Date().toISOString(),
+    startedAt,
+    finishedAt: new Date().toISOString(),
     totals: {
       precision,
       recall,
@@ -175,7 +180,7 @@ async function runOne(
   // ── 2. Pre-flight spend cap, BEFORE any provider call ────────────────────
   if (opts.maxSpendUsd !== undefined) {
     const projected = projectCaseCostUsd(diff, config.model, config.pricing);
-    if (projected === null) throw new UnpricedModelError(config.model, bcase.id);
+    if (projected === null) throw new UnpricedModelError([config.model], bcase.id);
     if (spentSoFar + projected > opts.maxSpendUsd) {
       throw new SpendCapExceededError(opts.maxSpendUsd, spentSoFar, projected, bcase.id);
     }
@@ -220,7 +225,10 @@ async function runOne(
 
   // ── 4. Cost must be a number, or the cap has stopped enforcing ───────────
   if (pipeline.estimatedCostUsd === null) {
-    throw new UnpricedModelError(config.model, bcase.id);
+    // Either model can be the unpriced one, and the pipeline does not say
+    // which — naming only the main model would send someone to the wrong
+    // pricing entry.
+    throw new UnpricedModelError([config.model, config.lightModel], bcase.id);
   }
 
   // ── 5. Attribute the number to models the PROVIDER named ─────────────────

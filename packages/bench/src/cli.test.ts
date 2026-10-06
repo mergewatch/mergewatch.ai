@@ -40,6 +40,7 @@ function result(totals: Partial<BenchResult['totals']>): BenchResult {
   return {
     corpus: 'c',
     startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
     totals: {
       precision: 1, recall: 0.5, f1: 0.6666666666666666,
       truePositives: 1, falsePositives: 0, falseNegatives: 1,

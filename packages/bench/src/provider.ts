@@ -31,12 +31,13 @@ export class SpendCapExceededError extends Error {
 
 /** Thrown when cost cannot be computed, rather than being read as zero spend. */
 export class UnpricedModelError extends Error {
-  constructor(readonly modelId: string, readonly caseId: string) {
+  constructor(readonly modelIds: string[], readonly caseId: string) {
     super(
-      `Case "${caseId}" returned estimatedCostUsd = null, which means at least ` +
-        `one model used has no pricing entry (requested: "${modelId}"). Treating ` +
-        `that as zero spend would let a cap silently stop enforcing, so the run ` +
-        `fails instead. Add pricing via customPricing or DEFAULT_PRICING.`,
+      `Case "${caseId}": cost is null, which means at least one model used has ` +
+        `no pricing entry. The pipeline does not report WHICH, so check each of: ` +
+        `${modelIds.map((m) => `"${m}"`).join(', ')}. Treating null as zero spend ` +
+        `would let the cap silently stop enforcing, so the run fails instead. ` +
+        `Add pricing via customPricing or DEFAULT_PRICING.`,
     );
     this.name = 'UnpricedModelError';
   }

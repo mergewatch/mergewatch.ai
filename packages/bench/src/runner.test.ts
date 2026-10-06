@@ -447,5 +447,34 @@ describe('the artifact', () => {
     expect(result.cases[0].id).toBe('catch');
     expect(result.cases[0].findingCount).toBeGreaterThan(0);
     expect(new Date(result.startedAt).toString()).not.toBe('Invalid Date');
+    expect(new Date(result.finishedAt).toString()).not.toBe('Invalid Date');
+  });
+
+  it('captures startedAt BEFORE the run, not in the return statement', async () => {
+    // A case whose provider is slow enough that an end-captured timestamp
+    // would be measurably later than the real start.
+    const slowStub = (c: BenchCase) => {
+      const inner = createCaseStub(c);
+      return {
+        invoke: async (m: string, p: Parameters<typeof inner.invoke>[1]) => {
+          await new Promise((r) => setTimeout(r, 2));
+          return inner.invoke(m, p);
+        },
+      };
+    };
+    const before = Date.now();
+    const result = await runBench({
+      manifest: manifest([caseWithCatch()]),
+      readDiff,
+      llm: slowStub,
+    });
+    const started = new Date(result.startedAt).getTime();
+    const finished = new Date(result.finishedAt).getTime();
+
+    expect(started).toBeGreaterThanOrEqual(before - 1);
+    expect(finished).toBeGreaterThanOrEqual(started);
+    // The run took real time, so an end-captured startedAt would equal
+    // finishedAt. They must differ.
+    expect(finished).toBeGreaterThan(started);
   });
 });
