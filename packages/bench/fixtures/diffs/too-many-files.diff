@@ -1,0 +1,360 @@
+diff --git a/src/mod0.ts b/src/mod0.ts
+--- a/src/mod0.ts
++++ b/src/mod0.ts
+@@ -1 +1 @@
+-const a0 = 1;
++const a0 = 2;
+diff --git a/src/mod1.ts b/src/mod1.ts
+--- a/src/mod1.ts
++++ b/src/mod1.ts
+@@ -1 +1 @@
+-const a1 = 1;
++const a1 = 2;
+diff --git a/src/mod2.ts b/src/mod2.ts
+--- a/src/mod2.ts
++++ b/src/mod2.ts
+@@ -1 +1 @@
+-const a2 = 1;
++const a2 = 2;
+diff --git a/src/mod3.ts b/src/mod3.ts
+--- a/src/mod3.ts
++++ b/src/mod3.ts
+@@ -1 +1 @@
+-const a3 = 1;
++const a3 = 2;
+diff --git a/src/mod4.ts b/src/mod4.ts
+--- a/src/mod4.ts
++++ b/src/mod4.ts
+@@ -1 +1 @@
+-const a4 = 1;
++const a4 = 2;
+diff --git a/src/mod5.ts b/src/mod5.ts
+--- a/src/mod5.ts
++++ b/src/mod5.ts
+@@ -1 +1 @@
+-const a5 = 1;
++const a5 = 2;
+diff --git a/src/mod6.ts b/src/mod6.ts
+--- a/src/mod6.ts
++++ b/src/mod6.ts
+@@ -1 +1 @@
+-const a6 = 1;
++const a6 = 2;
+diff --git a/src/mod7.ts b/src/mod7.ts
+--- a/src/mod7.ts
++++ b/src/mod7.ts
+@@ -1 +1 @@
+-const a7 = 1;
++const a7 = 2;
+diff --git a/src/mod8.ts b/src/mod8.ts
+--- a/src/mod8.ts
++++ b/src/mod8.ts
+@@ -1 +1 @@
+-const a8 = 1;
++const a8 = 2;
+diff --git a/src/mod9.ts b/src/mod9.ts
+--- a/src/mod9.ts
++++ b/src/mod9.ts
+@@ -1 +1 @@
+-const a9 = 1;
++const a9 = 2;
+diff --git a/src/mod10.ts b/src/mod10.ts
+--- a/src/mod10.ts
++++ b/src/mod10.ts
+@@ -1 +1 @@
+-const a10 = 1;
++const a10 = 2;
+diff --git a/src/mod11.ts b/src/mod11.ts
+--- a/src/mod11.ts
++++ b/src/mod11.ts
+@@ -1 +1 @@
+-const a11 = 1;
++const a11 = 2;
+diff --git a/src/mod12.ts b/src/mod12.ts
+--- a/src/mod12.ts
++++ b/src/mod12.ts
+@@ -1 +1 @@
+-const a12 = 1;
++const a12 = 2;
+diff --git a/src/mod13.ts b/src/mod13.ts
+--- a/src/mod13.ts
++++ b/src/mod13.ts
+@@ -1 +1 @@
+-const a13 = 1;
++const a13 = 2;
+diff --git a/src/mod14.ts b/src/mod14.ts
+--- a/src/mod14.ts
++++ b/src/mod14.ts
+@@ -1 +1 @@
+-const a14 = 1;
++const a14 = 2;
+diff --git a/src/mod15.ts b/src/mod15.ts
+--- a/src/mod15.ts
++++ b/src/mod15.ts
+@@ -1 +1 @@
+-const a15 = 1;
++const a15 = 2;
+diff --git a/src/mod16.ts b/src/mod16.ts
+--- a/src/mod16.ts
++++ b/src/mod16.ts
+@@ -1 +1 @@
+-const a16 = 1;
++const a16 = 2;
+diff --git a/src/mod17.ts b/src/mod17.ts
+--- a/src/mod17.ts
++++ b/src/mod17.ts
+@@ -1 +1 @@
+-const a17 = 1;
++const a17 = 2;
+diff --git a/src/mod18.ts b/src/mod18.ts
+--- a/src/mod18.ts
++++ b/src/mod18.ts
+@@ -1 +1 @@
+-const a18 = 1;
++const a18 = 2;
+diff --git a/src/mod19.ts b/src/mod19.ts
+--- a/src/mod19.ts
++++ b/src/mod19.ts
+@@ -1 +1 @@
+-const a19 = 1;
++const a19 = 2;
+diff --git a/src/mod20.ts b/src/mod20.ts
+--- a/src/mod20.ts
++++ b/src/mod20.ts
+@@ -1 +1 @@
+-const a20 = 1;
++const a20 = 2;
+diff --git a/src/mod21.ts b/src/mod21.ts
+--- a/src/mod21.ts
++++ b/src/mod21.ts
+@@ -1 +1 @@
+-const a21 = 1;
++const a21 = 2;
+diff --git a/src/mod22.ts b/src/mod22.ts
+--- a/src/mod22.ts
++++ b/src/mod22.ts
+@@ -1 +1 @@
+-const a22 = 1;
++const a22 = 2;
+diff --git a/src/mod23.ts b/src/mod23.ts
+--- a/src/mod23.ts
++++ b/src/mod23.ts
+@@ -1 +1 @@
+-const a23 = 1;
++const a23 = 2;
+diff --git a/src/mod24.ts b/src/mod24.ts
+--- a/src/mod24.ts
++++ b/src/mod24.ts
+@@ -1 +1 @@
+-const a24 = 1;
++const a24 = 2;
+diff --git a/src/mod25.ts b/src/mod25.ts
+--- a/src/mod25.ts
++++ b/src/mod25.ts
+@@ -1 +1 @@
+-const a25 = 1;
++const a25 = 2;
+diff --git a/src/mod26.ts b/src/mod26.ts
+--- a/src/mod26.ts
++++ b/src/mod26.ts
+@@ -1 +1 @@
+-const a26 = 1;
++const a26 = 2;
+diff --git a/src/mod27.ts b/src/mod27.ts
+--- a/src/mod27.ts
++++ b/src/mod27.ts
+@@ -1 +1 @@
+-const a27 = 1;
++const a27 = 2;
+diff --git a/src/mod28.ts b/src/mod28.ts
+--- a/src/mod28.ts
++++ b/src/mod28.ts
+@@ -1 +1 @@
+-const a28 = 1;
++const a28 = 2;
+diff --git a/src/mod29.ts b/src/mod29.ts
+--- a/src/mod29.ts
++++ b/src/mod29.ts
+@@ -1 +1 @@
+-const a29 = 1;
++const a29 = 2;
+diff --git a/src/mod30.ts b/src/mod30.ts
+--- a/src/mod30.ts
++++ b/src/mod30.ts
+@@ -1 +1 @@
+-const a30 = 1;
++const a30 = 2;
+diff --git a/src/mod31.ts b/src/mod31.ts
+--- a/src/mod31.ts
++++ b/src/mod31.ts
+@@ -1 +1 @@
+-const a31 = 1;
++const a31 = 2;
+diff --git a/src/mod32.ts b/src/mod32.ts
+--- a/src/mod32.ts
++++ b/src/mod32.ts
+@@ -1 +1 @@
+-const a32 = 1;
++const a32 = 2;
+diff --git a/src/mod33.ts b/src/mod33.ts
+--- a/src/mod33.ts
++++ b/src/mod33.ts
+@@ -1 +1 @@
+-const a33 = 1;
++const a33 = 2;
+diff --git a/src/mod34.ts b/src/mod34.ts
+--- a/src/mod34.ts
++++ b/src/mod34.ts
+@@ -1 +1 @@
+-const a34 = 1;
++const a34 = 2;
+diff --git a/src/mod35.ts b/src/mod35.ts
+--- a/src/mod35.ts
++++ b/src/mod35.ts
+@@ -1 +1 @@
+-const a35 = 1;
++const a35 = 2;
+diff --git a/src/mod36.ts b/src/mod36.ts
+--- a/src/mod36.ts
++++ b/src/mod36.ts
+@@ -1 +1 @@
+-const a36 = 1;
++const a36 = 2;
+diff --git a/src/mod37.ts b/src/mod37.ts
+--- a/src/mod37.ts
++++ b/src/mod37.ts
+@@ -1 +1 @@
+-const a37 = 1;
++const a37 = 2;
+diff --git a/src/mod38.ts b/src/mod38.ts
+--- a/src/mod38.ts
++++ b/src/mod38.ts
+@@ -1 +1 @@
+-const a38 = 1;
++const a38 = 2;
+diff --git a/src/mod39.ts b/src/mod39.ts
+--- a/src/mod39.ts
++++ b/src/mod39.ts
+@@ -1 +1 @@
+-const a39 = 1;
++const a39 = 2;
+diff --git a/src/mod40.ts b/src/mod40.ts
+--- a/src/mod40.ts
++++ b/src/mod40.ts
+@@ -1 +1 @@
+-const a40 = 1;
++const a40 = 2;
+diff --git a/src/mod41.ts b/src/mod41.ts
+--- a/src/mod41.ts
++++ b/src/mod41.ts
+@@ -1 +1 @@
+-const a41 = 1;
++const a41 = 2;
+diff --git a/src/mod42.ts b/src/mod42.ts
+--- a/src/mod42.ts
++++ b/src/mod42.ts
+@@ -1 +1 @@
+-const a42 = 1;
++const a42 = 2;
+diff --git a/src/mod43.ts b/src/mod43.ts
+--- a/src/mod43.ts
++++ b/src/mod43.ts
+@@ -1 +1 @@
+-const a43 = 1;
++const a43 = 2;
+diff --git a/src/mod44.ts b/src/mod44.ts
+--- a/src/mod44.ts
++++ b/src/mod44.ts
+@@ -1 +1 @@
+-const a44 = 1;
++const a44 = 2;
+diff --git a/src/mod45.ts b/src/mod45.ts
+--- a/src/mod45.ts
++++ b/src/mod45.ts
+@@ -1 +1 @@
+-const a45 = 1;
++const a45 = 2;
+diff --git a/src/mod46.ts b/src/mod46.ts
+--- a/src/mod46.ts
++++ b/src/mod46.ts
+@@ -1 +1 @@
+-const a46 = 1;
++const a46 = 2;
+diff --git a/src/mod47.ts b/src/mod47.ts
+--- a/src/mod47.ts
++++ b/src/mod47.ts
+@@ -1 +1 @@
+-const a47 = 1;
++const a47 = 2;
+diff --git a/src/mod48.ts b/src/mod48.ts
+--- a/src/mod48.ts
++++ b/src/mod48.ts
+@@ -1 +1 @@
+-const a48 = 1;
++const a48 = 2;
+diff --git a/src/mod49.ts b/src/mod49.ts
+--- a/src/mod49.ts
++++ b/src/mod49.ts
+@@ -1 +1 @@
+-const a49 = 1;
++const a49 = 2;
+diff --git a/src/mod50.ts b/src/mod50.ts
+--- a/src/mod50.ts
++++ b/src/mod50.ts
+@@ -1 +1 @@
+-const a50 = 1;
++const a50 = 2;
+diff --git a/src/mod51.ts b/src/mod51.ts
+--- a/src/mod51.ts
++++ b/src/mod51.ts
+@@ -1 +1 @@
+-const a51 = 1;
++const a51 = 2;
+diff --git a/src/mod52.ts b/src/mod52.ts
+--- a/src/mod52.ts
++++ b/src/mod52.ts
+@@ -1 +1 @@
+-const a52 = 1;
++const a52 = 2;
+diff --git a/src/mod53.ts b/src/mod53.ts
+--- a/src/mod53.ts
++++ b/src/mod53.ts
+@@ -1 +1 @@
+-const a53 = 1;
++const a53 = 2;
+diff --git a/src/mod54.ts b/src/mod54.ts
+--- a/src/mod54.ts
++++ b/src/mod54.ts
+@@ -1 +1 @@
+-const a54 = 1;
++const a54 = 2;
+diff --git a/src/mod55.ts b/src/mod55.ts
+--- a/src/mod55.ts
++++ b/src/mod55.ts
+@@ -1 +1 @@
+-const a55 = 1;
++const a55 = 2;
+diff --git a/src/mod56.ts b/src/mod56.ts
+--- a/src/mod56.ts
++++ b/src/mod56.ts
+@@ -1 +1 @@
+-const a56 = 1;
++const a56 = 2;
+diff --git a/src/mod57.ts b/src/mod57.ts
+--- a/src/mod57.ts
++++ b/src/mod57.ts
+@@ -1 +1 @@
+-const a57 = 1;
++const a57 = 2;
+diff --git a/src/mod58.ts b/src/mod58.ts
+--- a/src/mod58.ts
++++ b/src/mod58.ts
+@@ -1 +1 @@
+-const a58 = 1;
++const a58 = 2;
+diff --git a/src/mod59.ts b/src/mod59.ts
+--- a/src/mod59.ts
++++ b/src/mod59.ts
+@@ -1 +1 @@
+-const a59 = 1;
++const a59 = 2;

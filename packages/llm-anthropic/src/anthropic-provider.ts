@@ -43,6 +43,7 @@ export class AnthropicLLMProvider implements ILLMProvider {
         cacheWriteInputTokens: response.usage.cache_creation_input_tokens ?? 0,
       },
       stopReason: response.stop_reason ?? undefined,
+      modelId: response.model,
     };
   }
 
@@ -90,6 +91,7 @@ export class AnthropicLLMProvider implements ILLMProvider {
         cacheWriteInputTokens: response.usage.cache_creation_input_tokens ?? 0,
       },
       stopReason: response.stop_reason ?? undefined,
+      modelId: response.model,
     };
   }
 }

@@ -1,0 +1,9 @@
+diff --git a/src/auth.ts b/src/auth.ts
+--- a/src/auth.ts
++++ b/src/auth.ts
+@@ -3,5 +3,5 @@
+ export async function isAdmin(token: string) {
+-  const claims = await verify(token);
++  const claims = verify(token);
+   return claims.role === 'admin';
+ }
