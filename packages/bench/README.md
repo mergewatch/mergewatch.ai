@@ -94,6 +94,26 @@ each consuming ticket wires it after an explicit spend approval.
 }
 ```
 
+### Manifests are validated, not cast
+
+`validateManifest` checks the shape at load time and fails with the offending
+field path. This is not defensive boilerplate — the failures it catches are
+silent ones that produce a *wrong benchmark* rather than a crash. Dropping
+just `lineTolerance` from the smoke corpus:
+
+```
+without validation:  precision 0.0000  recall 0.0000  f1 0.0000   (exit 0, "clean run")
+with validation:     bench: Invalid corpus manifest at lineTolerance:
+                     expected a finite number, got undefined        (exit 2)
+```
+
+`undefined` tolerance makes every `Math.abs(delta) <= undefined` comparison
+false, so nothing ever location-matches and recall is 0 on a corpus that
+looks fine. Empty `causeKeywords` does the same to the cause check,
+downgrading every catch to right-line-wrong-reason. Each `diffPath` is also
+contained to the corpus directory, since the manifest is the untrusted part —
+containing `--corpus` but not the paths inside it would be a gap.
+
 ### The match key
 
 A finding is credited only if it matches **both**:

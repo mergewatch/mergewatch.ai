@@ -22,4 +22,5 @@ export {
   projectCaseCostUsd,
 } from './provider.js';
 export { createCaseStub, type StubOptions } from './stub.js';
+export { validateManifest, resolveInCorpus } from './manifest.js';
 export type * from './types.js';

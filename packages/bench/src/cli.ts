@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
+import { resolveInCorpus, validateManifest } from './manifest.js';
 import { runBench } from './runner.js';
 import { createCaseStub } from './stub.js';
 import type { BenchManifest, BenchResult } from './types.js';
@@ -135,8 +136,16 @@ export async function main(argv: string[]): Promise<number> {
     console.error(`bench: ${(err as Error).message}`);
     return 2;
   }
-  const manifest = JSON.parse(readFileSync(corpusPath, 'utf-8')) as BenchManifest;
   const manifestDir = dirname(corpusPath);
+  let manifest: BenchManifest;
+  try {
+    // Validated, not cast: a manifest missing `lineTolerance` would make
+    // every location comparison false and publish a silent recall of 0.
+    manifest = validateManifest(JSON.parse(readFileSync(corpusPath, 'utf-8')), manifestDir);
+  } catch (err) {
+    console.error(`bench: ${(err as Error).message}`);
+    return 2;
+  }
 
   if (!args.stub) {
     console.error(
@@ -160,7 +169,7 @@ export async function main(argv: string[]): Promise<number> {
   try {
     result = await runBench({
       manifest,
-      readDiff: async (p) => readFileSync(resolve(manifestDir, p), 'utf-8'),
+      readDiff: async (p) => readFileSync(resolveInCorpus(manifestDir, p), 'utf-8'),
       llm: (bcase) => createCaseStub(bcase),
       arm: args.arm,
       commitSha,
