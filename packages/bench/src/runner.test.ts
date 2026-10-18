@@ -266,6 +266,29 @@ describe('the spend cap', () => {
     expect(large!).toBeGreaterThan(small!);
   });
 
+  it('projects at the DEARER of the two models, so an expensive light model still caps', async () => {
+    // The projection charges every invocation to one model. Taking the max
+    // keeps the cap conservative without assuming lightModel is cheaper —
+    // here it deliberately is not.
+    const stub = createCaseStub(caseWithCatch());
+    await expect(
+      runBench({
+        manifest: manifest([caseWithCatch()]),
+        readDiff,
+        llm: stub,
+        // lightModel dearer than model; a main-model-only projection would
+        // under-project and let this run start.
+        config: { model: DEFAULT_CONFIG.lightModel, lightModel: DEFAULT_CONFIG.model },
+        // Sits strictly BETWEEN the two projections for this diff: main-only
+        // projects $0.0831 (haiku) and would not trip; max projects $0.2493
+        // (sonnet) and does. A cap outside that band passes either way, which
+        // is what made the first version of this test unable to fail.
+        maxSpendUsd: 0.166,
+      }),
+    ).rejects.toThrow(SpendCapExceededError);
+    expect(stub.invocations).toBe(0);
+  });
+
   it('returns null when the model has no pricing', () => {
     expect(projectCaseCostUsd('abc', 'not-a-real-model-id')).toBeNull();
   });

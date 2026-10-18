@@ -81,21 +81,24 @@ describe('resolveInRepo', () => {
     );
   });
 
-  it('accepts the repo root itself', () => {
-    expect(resolveInRepo('/repo', '.', '--corpus')).toBe('/repo');
+  it('rejects the repo root itself, since the result is read as a file', () => {
+    // Previously accepted, which made it inconsistent with resolveInCorpus.
+    // A directory can never be a valid --corpus or --out target; failing here
+    // beats the EISDIR readFileSync would throw later.
+    expect(() => resolveInRepo('/repo', '.', '--corpus')).toThrow(/must resolve to a file/);
   });
 
   it.each(['../../../../etc/passwd', '/etc/passwd', 'packages/../../outside.json'])(
     'refuses a path that escapes the repo: %o',
     (bad) => {
-      expect(() => resolveInRepo('/repo', bad, '--corpus')).toThrow(/must stay inside the repo/);
+      expect(() => resolveInRepo('/repo', bad, '--corpus')).toThrow(/must resolve to a file inside the repo/);
     },
   );
 
   it('does not treat a sibling directory with a shared prefix as inside', () => {
     // /repo-other must not pass a naive startsWith('/repo') check.
     expect(() => resolveInRepo('/repo', '../repo-other/x.json', '--corpus')).toThrow(
-      /must stay inside the repo/,
+      /must resolve to a file inside the repo/,
     );
   });
 });

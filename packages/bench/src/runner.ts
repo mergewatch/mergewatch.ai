@@ -184,11 +184,19 @@ async function runOne(
     // left a hole: a priced main model and an unpriced light model passed
     // pre-flight, the pipeline ran and spent, and only the post-hoc check
     // then failed — breaking this cap's one promise, that `0` spends nothing.
-    const projected = projectCaseCostUsd(diff, config.model, config.pricing);
+    const projectedMain = projectCaseCostUsd(diff, config.model, config.pricing);
     const projectedLight = projectCaseCostUsd(diff, config.lightModel, config.pricing);
-    if (projected === null || projectedLight === null) {
+    if (projectedMain === null || projectedLight === null) {
       throw new UnpricedModelError([config.model, config.lightModel], bcase.id);
     }
+    // Project at the DEARER of the two rates rather than summing them. The
+    // projection already charges all PROJECTED_INVOCATIONS to one model, and
+    // the real run splits those invocations between the two — so summing
+    // would double-count, while taking the max stays conservative without
+    // assuming which model is cheaper. `lightModel` is normally the cheaper
+    // one, but nothing enforces that, and a cap that quietly relies on it
+    // under-projects the moment someone inverts them.
+    const projected = Math.max(projectedMain, projectedLight);
     if (spentSoFar + projected > opts.maxSpendUsd) {
       throw new SpendCapExceededError(opts.maxSpendUsd, spentSoFar, projected, bcase.id);
     }

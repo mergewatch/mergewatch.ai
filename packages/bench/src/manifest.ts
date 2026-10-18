@@ -45,6 +45,8 @@ function requireNumber(value: unknown, path: string): number {
  */
 export function resolveInCorpus(manifestDir: string, diffPath: string): string {
   const resolved = resolve(manifestDir, diffPath);
+  // Same rule as `resolveInRepo` in cli.ts: the root itself is rejected too,
+  // because the result is always read as a file.
   if (!resolved.startsWith(manifestDir + sep)) {
     throw new Error(
       `diffPath must stay inside the corpus directory: "${diffPath}" resolves to ${resolved}`,
