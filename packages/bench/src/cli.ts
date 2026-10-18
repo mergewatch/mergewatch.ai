@@ -37,8 +37,13 @@ export function findRepoRoot(startDir: string): string {
  */
 export function resolveInRepo(repoRoot: string, candidate: string, flag: string): string {
   const resolved = resolve(repoRoot, candidate);
-  if (resolved !== repoRoot && !resolved.startsWith(repoRoot + sep)) {
-    throw new Error(`${flag} must stay inside the repo: "${candidate}" resolves to ${resolved}`);
+  // Rejects the root itself as well as anything outside it. Every caller
+  // reads the result as a FILE, so a path resolving to a directory is never
+  // valid — failing here gives a clearer message than the EISDIR that
+  // readFileSync would throw later. `resolveInCorpus` in manifest.ts applies
+  // the same rule; the two were briefly inconsistent.
+  if (!resolved.startsWith(repoRoot + sep)) {
+    throw new Error(`${flag} must resolve to a file inside the repo: "${candidate}" resolves to ${resolved}`);
   }
   return resolved;
 }
