@@ -22,6 +22,7 @@ import {
   findExistingBotComment,
   dismissStaleReviews,
   resolveAppLogin,
+  dismissOwnStaleReviews,
   __resetAppLoginCache,
 } from './client.js';
 import type { Octokit } from '@octokit/rest';
@@ -845,6 +846,7 @@ describe('dismissStaleReviews — only our own reviews (#418)', () => {
   function octokitWith(reviews: Array<{ id: number; login: string; state?: string }>) {
     const dismissed: number[] = [];
     const octokit = {
+      paginate: (fn: any, p: any) => fn(p).then((r: any) => r.data),
       pulls: {
         listReviews: async () => ({
           data: reviews.map((r) => ({
@@ -934,12 +936,64 @@ describe('dismissStaleReviews — only our own reviews (#418)', () => {
 
   it('survives a dismissReview failure without throwing', async () => {
     const octokit = {
+      paginate: (fn: any, p: any) => fn(p).then((r: any) => r.data),
       pulls: {
         listReviews: async () => ({ data: [{ id: 1, state: 'APPROVED', user: { login: 'mergewatch' } }] }),
         dismissReview: async () => { throw new Error('403'); },
       },
     } as any;
     await expect(dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch')).resolves.toBeUndefined();
+  });
+
+  it('dismisses our review when it is only on page 2 (#707)', async () => {
+    // listReviews' default page is 30; a single call never sees review 31.
+    const humans = Array.from({ length: 30 }, (_, i) => ({
+      id: i + 1, state: 'APPROVED', user: { login: `human${i}`, type: 'User' },
+    }));
+    const ours = { id: 31, state: 'APPROVED', user: { login: 'mergewatch[bot]', type: 'Bot' } };
+    const dismissed: number[] = [];
+    const octokit = {
+      paginate: async () => [...humans, ours],
+      pulls: {
+        listReviews: async () => ({ data: humans }),
+        dismissReview: async ({ review_id }: { review_id: number }) => { dismissed.push(review_id); return {}; },
+      },
+    } as any;
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([31]);
+  });
+
+  it('dismisses only APPROVED and CHANGES_REQUESTED reviews of ours (#707)', async () => {
+    // GitHub rejects dismissing a COMMENTED review; the call used to fail and
+    // be swallowed.
+    const { octokit, dismissed } = octokitWith([
+      { id: 1, login: 'mergewatch', state: 'APPROVED' },
+      { id: 2, login: 'mergewatch', state: 'CHANGES_REQUESTED' },
+      { id: 3, login: 'mergewatch', state: 'COMMENTED' },
+      { id: 4, login: 'mergewatch', state: 'DISMISSED' },
+    ]);
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([1, 2]);
+  });
+
+  it('pin: of MergeWatch, another bot and a human, only MergeWatch is dismissed (#707)', async () => {
+    // Regression guard for #418 with a real `type: 'User'` human; passes on main.
+    const dismissed: number[] = [];
+    const octokit = {
+      paginate: (fn: any, p: any) => fn(p).then((r: any) => r.data),
+      pulls: {
+        listReviews: async () => ({
+          data: [
+            { id: 1, state: 'APPROVED', user: { login: 'mergewatch[bot]', type: 'Bot' } },
+            { id: 2, state: 'APPROVED', user: { login: 'other-reviewer[bot]', type: 'Bot' } },
+            { id: 3, state: 'CHANGES_REQUESTED', user: { login: 'a-human', type: 'User' } },
+          ],
+        }),
+        dismissReview: async ({ review_id }: { review_id: number }) => { dismissed.push(review_id); return {}; },
+      },
+    } as any;
+    await dismissStaleReviews(octokit, 'o', 'r', 1, 'mergewatch');
+    expect(dismissed).toEqual([1]);
   });
 });
 
@@ -981,6 +1035,96 @@ describe('resolveAppLogin (#418)', () => {
   it('returns null when the comment has no author', async () => {
     const octokit = { issues: { getComment: async () => ({ data: {} }) } } as any;
     expect(await resolveAppLogin(octokit, 'o', 'r', 1)).toBeNull();
+  });
+
+  // #707 — a silent clean PR has no summary comment, so identity falls back to GET /app.
+  function appOctokit(app: () => Promise<any>, getComment?: () => Promise<any>) {
+    const calls = { app: 0, comment: 0 };
+    const octokit = {
+      apps: { getAuthenticated: async () => { calls.app++; return app(); } },
+      issues: { getComment: async () => { calls.comment++; return getComment ? getComment() : { data: {} }; } },
+    } as any;
+    return { octokit, calls };
+  }
+
+  it('without a comment id, reads our login from GET /app (#707)', async () => {
+    const { octokit, calls } = appOctokit(async () => ({ data: { slug: 'acme-reviewer' } }));
+    expect(await resolveAppLogin(octokit, 'o', 'r', undefined, 'k')).toBe('acme-reviewer[bot]');
+    expect(calls.comment).toBe(0);
+  });
+
+  it('falls back to GET /app when the comment cannot be read (#707)', async () => {
+    const { octokit } = appOctokit(
+      async () => ({ data: { slug: 'mergewatch' } }),
+      async () => { throw new Error('404'); },
+    );
+    expect(await resolveAppLogin(octokit, 'o', 'r', 1, 'k')).toBe('mergewatch[bot]');
+  });
+
+  it('caches a GET /app result under the same key (#707)', async () => {
+    const { octokit, calls } = appOctokit(async () => ({ data: { slug: 'mergewatch' } }));
+    await resolveAppLogin(octokit, 'o', 'r', undefined, 'k');
+    await resolveAppLogin(octokit, 'o', 'r', undefined, 'k');
+    expect(calls).toEqual({ app: 1, comment: 0 });
+  });
+
+  it('null data or a missing slug is null and is not cached (#707)', async () => {
+    for (const data of [null, {}, { slug: '' }]) {
+      __resetAppLoginCache();
+      const { octokit, calls } = appOctokit(async () => ({ data }));
+      expect(await resolveAppLogin(octokit, 'o', 'r', undefined, 'k')).toBeNull();
+      expect(await resolveAppLogin(octokit, 'o', 'r', undefined, 'k')).toBeNull();
+      expect(calls.app).toBe(2);
+    }
+  });
+
+  it('returns null when both sources fail (#707)', async () => {
+    const { octokit } = appOctokit(
+      async () => { throw new Error('401'); },
+      async () => { throw new Error('404'); },
+    );
+    expect(await resolveAppLogin(octokit, 'o', 'r', 1, 'k')).toBeNull();
+  });
+});
+
+describe('dismissOwnStaleReviews (#707)', () => {
+  beforeEach(() => __resetAppLoginCache());
+
+  function octokitFor(app: () => Promise<any>, reviews: Array<{ id: number; login: string; state: string }>) {
+    const dismissed: number[] = [];
+    let listed = 0;
+    const octokit = {
+      apps: { getAuthenticated: app },
+      issues: { getComment: async () => { throw new Error('no comment'); } },
+      paginate: (fn: any, p: any) => fn(p).then((r: any) => r.data),
+      pulls: {
+        listReviews: async () => {
+          listed++;
+          return { data: reviews.map((r) => ({ id: r.id, state: r.state, user: { login: r.login, type: 'Bot' } })) };
+        },
+        dismissReview: async ({ review_id }: { review_id: number }) => { dismissed.push(review_id); return {}; },
+      },
+    } as any;
+    return { octokit, dismissed, listed: () => listed };
+  }
+
+  it('dismisses our APPROVED review on a PR with no summary comment', async () => {
+    const { octokit, dismissed } = octokitFor(
+      async () => ({ data: { slug: 'mergewatch' } }),
+      [{ id: 7, login: 'mergewatch[bot]', state: 'APPROVED' }],
+    );
+    expect(await dismissOwnStaleReviews(octokit, 'o', 'r', 1, undefined, 'k')).toBe('mergewatch[bot]');
+    expect(dismissed).toEqual([7]);
+  });
+
+  it('with no identity, lists nothing and dismisses nothing', async () => {
+    const { octokit, dismissed, listed } = octokitFor(
+      async () => { throw new Error('401'); },
+      [{ id: 7, login: 'mergewatch[bot]', state: 'APPROVED' }],
+    );
+    expect(await dismissOwnStaleReviews(octokit, 'o', 'r', 1, 1, 'k')).toBeNull();
+    expect(listed()).toBe(0);
+    expect(dismissed).toEqual([]);
   });
 });
 

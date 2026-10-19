@@ -62,6 +62,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     updateReviewComment: vi.fn().mockResolvedValue(undefined),
     buildInlineComments: vi.fn().mockReturnValue([]),
     dismissStaleReviews: vi.fn().mockResolvedValue(undefined),
+    dismissOwnStaleReviews: vi.fn().mockResolvedValue(null),
     submitPRReview: vi.fn().mockResolvedValue(undefined),
     createStandaloneReviewComment: vi.fn().mockResolvedValue(undefined),
     getCommentReactions: vi.fn().mockResolvedValue({}),
@@ -82,7 +83,6 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     computeDisputedKeys: vi.fn().mockResolvedValue([]),
     // #664 — observed by the withheld-prior test; defaults match what the real
     // ones return against the empty mock octokit (no login, nothing closed).
-    resolveAppLogin: vi.fn().mockResolvedValue(null),
     resolveWithdrawnFindingThreads: vi.fn().mockResolvedValue(0),
   };
 });
@@ -93,7 +93,8 @@ import {
   addPRReaction, removePRReaction, submitPRReview,
   fetchTriageComments, computeDisputedKeys,
   postReviewComment, updateReviewComment, findExistingBotComment, isStillPRHead,
-  computeReviewDelta, formatReviewComment, resolveAppLogin, resolveWithdrawnFindingThreads,
+  computeReviewDelta, formatReviewComment, resolveWithdrawnFindingThreads,
+  dismissOwnStaleReviews,
 } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 
@@ -1195,6 +1196,17 @@ describe('processReviewJob — postSummaryOnClean (#350)', () => {
     )).toBe(true);
   });
 
+  it('still dismisses our stale reviews on a silent clean PR, with no comment id (#707)', async () => {
+    // No summary comment means no comment id; identity then comes from GET /app
+    // inside dismissOwnStaleReviews instead of dismissal being skipped.
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    await processReviewJob(makeJob(), makeDeps());
+
+    expect(postReviewComment).not.toHaveBeenCalled();
+    expect(vi.mocked(dismissOwnStaleReviews)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(dismissOwnStaleReviews).mock.calls[0][4]).toBeUndefined();
+  });
+
   it('still updates an existing comment on a clean PR (never leaves a stale review)', async () => {
     (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
     (findExistingBotComment as any).mockResolvedValue(42);
@@ -1694,7 +1706,7 @@ describe('processReviewJob — custom agent failures (#664)', () => {
     vi.mocked(deps.reviewStore.queryByPR).mockResolvedValue([
       { status: 'complete', prNumberCommitSha: '1#old', findings: [P] } as any,
     ]);
-    vi.mocked(resolveAppLogin).mockResolvedValue('mergewatch[bot]');
+    vi.mocked(dismissOwnStaleReviews).mockResolvedValue('mergewatch[bot]');
     vi.mocked(runReviewPipeline).mockResolvedValue(gating());
     await processReviewJob(makeJob(), deps as any);
 

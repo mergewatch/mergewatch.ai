@@ -104,6 +104,25 @@ describe('the review agent has a single check-run write path (#639)', () => {
  * handler-level harness, so the guard is a source scan: none of the inline
  * gate computations may come back, and the core derivations must be used.
  */
+/**
+ * #707 — both runtimes dismiss through the one core entry point, so neither can
+ * re-introduce the `commentId` guard that skipped dismissal on silent PRs.
+ */
+describe('both runtimes dismiss through dismissOwnStaleReviews (#707)', () => {
+  for (const [name, url] of [
+    ['review-agent.ts', new URL('./review-agent.ts', import.meta.url)],
+    ['review-processor.ts', new URL('../../../server/src/review-processor.ts', import.meta.url)],
+  ] as const) {
+    it(name, () => {
+      const src = readFileSync(url, 'utf8');
+      expect(src, `${name} lacks dismissOwnStaleReviews(`).toContain('dismissOwnStaleReviews(');
+      for (const banned of ['resolveAppLogin(', 'dismissStaleReviews(']) {
+        expect(src, `${name} still contains ${banned}`).not.toContain(banned);
+      }
+    });
+  }
+});
+
 describe('review-agent.ts derives the gate outputs from core (#662)', () => {
   const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
 

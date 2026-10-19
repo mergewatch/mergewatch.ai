@@ -7,7 +7,7 @@ import {
   loadCategoryDisputeRates,
   filterDiff,
   DEFAULT_CONFIG, mergeConfig,
-  BOT_COMMENT_MARKER, submitPRReview, dismissStaleReviews, resolveAppLogin,
+  BOT_COMMENT_MARKER, submitPRReview, dismissOwnStaleReviews,
   checkInputBudget, describeOverBudget,
   buildInlineComments, extractInlineCommentTitle,
   fetchRepoConfig, fetchConventions,
@@ -938,11 +938,10 @@ export async function processReviewJob(
     const reviewBody = '';
     try {
       // #418 — dismiss only OUR reviews; see the Lambda handler for the
-      // rationale. Identity comes from the comment we just wrote.
-      const selfLogin = commentId
-        ? await resolveAppLogin(octokit, owner, repo, commentId, `server:${STAGE ?? 'prod'}`)
-        : null;
-      await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
+      // rationale. Identity comes from the comment we just wrote, or GET /app (#707).
+      const selfLogin = await dismissOwnStaleReviews(
+        octokit, owner, repo, prNumber, commentId, `server:${STAGE ?? 'prod'}`,
+      );
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
       // #526 — close our own inline threads for findings this review no longer
       // raises. Without it a withdrawn critical leaves its comment open

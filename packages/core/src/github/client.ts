@@ -1022,7 +1022,7 @@ export function extractInlineCommentFingerprint(body: string): string {
  * Dismiss any existing bot reviews on a PR so they don't conflict
  * with a new review on a later commit.
  *
- * Called on `synchronize` events before submitting a fresh review.
+ * Called before every fresh review is submitted, via `dismissOwnStaleReviews`.
  */
 export async function dismissStaleReviews(
   octokit: Octokit,
@@ -1051,15 +1051,20 @@ export async function dismissStaleReviews(
     return;
   }
 
-  const reviews = await octokit.pulls.listReviews({
+  // #707 — paginate: a single call sees only the first 30 reviews, so ours
+  // could sit undismissed on page 2.
+  const reviews = await octokit.paginate(octokit.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
+    per_page: 100,
   });
 
   const want = normalizeLogin(selfLogin);
-  for (const review of reviews.data) {
-    if (review.state === 'DISMISSED') continue;
+  for (const review of reviews) {
+    // GitHub only dismisses APPROVED / CHANGES_REQUESTED; a COMMENTED review
+    // rejects the call, which the catch below would swallow (#707).
+    if (review.state !== 'APPROVED' && review.state !== 'CHANGES_REQUESTED') continue;
     if (normalizeLogin(review.user?.login) !== want) continue;
     await octokit.pulls.dismissReview({
       owner,
@@ -1086,7 +1091,7 @@ function normalizeLogin(login: string | null | undefined): string {
 
 /**
  * Resolve the GitHub App login behind this installation client, from a comment
- * the App itself authored (#418).
+ * the App itself authored (#418), or from `GET /app` when there is none (#707).
  *
  * Derived rather than configured: the review path already posts its summary
  * comment before dismissing reviews, so the author of that comment IS us, in
@@ -1094,7 +1099,11 @@ function normalizeLogin(login: string | null | undefined): string {
  * when an App is renamed. Costs one API call per process — the login is stable
  * for the life of the App, so it is cached.
  *
- * Returns null when the comment can't be read; the caller treats that as
+ * A silent clean PR (`postSummaryOnClean: false`) has no comment, so the
+ * App's own slug is the fallback (#707): both auth providers use
+ * `createAppAuth`, which answers `GET /app` with the App JWT.
+ *
+ * Returns null when neither source answers; the caller treats that as
  * "identity unknown" and declines to dismiss anything.
  */
 const APP_LOGIN_CACHE = new Map<string, string>();
@@ -1103,23 +1112,57 @@ export async function resolveAppLogin(
   octokit: Octokit,
   owner: string,
   repo: string,
-  commentId: number,
+  commentId: number | undefined,
   cacheKey = 'default',
 ): Promise<string | null> {
   const cached = APP_LOGIN_CACHE.get(cacheKey);
   if (cached) return cached;
 
+  // Best-effort throughout: a failed lookup must not break the review, it just
+  // means we skip dismissal this time.
+  if (commentId) {
+    try {
+      const { data } = await octokit.issues.getComment({ owner, repo, comment_id: commentId });
+      const login = data.user?.login;
+      if (login) {
+        APP_LOGIN_CACHE.set(cacheKey, login);
+        return login;
+      }
+    } catch {
+      // fall through to GET /app
+    }
+  }
+
   try {
-    const { data } = await octokit.issues.getComment({ owner, repo, comment_id: commentId });
-    const login = data.user?.login;
-    if (!login) return null;
+    const { data } = await octokit.apps.getAuthenticated();
+    const slug = data?.slug;
+    if (!slug) return null;
+    const login = `${slug}[bot]`;
     APP_LOGIN_CACHE.set(cacheKey, login);
     return login;
   } catch {
-    // Best-effort: a failed lookup must not break the review, it just means we
-    // skip dismissal this time.
     return null;
   }
+}
+
+/**
+ * Resolve our own App login, then dismiss our stale reviews (#707).
+ *
+ * The one entry point both runtimes call, so neither can re-introduce a
+ * `commentId` guard that skips dismissal on silent PRs. Returns the login for
+ * the caller's later own-thread checks; null means nothing was dismissed.
+ */
+export async function dismissOwnStaleReviews(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  commentId: number | undefined,
+  cacheKey: string,
+): Promise<string | null> {
+  const selfLogin = await resolveAppLogin(octokit, owner, repo, commentId, cacheKey);
+  await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
+  return selfLogin;
 }
 
 /** Test seam — the cache is process-wide and would otherwise leak between cases. */
