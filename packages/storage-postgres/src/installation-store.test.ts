@@ -56,3 +56,19 @@ describe('PostgresInstallationStore — org custom agents (#235)', () => {
     );
   });
 });
+
+describe('PostgresInstallationStore — approve (#706)', () => {
+  const row = (approve: boolean) => ({
+    installationId: '42', severityThreshold: 'Low', commentTypes: { syntax: true, logic: true, style: true },
+    maxComments: 10, summary: {}, customInstructions: '', commentHeader: '', customAgents: [], approve,
+  });
+
+  it('getSettings reads the approve column', async () => {
+    expect((await new PostgresInstallationStore(chain([row(true)])).getSettings('42')).approve).toBe(true);
+    expect((await new PostgresInstallationStore(chain([row(false)])).getSettings('42')).approve).toBe(false);
+  });
+
+  it('getSettings with no settings row → approve: false', async () => {
+    expect((await new PostgresInstallationStore(chain([])).getSettings('42')).approve).toBe(false);
+  });
+});

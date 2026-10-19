@@ -61,7 +61,7 @@ function rowToReviewItem(row: typeof reviews.$inferSelect): ReviewItem {
 
 // ─── Installation store ─────────────────────────────────────────────────────
 
-class PostgresDashboardInstallationStore implements IDashboardInstallationStore {
+export class PostgresDashboardInstallationStore implements IDashboardInstallationStore {
   constructor(private db: PostgresJsDatabase) {}
 
   async listByInstallation(installationId: string): Promise<InstallationItem[]> {
@@ -96,6 +96,7 @@ class PostgresDashboardInstallationStore implements IDashboardInstallationStore 
       summary: row.summary as InstallationSettings['summary'],
       customInstructions: row.customInstructions,
       commentHeader: row.commentHeader,
+      approve: row.approve,
     };
   }
 
@@ -110,6 +111,7 @@ class PostgresDashboardInstallationStore implements IDashboardInstallationStore 
         summary: settings.summary as any,
         customInstructions: settings.customInstructions,
         commentHeader: settings.commentHeader,
+        approve: settings.approve,
       })
       .onConflictDoUpdate({
         target: installationSettings.installationId,
@@ -120,6 +122,7 @@ class PostgresDashboardInstallationStore implements IDashboardInstallationStore 
           summary: settings.summary as any,
           customInstructions: settings.customInstructions,
           commentHeader: settings.commentHeader,
+          approve: settings.approve,
         },
       });
   }

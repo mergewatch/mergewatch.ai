@@ -288,6 +288,12 @@ describe('parseRepoConfigYaml', () => {
     expect(result?.model).toBeUndefined();
   });
 
+  it('#706 — parses a boolean approve and ignores anything else', () => {
+    expect(parseRepoConfigYaml('approve: true')?.approve).toBe(true);
+    expect(parseRepoConfigYaml('approve: false')?.approve).toBe(false);
+    expect(parseRepoConfigYaml('approve: "yes"')?.approve).toBeUndefined();
+  });
+
   it('parses a valid minConfidence (FP-A floor override)', () => {
     expect(parseRepoConfigYaml('minConfidence: 50')?.minConfidence).toBe(50);
     expect(parseRepoConfigYaml('minConfidence: 100')?.minConfidence).toBe(100);

@@ -1679,6 +1679,7 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
     }
     if (typeof parsed.maxFindings === 'number') config.maxFindings = parsed.maxFindings;
     if (typeof parsed.postSummaryOnClean === 'boolean') config.postSummaryOnClean = parsed.postSummaryOnClean;
+    if (typeof parsed.approve === 'boolean') config.approve = parsed.approve;
     if (typeof parsed.conventions === 'string' && parsed.conventions.trim()) {
       config.conventions = parsed.conventions.trim();
     }

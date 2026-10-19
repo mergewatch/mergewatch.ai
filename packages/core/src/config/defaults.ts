@@ -200,6 +200,12 @@ export interface MergeWatchConfig {
   maxFindings: number;
   /** Whether to post a summary even when there are no findings */
   postSummaryOnClean: boolean;
+  /**
+   * #706 — whether a 4-5 score submits APPROVE (otherwise COMMENT). Read only
+   * from the default branch's `.mergewatch.yml` (`resolveApproveForRepo`), so a
+   * PR cannot approve itself; the value merged from the PR head is never used.
+   */
+  approve: boolean;
   /** Whether to fetch related file contents for context-aware reviews */
   codebaseAwareness: boolean;
   /** Maximum rounds of agentic file requests per agent (1-2) */
@@ -281,6 +287,7 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
   minConfidence: 75,
   maxFindings: 25,
   postSummaryOnClean: true,
+  approve: false,
   codebaseAwareness: true,
   maxFileRequestRounds: 1,
   maxContextKB: 256,

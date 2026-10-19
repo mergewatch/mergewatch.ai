@@ -123,6 +123,28 @@ describe('both runtimes dismiss through dismissOwnStaleReviews (#707)', () => {
   }
 });
 
+/**
+ * #706 — approve comes only from the default branch. Both runtimes resolve it
+ * through core's `resolveApproveForRepo`, which takes no ref; a runtime that
+ * read `config.approve` (merged from the PR head) would let a PR approve itself.
+ */
+describe('both runtimes resolve approve through resolveApproveForRepo (#706)', () => {
+  for (const [name, url] of [
+    ['review-agent.ts', new URL('./review-agent.ts', import.meta.url)],
+    ['review-processor.ts', new URL('../../../server/src/review-processor.ts', import.meta.url)],
+  ] as const) {
+    it(name, () => {
+      const src = readFileSync(url, 'utf8');
+      for (const required of ['resolveApproveForRepo(', 'shouldSubmitFormalReview(']) {
+        expect(src, `${name} lacks ${required}`).toContain(required);
+      }
+      for (const banned of ['resolveApprove(', '.approve']) {
+        expect(src, `${name} still contains ${banned}`).not.toContain(banned);
+      }
+    });
+  }
+});
+
 describe('review-agent.ts derives the gate outputs from core (#662)', () => {
   const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
 

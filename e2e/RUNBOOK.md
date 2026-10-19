@@ -187,7 +187,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 
 | ID | Behavior tested | Setup time | Wait | Verifies PR # | Tags |
 |---|---|---|---|---|---|
-| [E2E-01](#e2e-01-clean-pr--full-review) | Happy path: clean PR → 5/5 + APPROVE + empty review body | 1m | 60s | #132 | `output`, `review-core`, `correctness` |
+| [E2E-01](#e2e-01-clean-pr--full-review) | Happy path: clean PR → 5/5 + COMMENT (approving is opt-in, #706) + pointer-only review body | 1m | 60s | #132 | `output`, `review-core`, `correctness` |
 | [E2E-02](#e2e-02-info-only-findings) | Info-only findings → 5/5, "Looks good to me" + Info collapsible | 1m | 60s | #134 | `output`, `review-core`, `correctness` |
 | [E2E-03](#e2e-03-critical-finding--inline-comment) | Critical finding → inline comment + REQUEST_CHANGES | 1m | 60s | core | `agents`, `review-core`, `correctness` |
 | [E2E-04](#e2e-04-autoreview-off--silent) | `autoReview: false` → zero PR trace | 1m | 30s | #136 | `config`, `skip`, `correctness` |
@@ -214,7 +214,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-25](#e2e-25-w7-score-guardrail--unverified-only-criticals-dont-block) | A Critical the W2 pass couldn't confirm → score clamped to 3/COMMENT (not 2/REQUEST_CHANGES), check stays advisory | 2m | 60s | W7 | `agents`, `verification`, `correctness` |
 | [E2E-26](#e2e-26-w8-location-accuracy--snap-to-call-site-not-definition) | A call-site finding cited at a function definition line snaps to the actual call site (W8) | 2m | 60s | W8 | `agents`, `grounding`, `correctness` |
 | [E2E-27](#e2e-27-w11-scope-awareness--test-coverage-suppression-when-the-repo-documents-no-harness) | Repo AGENTS.md declares "no test harness" → N "lacks coverage" findings collapse into one info note (W11) | 2m | 60s | W11 | `agents`, `correctness` |
-| [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE) or an HTML-comment stub (REQUEST_CHANGES / COMMENT) — no duplicate verdict text (W6) | 2m | 60s | W6 | `output`, `review-core`, `correctness` |
+| [E2E-28](#e2e-28-w6-single-authoritative-review-comment--no-duplicate-verdict-body) | One issue comment + one formal Review per run; the Review body is empty (APPROVE, only with `approve: true`) or the one-line pointer stub (REQUEST_CHANGES / COMMENT, including a default clean PR) — no duplicate verdict text (W6, #706) | 2m | 60s | W6 | `output`, `review-core`, `correctness` |
 | [E2E-29](#e2e-29-w10-finding-consolidation--fragments-on-the-same-region-merge) | N fragmented findings on the same code region (same file, line-span ≤ 50, ≥ 1 shared significant token) collapse into one merged finding with the strongest severity + a "Related concerns" list (W10) | 2m | 60s | W10 | `agents`, `dedup`, `correctness` |
 | [E2E-30](#e2e-30-fp-a--hard-confidence-floor-filter) | Findings with `confidence < 75` deterministically dropped post-orchestrator (FP-A) | 1m | 60s | FP-A | `agents`, `config`, `correctness` |
 | [E2E-31](#e2e-31-fp-b--pre-filter-previousfindings-by-disputedkeys) | Prior findings whose key is in `disputedKeys` are excluded from the orchestrator's input, not just suppressed downstream (FP-B) | 2m | 60s | FP-B | `agents`, `fp`, `correctness` |
@@ -276,6 +276,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-87](#e2e-87-337--date-only-range-bounds-include-their-whole-day) | `/api/analytics` date-only `start_date`/`end_date` expand to the UTC day's edge instants at the boundary (`end_date=2026-08-16` includes the whole 16th); full timestamps pass through untouched; identical on both backends; UTC bucketing documented in the route (#337) | 2m | 30s | #337 | `rollup`, `correctness` |
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` · _script-verified, no fixture_ |
+| [E2E-102](#e2e-102-706--approving-is-opt-in-and-a-pr-cannot-approve-itself) | A 4-5 score submits COMMENT by default; `approve: true` on the default branch makes it APPROVE, while `approve: true` only on the PR's own branch is ignored; an earlier MergeWatch APPROVE is dismissed on the next review (#706) | 5m | 60s | #706 | `review-core`, `correctness` · _unit-test-gated_ |
 | [E2E-101](#e2e-101-469--every-finding-carries-proof-a-reader-can-check) | Each critical renders cited code, the verifier's one-sentence reason, and cross-agent convergence inline; warnings show the reason only and info shows nothing; `ux.showEvidence: false` opts out (#469) | 2m | 60s | #476 | `output`, `review-core` · _unit-test-gated_ |
 | [E2E-100](#e2e-100-468--an-oversized-review-truncates-visibly-never-vanishes) | A review body over GitHub's 65,536-char comment limit truncates with a notice naming what was dropped, instead of failing the POST and vanishing from the PR; verdict, summary and all criticals never shed, and inline `mw-fp` fingerprints survive truncation (#468) | 3m | 60s | #474 | `output`, `review-core` · _unit-test-gated, no fixture_ |
 | [E2E-99](#e2e-99-401--malformed-agent-output-is-disclosed-not-counted-as-suppression) | Agent responses that parse but return unusable findings no longer inflate the suppressed counter; they surface as a distinct "Malformed agent output" warning (#401) | 2m | 60s | #429 | `agents`, `output` · _unit-test-gated, no fixture_ |
@@ -295,7 +296,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 
 ### E2E-01: Clean PR → full review
 
-**Behavior**: a PR with no issues should produce 5/5 "Looks good to me", an APPROVE on the formal PR review (with empty body — verdict block removed in #132), and a summary comment with "Looks good to me!". (The label read "Safe to merge" pre-#134 and "No issues found in the diff" pre-#626; both claimed more than the review establishes.)
+**Behavior**: a PR with no issues should produce 5/5 "Looks good to me", a COMMENT on the formal PR review (approving is opt-in since #706; the body is only the one-line pointer to the summary comment — verdict block removed in #132), and a summary comment with "Looks good to me!". (The label read "Safe to merge" pre-#134 and "No issues found in the diff" pre-#626; both claimed more than the review establishes.)
 
 **Setup**
 
@@ -326,14 +327,15 @@ agent has signal that `add` is pre-existing and covered.
   - [ ] `🟢 5/5 — Looks good to me` verdict line
   - [ ] `👍 Looks good to me!` action-items section
   - [ ] No "Requires your attention" table (zero critical + zero warning)
-- [ ] Formal PR review submitted with state = **Approved**
-- [ ] **The Approved review has NO body text** (only the verdict state — #132 dropped the verdict body)
+- [ ] Formal PR review submitted with state = **Commented**, not Approved — the fixtures repo does not set `approve` (#706)
+- [ ] **The review body is only the one-line pointer** to the summary comment — no verdict text (#132 dropped the verdict body)
 - [ ] Completed check run "MergeWatch Review" lands with conclusion = success
 - [ ] +1 👍 reaction on the PR (success signal)
 - [ ] 👀 reaction is **removed** once review completes — only 👍 remains
 
 **Failure modes to watch for**
 - ❌ PR review has a body that says "X/5 — verdict — view details" (regression of #132)
+- ❌ Formal review state is **Approved** on default config — approving is opt-in (#706)
 - ❌ Multiple summary comments instead of one edited-in-place
 - ❌ 👀 reaction still present after review completes (regression of #138 eyes-cleanup)
 - ❌ "Requires your attention" table with a "no test coverage" warning — that's the test-coverage agent firing on an unchanged public function (regression of the #138 prompt tightening)
@@ -368,7 +370,7 @@ No `.mergewatch.yml` needed.
 - [ ] Verdict reason line says something like "No action items — only informational notes" (NOT "Multiple warnings")
 - [ ] Action-items section reads `👍 Looks good to me!`
 - [ ] An "Info (N)" collapsible section IS present below with at least 1 finding
-- [ ] Formal PR review state = **Approved** (not Comment, not Request changes)
+- [ ] Formal PR review state = **Commented** (not Request changes; not Approved — approving is opt-in, #706)
 
 **Failure modes**
 - ❌ Score shows 3/5 or 4/5 with "Looks good to me!" — that's the bug #134 fixed reappearing
@@ -518,7 +520,7 @@ Add `docs/architecture.md` with some content.
 
 **Expected outcomes**
 
-- [ ] Full review runs (👀 reaction → in-progress check run → summary comment → APPROVE)
+- [ ] Full review runs (👀 reaction → in-progress check run → summary comment → COMMENT; approving is opt-in, #706)
 - [ ] Summary comment treats the markdown file as a normal source file (no "skipped — only docs" message)
 
 ---
@@ -913,7 +915,7 @@ Push to the same branch. MergeWatch will re-review with the fix-commit context.
 - [ ] Verdict line shows `🟢 4/5 — Generally safe` or `🟢 5/5 — Looks good to me` — NOT red/orange
 - [ ] If for some reason the LLM flags 1-2 new minor concerns on the fix, the verdict should land on **🟡 3/5** at worst (net-improvement tier — `resolvedCriticals > newCriticals` keeps it yellow, not red)
 - [ ] Verdict reason mentions resolved criticals: `Resolved N critical issues from prior review, no new criticals introduced.` (pure) OR `Resolved N critical issues from prior review; introduced M new — net improvement, but review the new findings.` (net)
-- [ ] Formal PR review state = **Approved** (empty body) on green; **Comment** on yellow
+- [ ] Formal PR review state = **Comment** on green and yellow (**Approved**, empty body, on green only with `approve: true` on the default branch — #706)
 - [ ] Delta caption summarises the resolution: e.g., "Replaced unauthenticated admin endpoints with `requireAdmin` guards and parameterized the SQL query."
 
 **Failure modes**
@@ -1302,7 +1304,7 @@ The test-coverage agent will naturally raise "lacks coverage" on each new public
 
 Branch: `fixture/28-single-comment`. Two micro-fixtures, one per verdict tier:
 
-- **Clean PR** (APPROVE path). A trivial JSDoc-only diff in `src/utils.ts` — same shape as E2E-01.
+- **Clean PR** (COMMENT path on default config; APPROVE only with `approve: true` on the default branch, #706). A trivial JSDoc-only diff in `src/utils.ts` — same shape as E2E-01.
 - **PR with a Critical** (REQUEST_CHANGES path). A small file with a textbook security issue (e.g. unauthenticated admin endpoint, à la E2E-18 step 1).
 
 Run the fixtures separately to exercise both branches of the body-handling logic.
@@ -1312,8 +1314,8 @@ Run the fixtures separately to exercise both branches of the body-handling logic
 - [ ] **One** issue comment authored by `mergewatch[bot]` on the PR conversation. Inspect via `gh pr view <n> --json comments -q '.comments | length'` → 1.
 - [ ] **One** formal PR Review authored by `mergewatch[bot]`. Inspect via `gh pr view <n> --json reviews -q '.reviews | length'` → 1 (post-`dismissStaleReviews`).
 - [ ] The formal Review's **rendered** body is empty:
-  - APPROVE fixture: `gh api repos/<owner>/<repo>/pulls/<n>/reviews | jq '.[-1].body'` → `null` (body field omitted).
-  - REQUEST_CHANGES / COMMENT fixture: `… | jq '.[-1].body'` → `"<!-- mergewatch-review -->"` (HTML-comment stub; GitHub's UI renders zero visible content).
+  - APPROVE (only with `approve: true` on the default branch, #706): `gh api repos/<owner>/<repo>/pulls/<n>/reviews | jq '.[-1].body'` → `null` (body field omitted).
+  - REQUEST_CHANGES / COMMENT fixture (the default clean PR is COMMENT): `… | jq '.[-1].body'` → `"<!-- mergewatch-review -->"` (HTML-comment stub; GitHub's UI renders zero visible content).
 - [ ] In the GitHub UI, the Review timeline entry shows only the event label (*"mergewatch approved these changes"* / *"requested changes"* / *"left a comment"*) plus the inline-comment count — **no** verdict text body below the label.
 - [ ] The summary comment IS the verdict surface: contains the 1-5 score, mergeScoreReason, findings table, etc.
 - [ ] No standalone inline-comment Review events (the inline comments are bundled under the single formal Review).
@@ -2834,7 +2836,7 @@ curl -s "$MCP_URL" \
 2. `minSeverity: warning` → info findings gone, warnings and criticals remain.
 3. `minSeverity: critical` → only criticals.
 4. `maxFindings: 3` on a diff producing more → exactly 3 posted, and they are the **highest-ranked**, not the first found.
-5. `postSummaryOnClean: false` on a clean PR → no summary comment; the check run still reports.
+5. `postSummaryOnClean: false` on a clean PR → no summary comment and no formal review (with approve off there is nothing for a `COMMENT` to point at, #706); the check run still reports.
 6. `postSummaryOnClean: true` → the "all clear" summary appears.
 
 **Pass:**
@@ -3004,7 +3006,7 @@ Prerequisites on the fixtures installation:
 
 When you just want to confirm the deploy didn't immediately break things:
 
-1. Run **E2E-01** (clean PR → APPROVE).
+1. Run **E2E-01** (clean PR → COMMENT; approving is opt-in, #706).
 2. Run **E2E-04** (autoReview off → silent).
 3. Run **E2E-06** (docs-only → visible skip).
 
@@ -3357,9 +3359,9 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - [ ] Push a second commit → each stage **updates its own** comment in place; neither posts a duplicate and neither 403s trying to edit the other's
 - [ ] Click "Re-run" on the **dev** check → only dev re-reviews; prod's comment and check are untouched
 - [ ] Click "Re-run" on the **prod** check → only prod re-reviews
-- [ ] **Each stage keeps its own formal review** — prod shows `APPROVED` and dev shows `APPROVED`, neither `DISMISSED` (#418). Before that fix whichever stage reviewed second dismissed the other's review ~3s later
+- [ ] **Each stage keeps its own formal review** — prod and dev each show `APPROVED` (or `CHANGES_REQUESTED`), neither `DISMISSED` (#418). Before that fix whichever stage reviewed second dismissed the other's review ~3s later. **Only meaningful with `approve: true` or on a `REQUEST_CHANGES` fixture such as `03`** (#706): with approve off a clean PR gets `COMMENTED` reviews, which are never dismissed, so this check cannot fail. To run it, apply `scripts/apply-fixture.sh 03-critical-finding` (requests changes whatever `approve` says), or use a repo whose default-branch `.mergewatch.yml` sets `approve: true` with `01-clean-pr`
 - [ ] A third-party reviewer bot on the same PR (CopilotAI, dependabot, CodeQL) still has its review intact after a MergeWatch re-review (#418)
-- [ ] On a clean PR with `postSummaryOnClean: false` (no summary comment), re-pushed twice: there is never more than one non-dismissed MergeWatch `APPROVED`/`CHANGES_REQUESTED` review. Identity comes from `GET /app` when there is no comment to read it from (#707)
+- [ ] On a clean PR with `postSummaryOnClean: false` (no summary comment), re-pushed twice: zero MergeWatch reviews when approve is off; exactly one non-dismissed when `approve: true` on the default branch. Identity comes from `GET /app` when there is no comment to read it from (#707, #706)
 - [ ] Inline findings carry the stage-scoped inline marker, and a 👍 on a dev inline comment is recorded against dev's stores only
 - [ ] On a repo with **only** the prod App, behavior is identical to before #416 — one comment, one check named `MergeWatch Review`
 
@@ -3368,7 +3370,7 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - ❌ A 403 in either stage's logs when updating a comment — it matched the other App's comment and tried to edit what it doesn't own
 - ❌ **Prod posts a duplicate comment on an existing PR** — the prod marker changed. This is the severe one: it orphans every bot comment in the wild, not just fixtures
 - ❌ Dev's "Re-run" button does nothing — `isMergeWatchCheckRun` still matches only the prod name, so dev ignores its own re-request
-- ❌ Either stage's formal review shows `DISMISSED` — `dismissStaleReviews` is dismissing across Apps again (#418). This also degrades prod on any repo the dev App shares with it
+- ❌ Either stage's formal review shows `DISMISSED` — `dismissStaleReviews` is dismissing across Apps again (#418). Observable only with `approve: true` or on a `REQUEST_CHANGES` fixture such as `03` (#706). This also degrades prod on any repo the dev App shares with it
 - ❌ A third-party bot's review is dismissed — the #418 guard regressed, and MergeWatch is interfering with a vendor it has no business touching
 - ❌ Both stages reviewing `kitchensink` or any repo outside the A/B — the dev installation wasn't scoped down
 
@@ -3609,6 +3611,32 @@ This also repairs the **Unverified concerns** section, which explained every ite
 - ❌ The reason runs to a paragraph — a finding needing a paragraph to justify itself has failed to justify itself
 - ❌ Comment growth is noticeably larger than ~350 chars per critical
 - ❌ A pre-#469 stored review fails to render — evidence is optional and its absence must be silent
+
+---
+
+### E2E-102: #706 — approving is opt-in, and a PR cannot approve itself
+
+**Status:** 🆕 NEW (#706) — unit-gated (`gate.test.ts`, `review-processor.test.ts`); the default path is graded by fixtures `01`/`02`/`07`/`28a`/`78b`.
+
+**Behavior:** a 4-5 score used to submit `APPROVE`, which on its own satisfies a branch-protection "required approvals" rule. Approving is now opt-in via `approve: true`, read **only** from the default branch's `.mergewatch.yml` (or the dashboard **Approve PRs** toggle, which the default-branch yml overrides). The `.mergewatch.yml` at the PR head is never consulted for it, so a PR that adds `approve: true` cannot approve itself. Off, a 4-5 submits `COMMENT`; on a silent clean PR (`postSummaryOnClean: false`) no `COMMENT` is submitted at all.
+
+**Setup.** A scratch repo with both a clean PR fixture (`01-clean-pr` shape) and write access to its default branch. Do not change `mergewatch/fixtures`' default branch: every graded fixture reads it.
+
+1. **Head only.** On the PR branch, add `.mergewatch.yml` with `approve: true`; the default branch has no `approve` key. Push.
+2. **Default branch.** Merge `approve: true` into the default branch's `.mergewatch.yml`, then push an empty commit to the PR.
+3. **Turn it off.** Set `approve: false` on the default branch, push again.
+
+**Expected outcomes.**
+- [ ] Step 1: the review is `COMMENTED`, not `APPROVED`, although the head yml says `approve: true`
+- [ ] Step 2: the review is `APPROVED`
+- [ ] Step 3: the step-2 `APPROVED` review is `DISMISSED` and the new review is `COMMENTED`
+- [ ] Dashboard **Approve PRs** on + no `approve` key on the default branch → `APPROVED`; default-branch `approve: false` → `COMMENTED` whatever the dashboard says
+- [ ] A score of 1-2 is `CHANGES_REQUESTED` and an org-blocked PR requests changes whatever `approve` says
+
+**Failure modes.**
+- ❌ Step 1 approves — the head yml is being read for `approve`, and any PR can approve itself
+- ❌ A default-config 4-5 is `APPROVED` — the default regressed
+- ❌ Step 3 leaves the old `APPROVED` in place on an unrestricted branch — dismissal regressed (#707). On a branch that restricts who may dismiss reviews this is expected, and documented as best-effort
 
 ---
 

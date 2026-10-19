@@ -70,6 +70,10 @@ export {
   buildMergeGate,
   buildCheckOutcome,
   reviewEventForGate,
+  // #706 — approving is opt-in, read only from the default branch.
+  resolveApprove,
+  resolveApproveForRepo,
+  shouldSubmitFormalReview,
   formatGateLog,
   ORG_BLOCKED_TITLE_PREFIX,
   REVIEW_FAILED_CHECK_TITLE,

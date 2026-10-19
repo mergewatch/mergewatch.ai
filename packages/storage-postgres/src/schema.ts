@@ -21,6 +21,8 @@ export const installationSettings = pgTable('installation_settings', {
   commentHeader: text('comment_header').notNull().default(''),
   // #235 — org custom agents (dashboard-defined, enforced in reviews).
   customAgents: jsonb('custom_agents').notNull().default([]),
+  // #706 — let a 4-5 score APPROVE; off by default.
+  approve: boolean('approve').notNull().default(false),
 });
 
 export const reviews = pgTable('reviews', {
