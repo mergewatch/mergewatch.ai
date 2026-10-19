@@ -4478,6 +4478,43 @@ describe('structured outputs (#390)', () => {
     expect(findings[0].title).toBe('Recovered');
   });
 
+  // #721 — a thrown structured call is billed by Bedrock but not by the token
+  // accumulator (it records usage only on success), and it is followed by a
+  // second, text-path call. It must at least be visible: the post-deploy
+  // CloudWatch filter counts exactly these two prefixes.
+  it('#721 — a thrown structured agent call logs the [structured] failure line', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const llm = createStructuredMockLLM({
+        objects: [new Error('Structured invocation returned no tool_use block (stop_reason: end_turn)')],
+        textResponses: [validFindingsJson()],
+      });
+      await runSecurityAgent(sampleDiff, sampleContext, 'model-1', llm);
+      expect(warn.mock.calls.some((c) => String(c[0]).startsWith('[structured] structured invocation failed'))).toBe(true);
+      expect(llm.textCalls).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('#721 — a thrown structured orchestrator call logs the [orchestrator] failure line', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const llm = {
+        async invoke() {
+          return JSON.stringify({ findings: [], mergeScore: 5, mergeScoreReason: 'ok' });
+        },
+        async invokeStructured(): Promise<never> {
+          throw new Error('Structured invocation returned no tool_use block (stop_reason: end_turn)');
+        },
+      };
+      await runOrchestratorAgent([{ category: 'security', findings: [{ ...finding, severity: 'warning' }] }], 'model-1', 25, llm);
+      expect(warn.mock.calls.some((c) => String(c[0]).startsWith('[orchestrator] structured invocation failed'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('rethrows throttles from the structured path — the review must park, not double-invoke', async () => {
     const llm = createStructuredMockLLM({
       objects: [Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' })],

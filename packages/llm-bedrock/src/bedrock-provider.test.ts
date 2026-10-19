@@ -369,3 +369,251 @@ describe('#490 — cache breakpoints on every path', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// #721 — the 5.5 generation
+//
+// At 4bb75f3, pointing a review at Sonnet 5.5 broke it three ways at once:
+// `temperature: 0` and a forced `tool_choice` are both 400s on that model,
+// and with adaptive thinking on by default `content[0]` is an empty thinking
+// block, so the text path read ''. Each test below fails on main.
+// ---------------------------------------------------------------------------
+describe('#721 — Sonnet 5.5 and the rest of the 5.5 generation', () => {
+  const SONNET_55 = 'us.anthropic.claude-sonnet-5-5';
+  const SONNET_46 = 'us.anthropic.claude-sonnet-4-6';
+  const SCHEMA = { type: 'object', properties: { findings: { type: 'array' } } };
+  const SEGMENTS = [
+    { id: 'shared', stability: 'static', text: 'DIRECTIVES' },
+    { id: 'diff', stability: 'per-pr', text: '\n\nDIFF' },
+    { id: 'agent', stability: 'per-call', text: '\n\nAGENT' },
+  ] as never;
+  const toolUse = () => makeResponse({
+    content: [{ type: 'tool_use', name: 'emit_result', input: { findings: [] } }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+    stop_reason: 'tool_use',
+  });
+  const text = () => makeResponse({
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+  const rawBody = (): string => new TextDecoder().decode(mockSend.mock.calls[0][0].body);
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('aliases Sonnet 5.5, so review rows record claude-sonnet-5.5 rather than the raw id', () => {
+    // review-agent.ts persists this alias as the review row's `model`.
+    expect(SUPPORTED_MODELS['claude-sonnet-5.5' as keyof typeof SUPPORTED_MODELS]).toBe(SONNET_55);
+  });
+
+  describe('structured body on a model that rejects forced tool use', () => {
+    it('sends tool_choice auto, no temperature, and a final emit_result instruction', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      const body = getLastCommandBody();
+      expect(body.tool_choice).toEqual({ type: 'auto' });
+      expect(body).not.toHaveProperty('temperature');
+      const content = body.messages[0].content;
+      expect(Array.isArray(content)).toBe(true);
+      expect(content[content.length - 1].text).toContain('emit_result');
+      // The prompt itself is still there, ahead of the instruction.
+      expect(content[0]).toEqual({ type: 'text', text: 'prompt' });
+    });
+
+    it('appends the instruction AFTER the cacheable blocks, leaving the cache prefix unchanged', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured(SONNET_55, SEGMENTS, SCHEMA);
+      const content = getLastCommandBody().messages[0].content;
+      // The first three blocks are exactly what Sonnet 4.6 receives.
+      expect(content.slice(0, -1)).toEqual([
+        { type: 'text', text: 'DIRECTIVES', cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: '\n\nDIFF', cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: '\n\nAGENT' },
+      ]);
+      const last = content[content.length - 1];
+      expect(last.text).toContain('emit_result');
+      expect(last).not.toHaveProperty('cache_control');
+    });
+
+    for (const id of ['us.anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-1']) {
+      it(`${id} also gets tool_choice auto`, async () => {
+        mockSend.mockResolvedValueOnce(toolUse());
+        await new BedrockLLMProvider().invokeStructured(id, 'prompt', SCHEMA);
+        expect(getLastCommandBody().tool_choice).toEqual({ type: 'auto' });
+      });
+    }
+
+    it('Haiku 5.5 accepts a forced tool, so it keeps it', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured('us.anthropic.claude-haiku-5-5', 'prompt', SCHEMA);
+      expect(getLastCommandBody().tool_choice).toEqual({ type: 'tool', name: 'emit_result' });
+    });
+  });
+
+  describe('[pin] the Sonnet 4.6 bodies are byte-identical to main', () => {
+    it('structured, plain string', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured(SONNET_46, 'prompt', SCHEMA, 4096);
+      expect(rawBody()).toBe(JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: 'prompt' }],
+        tools: [{ name: 'emit_result', description: 'Emit the structured result of your analysis.', input_schema: SCHEMA }],
+        tool_choice: { type: 'tool', name: 'emit_result' },
+        temperature: 0,
+      }));
+    });
+
+    it('structured, cacheable segments', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured(SONNET_46, SEGMENTS, SCHEMA, 4096);
+      expect(rawBody()).toBe(JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: 'DIRECTIVES', cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: '\n\nDIFF', cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: '\n\nAGENT' },
+        ] }],
+        tools: [{ name: 'emit_result', description: 'Emit the structured result of your analysis.', input_schema: SCHEMA }],
+        tool_choice: { type: 'tool', name: 'emit_result' },
+        temperature: 0,
+      }));
+    });
+
+    it('text', async () => {
+      mockSend.mockResolvedValueOnce(text());
+      await new BedrockLLMProvider().invoke(SONNET_46, 'prompt', 4096);
+      expect(rawBody()).toBe(JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: 'prompt' }],
+        temperature: 0,
+      }));
+    });
+  });
+
+  describe('thinking: between_tools on Sonnet 5.5 only', () => {
+    it('Sonnet 5.5 carries thinking between_tools on both paths', async () => {
+      mockSend.mockResolvedValueOnce(text());
+      await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(getLastCommandBody().thinking).toEqual({ type: 'between_tools' });
+
+      vi.clearAllMocks();
+      mockSend.mockResolvedValueOnce(toolUse());
+      await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      expect(getLastCommandBody().thinking).toEqual({ type: 'between_tools' });
+    });
+
+    // Every other model rejects between_tools with a 400.
+    for (const id of [
+      'us.anthropic.claude-opus-5-5',
+      'us.anthropic.claude-fable-5-1',
+      'us.anthropic.claude-haiku-5-5',
+      'us.anthropic.claude-sonnet-4-6',
+    ]) {
+      it(`${id} has no thinking key on either path`, async () => {
+        mockSend.mockResolvedValueOnce(text());
+        await new BedrockLLMProvider().invoke(id, 'prompt');
+        expect(getLastCommandBody()).not.toHaveProperty('thinking');
+
+        vi.clearAllMocks();
+        mockSend.mockResolvedValueOnce(toolUse());
+        await new BedrockLLMProvider().invokeStructured(id, 'prompt', SCHEMA);
+        expect(getLastCommandBody()).not.toHaveProperty('thinking');
+      });
+    }
+  });
+
+  describe('text is read by block type, not position', () => {
+    it('skips a leading empty thinking block', async () => {
+      mockSend.mockResolvedValueOnce(makeResponse({
+        content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'X' }],
+      }));
+      const r = await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(r.text).toBe('X');
+    });
+
+    it('joins every text block around a thinking block', async () => {
+      mockSend.mockResolvedValueOnce(makeResponse({
+        content: [{ type: 'text', text: 'A' }, { type: 'thinking', thinking: '' }, { type: 'text', text: 'B' }],
+      }));
+      const r = await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(r.text).toBe('AB');
+    });
+
+    it('still returns empty text when there are no text blocks', async () => {
+      mockSend.mockResolvedValueOnce(makeResponse({ content: [{ type: 'thinking', thinking: '' }] }));
+      const r = await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(r.text).toBe('');
+    });
+  });
+
+  describe('the reported model is returned', () => {
+    it('text path', async () => {
+      mockSend.mockResolvedValueOnce(makeResponse({
+        model: 'claude-sonnet-5-5', content: [{ type: 'text', text: 'ok' }],
+      }));
+      const r = await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(r.modelId).toBe('claude-sonnet-5-5');
+    });
+
+    it('structured path', async () => {
+      mockSend.mockResolvedValueOnce(makeResponse({
+        model: 'claude-sonnet-5-5',
+        content: [{ type: 'tool_use', name: 'emit_result', input: {} }],
+        stop_reason: 'tool_use',
+      }));
+      const r = await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      expect(r.modelId).toBe('claude-sonnet-5-5');
+    });
+
+    it('is undefined, not a guess, when the body carries no model', async () => {
+      mockSend.mockResolvedValueOnce(toolUse());
+      const r = await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      expect(r.modelId).toBeUndefined();
+    });
+  });
+
+  describe('refusals are logged', () => {
+    const refusal = (content: unknown[]) => makeResponse({
+      content,
+      stop_reason: 'refusal',
+      stop_details: { type: 'refusal', category: 'cyber', explanation: 'x' },
+      usage: { input_tokens: 1, output_tokens: 0 },
+    });
+
+    it('text path logs [refusal] with model and category', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockSend.mockResolvedValueOnce(refusal([]));
+      const r = await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(r.stopReason).toBe('refusal');
+      expect(warn).toHaveBeenCalledWith(`[refusal] model=${SONNET_55} category=cyber`);
+      warn.mockRestore();
+    });
+
+    it('structured path logs [refusal] before throwing for the missing tool_use', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockSend.mockResolvedValueOnce(refusal([]));
+      await expect(new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA))
+        .rejects.toThrow(/stop_reason: refusal/);
+      expect(warn).toHaveBeenCalledWith(`[refusal] model=${SONNET_55} category=cyber`);
+      warn.mockRestore();
+    });
+
+    it('a refusal with no stop_details still logs, with category=unknown', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockSend.mockResolvedValueOnce(makeResponse({ content: [], stop_reason: 'refusal' }));
+      await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(warn).toHaveBeenCalledWith(`[refusal] model=${SONNET_55} category=unknown`);
+      warn.mockRestore();
+    });
+
+    it('logs nothing for an ordinary stop', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockSend.mockResolvedValueOnce(text());
+      await new BedrockLLMProvider().invoke(SONNET_55, 'prompt');
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+  });
+});
