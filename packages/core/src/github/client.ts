@@ -1140,7 +1140,9 @@ export async function resolveAppLogin(
     const login = `${slug}[bot]`;
     APP_LOGIN_CACHE.set(cacheKey, login);
     return login;
-  } catch {
+  } catch (err) {
+    // The only identity source on a silent PR, so say why dismissal will skip.
+    console.warn(`[review] GET /app failed on ${owner}/${repo}; own App login unknown (#707):`, err);
     return null;
   }
 }
