@@ -27,32 +27,53 @@
  */
 export const CONTEXT_WINDOWS: Record<string, number> = {
   // ── 1M-context models ────────────────────────────────────────────────────
+  // A `global.` profile has the window of its `us.` sibling (#722).
   'us.anthropic.claude-sonnet-4-6': 1_000_000,
+  'global.anthropic.claude-sonnet-4-6': 1_000_000,
   'us.anthropic.claude-sonnet-5': 1_000_000,
   'global.anthropic.claude-sonnet-5': 1_000_000,
+  'us.anthropic.claude-sonnet-5-5': 1_000_000,
+  'global.anthropic.claude-sonnet-5-5': 1_000_000,
   'us.anthropic.claude-opus-4-6-v1': 1_000_000,
-  'us.anthropic.claude-opus-4-8-v1': 1_000_000,
+  'global.anthropic.claude-opus-4-6-v1': 1_000_000,
+  'us.anthropic.claude-opus-4-7': 1_000_000,
+  'global.anthropic.claude-opus-4-7': 1_000_000,
+  'us.anthropic.claude-opus-4-8': 1_000_000,
+  'global.anthropic.claude-opus-4-8': 1_000_000,
   'us.anthropic.claude-opus-5': 1_000_000,
   'global.anthropic.claude-opus-5': 1_000_000,
+  'us.anthropic.claude-opus-5-5': 1_000_000,
+  'global.anthropic.claude-opus-5-5': 1_000_000,
   'us.anthropic.claude-fable-5': 1_000_000,
   'global.anthropic.claude-fable-5': 1_000_000,
+  'us.anthropic.claude-fable-5-1': 1_000_000,
+  'global.anthropic.claude-fable-5-1': 1_000_000,
+  'us.anthropic.claude-haiku-5-5': 1_000_000,
+  'global.anthropic.claude-haiku-5-5': 1_000_000,
 
   // ── 200K-context models ──────────────────────────────────────────────────
   // Sonnet 4.5 is the one that surfaced #423: #414 moved the default here from
   // a 1M model, a 5x reduction, and nothing noticed until PRs started failing.
   'us.anthropic.claude-sonnet-4-5-20250929-v1:0': 200_000,
-  'us.anthropic.claude-sonnet-4-20250514-v1:0': 200_000,
-  'us.anthropic.claude-opus-4-20250514-v1:0': 200_000,
+  'global.anthropic.claude-sonnet-4-5-20250929-v1:0': 200_000,
+  'us.anthropic.claude-opus-4-5-20251101-v1:0': 200_000,
+  'global.anthropic.claude-opus-4-5-20251101-v1:0': 200_000,
+  'us.anthropic.claude-opus-4-1-20250805-v1:0': 200_000,
   'us.anthropic.claude-haiku-4-5-20251001-v1:0': 200_000,
-  'us.anthropic.claude-3-5-haiku-20241022-v1:0': 200_000,
+  'global.anthropic.claude-haiku-4-5-20251001-v1:0': 200_000,
 
   // ── Direct Anthropic model IDs (self-hosted) ─────────────────────────────
   'claude-sonnet-4-6': 1_000_000,
   'claude-sonnet-5': 1_000_000,
+  'claude-sonnet-5-5': 1_000_000,
   'claude-opus-5': 1_000_000,
+  'claude-opus-5-5': 1_000_000,
+  'claude-opus-4-7': 1_000_000,
   'claude-opus-4-8': 1_000_000,
   'claude-opus-4-6': 1_000_000,
   'claude-fable-5': 1_000_000,
+  'claude-fable-5-1': 1_000_000,
+  'claude-haiku-5-5': 1_000_000,
   'claude-sonnet-4-5-20250929': 200_000,
   'claude-sonnet-4-20250514': 200_000,
   'claude-opus-4-20250514': 200_000,
