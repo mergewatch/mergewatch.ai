@@ -47,7 +47,7 @@ import {
   RESPOND_PROMPT,
   BOT_COMMENT_MARKER,
   submitPRReview,
-  dismissStaleReviews,
+  dismissOwnStaleReviews,
   buildInlineComments,
   extractInlineCommentTitle,
   fetchRepoConfig,
@@ -83,7 +83,7 @@ import type {
   ReviewDelta,
 } from '@mergewatch/core';
 import {
-  buildWorkDoneSection, computeReviewDelta, resolveAppLogin,
+  buildWorkDoneSection, computeReviewDelta,
   checkInputBudget, describeOverBudget,
 } from '@mergewatch/core';
 import { DynamoInstallationStore,
@@ -1113,12 +1113,12 @@ export async function handler(
     const reviewBody = '';
     try {
       // #418 — dismiss only OUR reviews. Our App login is read from the summary
-      // comment we just posted (cached per process); without it we skip
-      // dismissal rather than risk dismissing another App's or vendor's review.
-      const selfLogin = commentId
-        ? await resolveAppLogin(octokit, owner, repo, commentId, `lambda:${STAGE ?? 'prod'}`)
-        : null;
-      await dismissStaleReviews(octokit, owner, repo, prNumber, selfLogin);
+      // comment we just posted, or from GET /app on a silent PR with no comment
+      // (#707), cached per process; without it we skip dismissal rather than
+      // risk dismissing another App's or vendor's review.
+      const selfLogin = await dismissOwnStaleReviews(
+        octokit, owner, repo, prNumber, commentId, `lambda:${STAGE ?? 'prod'}`,
+      );
       await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
       // #526 — close our own inline threads for findings this review no longer
       // raises. Without it a withdrawn critical leaves its comment open

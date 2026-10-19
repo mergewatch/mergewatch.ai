@@ -177,6 +177,7 @@ export {
   submitPRReview,
   createStandaloneReviewComment,
   dismissStaleReviews,
+  dismissOwnStaleReviews,
   resolveAppLogin,
   buildInlineComments,
   extractInlineCommentTitle,

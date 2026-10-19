@@ -3359,6 +3359,7 @@ Then apply any fixture as usual (`scripts/apply-fixture.sh 01-clean-pr`).
 - [ ] Click "Re-run" on the **prod** check → only prod re-reviews
 - [ ] **Each stage keeps its own formal review** — prod shows `APPROVED` and dev shows `APPROVED`, neither `DISMISSED` (#418). Before that fix whichever stage reviewed second dismissed the other's review ~3s later
 - [ ] A third-party reviewer bot on the same PR (CopilotAI, dependabot, CodeQL) still has its review intact after a MergeWatch re-review (#418)
+- [ ] On a clean PR with `postSummaryOnClean: false` (no summary comment), re-pushed twice: there is never more than one non-dismissed MergeWatch `APPROVED`/`CHANGES_REQUESTED` review. Identity comes from `GET /app` when there is no comment to read it from (#707)
 - [ ] Inline findings carry the stage-scoped inline marker, and a 👍 on a dev inline comment is recorded against dev's stores only
 - [ ] On a repo with **only** the prod App, behavior is identical to before #416 — one comment, one check named `MergeWatch Review`
 
