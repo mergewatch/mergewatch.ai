@@ -138,9 +138,11 @@ describe('both runtimes resolve approve through resolveApproveForRepo (#706)', (
       for (const required of ['resolveApproveForRepo(', 'shouldSubmitFormalReview(']) {
         expect(src, `${name} lacks ${required}`).toContain(required);
       }
-      for (const banned of ['resolveApprove(', '.approve']) {
-        expect(src, `${name} still contains ${banned}`).not.toContain(banned);
-      }
+      expect(src, `${name} still calls resolveApprove(`).not.toContain('resolveApprove(');
+      // Deliberately any `.approve` read, not just `config.approve`: the merged
+      // config, the settings row and any alias of either are all ways around
+      // the default-branch-only resolver. `\b` lets `.approved` etc. through.
+      expect(src, `${name} reads .approve directly`).not.toMatch(/\.approve\b/);
     });
   }
 });

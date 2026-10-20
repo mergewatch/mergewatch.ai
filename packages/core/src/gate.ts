@@ -391,8 +391,9 @@ export function resolveApprove(input: {
 
 /**
  * #706 — `resolveApprove` with the yml read from the default branch. There is
- * deliberately no ref parameter. A read error reads as no yml (fetchRepoConfig
- * returns null), so the dashboard value decides.
+ * deliberately no ref parameter. A read error reads as no yml, so the dashboard
+ * value decides; fetchRepoConfig returns null silently only on 404 (no file) and
+ * logs a console.warn for any other failure, so a failing read is visible.
  */
 export async function resolveApproveForRepo(
   octokit: Octokit,
