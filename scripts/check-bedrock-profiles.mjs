@@ -32,9 +32,6 @@ import { execFileSync } from 'node:child_process';
 const REGION = 'us-west-2';
 const REPO = resolve(dirname(process.argv[1]), '..');
 const argv = process.argv.slice(2);
-const arg = (n, d) => { const i = argv.indexOf(n); return i === -1 ? d : argv[i + 1]; };
-const WRITE = argv.includes('--write');
-const SNAPSHOT = resolve(arg('--snapshot', resolve(REPO, 'packages/core/src/llm/bedrock-profiles.us-west-2.json')));
 
 const cannotCheck = (msg) => {
   console.error(`\n✗ COULD NOT CHECK — ${msg}`);
@@ -42,10 +39,25 @@ const cannotCheck = (msg) => {
   process.exit(2);
 };
 
+// A flag with no value is a usage error, not drift: left to throw, node would
+// exit 1 and the release gate would report it as ⚠️ drift.
+const arg = (n, d) => {
+  const i = argv.indexOf(n);
+  if (i === -1) return d;
+  const v = argv[i + 1];
+  if (!v || v.startsWith('--')) cannotCheck(`${n} needs a value`);
+  return v;
+};
+const WRITE = argv.includes('--write');
+const SNAPSHOT = resolve(arg('--snapshot', resolve(REPO, 'packages/core/src/llm/bedrock-profiles.us-west-2.json')));
+
 function bedrock(args) {
   return JSON.parse(execFileSync('aws', ['bedrock', ...args, '--region', REGION, '--output', 'json'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    // A hung call would stall the release gate; a timeout throws, and every
+    // caller turns a throw into exit 2.
+    timeout: 60_000,
   }));
 }
 const stderrOf = (e) => String(e.stderr || e.message);
@@ -64,7 +76,10 @@ if (!active.length) cannotCheck('list-inference-profiles returned no ACTIVE Anth
 const baseOf = (p) => {
   const arn = p.models?.[0]?.modelArn ?? '';
   const id = arn.split('foundation-model/')[1];
-  if (!id) cannotCheck(`profile ${p.inferenceProfileId} has no foundation-model ARN`);
+  // The id becomes a CLI argument, so it must look like a model id and not a flag.
+  if (!id || !/^[a-z][\w.-]*(:[\w.-]+)*$/i.test(id)) {
+    cannotCheck(`profile ${p.inferenceProfileId} has no usable foundation-model ARN: ${arn}`);
+  }
   return id;
 };
 const eol = new Map();
