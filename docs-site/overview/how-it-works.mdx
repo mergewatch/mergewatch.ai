@@ -322,9 +322,13 @@ MergeWatch maps merge-readiness scores to GitHub review events:
 
 | Merge score | GitHub review event | Effect |
 |---|---|---|
-| 4-5 | `APPROVE` | PR shows as approved by MergeWatch |
+| 4-5 | `COMMENT` by default; `APPROVE` when `approve` is on | By default the PR shows review comments without approval. With [`approve: true`](/configuration/mergewatch-yml#top-level-properties), the PR shows as approved by MergeWatch |
 | 3 | `COMMENT` | PR shows review comments without approval |
 | 1-2 | `REQUEST_CHANGES` | PR shows changes requested by MergeWatch |
+
+Approving is opt-in, so MergeWatch cannot satisfy a branch-protection "required approvals" rule on its own. Turn it on with `approve: true` in the `.mergewatch.yml` on the repository's **default branch**, or with the **Approve PRs** toggle on the dashboard [Settings](/dashboard/settings) page. The PR's own branch cannot turn it on: a PR cannot approve itself. On a clean PR where MergeWatch stays silent (`postSummaryOnClean: false`), no `COMMENT` review is submitted.
+
+When `approve` is off, MergeWatch dismisses its own earlier `APPROVE` on the PR's next review. Dismissal is best-effort: if a branch restricts who may dismiss reviews, an earlier MergeWatch approval stays until a push dismisses it (when "dismiss stale approvals" is on) or an admin dismisses it.
 
 This integrates with GitHub's required reviewers — if MergeWatch is a required reviewer, low scores can block merging.
 

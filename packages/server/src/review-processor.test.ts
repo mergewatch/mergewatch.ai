@@ -12,6 +12,7 @@ import type { WebhookDeps } from './webhook-handler.js';
 vi.mock('@mergewatch/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mergewatch/core')>();
   const createCheckRun = vi.fn().mockResolvedValue(undefined);
+  const fetchRepoConfig = vi.fn().mockResolvedValue(null);
   return {
     ...actual,
     getPRContext: vi.fn(),
@@ -51,7 +52,16 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     isStillPRHead: vi.fn().mockResolvedValue(true),
     shouldSkipPR: vi.fn().mockReturnValue(null),
     shouldSkipByRules: vi.fn().mockReturnValue(null),
-    fetchRepoConfig: vi.fn().mockResolvedValue(null),
+    fetchRepoConfig,
+    /**
+     * #706 — core's real resolver reads the default branch through core's own
+     * `fetchRepoConfig`, which a module mock cannot observe. Rebuilt here as the
+     * thinnest adapter onto the mocked one (same as `makeCheckRunWriter`), so a
+     * test can tell the head read (ref = headSha) from the default-branch read
+     * (no ref). The no-ref contract itself is pinned in core's gate.test.ts.
+     */
+    resolveApproveForRepo: async (octokit: any, owner: string, repo: string, settings: any) =>
+      actual.resolveApprove({ settings, defaultBranchConfig: await fetchRepoConfig(octokit, owner, repo) }),
     filterDiff: vi.fn().mockReturnValue({ filteredDiff: 'diff', excludedFiles: [], oversizedFiles: [] }),
     runReviewPipeline: vi.fn(),
     formatReviewComment: vi.fn().mockReturnValue('formatted comment'),
@@ -517,14 +527,16 @@ describe('processReviewJob — check runs', () => {
   describe('formal PR review submission', () => {
     // #662 — the event comes from core's real reviewEventForGate (gate + score);
     // nothing here mocks the mapping.
-    it('submits APPROVE with empty body for high merge scores', async () => {
+    // #706 — this used to pin APPROVE for a 5/5 on default settings. Approving
+    // is now opt-in, so the default is COMMENT.
+    it('submits COMMENT with empty body for high merge scores on default settings (#706)', async () => {
       const deps = makeDeps();
       await processReviewJob(makeJob(), deps);
 
       expect(submitPRReview).toHaveBeenCalledWith(
         mockOctokit, 'test', 'repo', 1,
-        '', // empty body — clean "approved these changes" event
-        'APPROVE',
+        '', // empty body — submitPRReview substitutes the pointer stub
+        'COMMENT',
         [],
       );
     });
@@ -1157,6 +1169,8 @@ describe('processReviewJob — org custom agents (#235)', () => {
       findings: [finding({ category: 'security-policy', description: 'y' })],
       gate: gateOf({ advisoryCriticalCount: 1 }),
     }));
+    // #706 — opted in on the default branch, so the score's APPROVE is observable.
+    (fetchRepoConfig as any).mockResolvedValue({ approve: true });
 
     await processReviewJob(makeJob(), deps);
 
@@ -1757,5 +1771,97 @@ describe('processReviewJob — custom agent failures (#664)', () => {
     for (const call of vi.mocked(deps.reviewStore.updateStatus).mock.calls) {
       expect(JSON.stringify(call[3] ?? {})).not.toMatch(/agentFailures|failedGatingAgents/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #706 — approving is opt-in, and only the default branch can opt in
+// ---------------------------------------------------------------------------
+
+describe('processReviewJob — approve opt-in (#706)', () => {
+  const HEAD = 'abc1234567890';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult); // 5/5, zero findings
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  /** The yml at the PR head vs. the default branch (no ref). */
+  const ymlAt = (head: unknown, defaultBranch: unknown) =>
+    (fetchRepoConfig as any).mockImplementation(
+      async (_o: unknown, _ow: unknown, _r: unknown, ref?: string) => (ref === HEAD ? head : defaultBranch),
+    );
+  const withSettings = (over: Record<string, unknown>) => makeDeps({
+    installationStore: {
+      get: vi.fn().mockResolvedValue(null),
+      getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_INSTALLATION_SETTINGS, ...over }),
+      upsert: vi.fn(),
+      getCustomAgents: vi.fn().mockResolvedValue([]),
+      upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IInstallationStore,
+  });
+  const event = () => vi.mocked(submitPRReview).mock.calls[0]?.[5];
+
+  it('a PR cannot approve itself: approve: true at the head only → COMMENT', async () => {
+    ymlAt({ approve: true }, null);
+    await processReviewJob(makeJob({ headSha: HEAD }), makeDeps());
+
+    // Positive control: both reads happened, so the head value was available
+    // to the processor and was not consulted for approve.
+    const refs = vi.mocked(fetchRepoConfig).mock.calls.map((c) => c[3]);
+    expect(refs).toContain(HEAD);
+    expect(refs).toContain(undefined);
+    expect(event()).toBe('COMMENT');
+  });
+
+  it('default-branch approve: false beats dashboard approve: true → COMMENT', async () => {
+    ymlAt(null, { approve: false });
+    await processReviewJob(makeJob({ headSha: HEAD }), withSettings({ approve: true }));
+    expect(event()).toBe('COMMENT');
+  });
+
+  it('(pin) default-branch approve: true → APPROVE', async () => {
+    ymlAt(null, { approve: true });
+    await processReviewJob(makeJob({ headSha: HEAD }), makeDeps());
+    expect(event()).toBe('APPROVE');
+  });
+
+  it('(pin) dashboard approve: true with no default-branch yml → APPROVE', async () => {
+    ymlAt(null, null);
+    await processReviewJob(makeJob({ headSha: HEAD }), withSettings({ approve: true }));
+    expect(event()).toBe('APPROVE');
+  });
+
+  it('a silent clean PR submits no COMMENT review, but still dismisses our stale APPROVE', async () => {
+    // Real dismissal against a mock octokit: GET /app resolves our login to
+    // mergewatch[bot], and our earlier APPROVED review is on the PR.
+    const actual = await vi.importActual<typeof import('@mergewatch/core')>('@mergewatch/core');
+    vi.mocked(dismissOwnStaleReviews).mockImplementationOnce(actual.dismissOwnStaleReviews);
+    const octokit = {
+      apps: { getAuthenticated: vi.fn().mockResolvedValue({ data: { slug: 'mergewatch' } }) },
+      paginate: vi.fn().mockResolvedValue([
+        { id: 7, state: 'APPROVED', user: { login: 'mergewatch[bot]' } },
+        { id: 8, state: 'APPROVED', user: { login: 'someone-else' } },
+      ]),
+      pulls: { listReviews: vi.fn(), dismissReview: vi.fn().mockResolvedValue({}) },
+    };
+    (fetchRepoConfig as any).mockResolvedValue({ postSummaryOnClean: false });
+    await processReviewJob(makeJob(), makeDeps({
+      authProvider: { getInstallationOctokit: vi.fn().mockResolvedValue(octokit) } as unknown as IGitHubAuthProvider,
+    }));
+
+    expect(postReviewComment).not.toHaveBeenCalled();
+    expect(submitPRReview).not.toHaveBeenCalled();
+    expect(dismissOwnStaleReviews).toHaveBeenCalledTimes(1);
+    expect(octokit.pulls.dismissReview).toHaveBeenCalledTimes(1);
+    expect(octokit.pulls.dismissReview.mock.calls[0][0]).toMatchObject({ review_id: 7 });
   });
 });

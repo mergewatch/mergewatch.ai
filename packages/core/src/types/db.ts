@@ -149,6 +149,11 @@ export interface InstallationSettings {
   };
   customInstructions: string;
   commentHeader: string;
+  /**
+   * #706 — let a 4-5 score submit APPROVE. A default-branch `.mergewatch.yml`
+   * `approve:` overrides it; the PR head's value never does.
+   */
+  approve: boolean;
 }
 
 export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
@@ -174,6 +179,9 @@ export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
   },
   customInstructions: '',
   commentHeader: '',
+  // #706 — approving is opt-in: MergeWatch alone must not satisfy a
+  // branch-protection review requirement.
+  approve: false,
 };
 
 // =============================================================================

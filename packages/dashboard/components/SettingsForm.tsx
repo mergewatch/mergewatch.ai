@@ -15,6 +15,7 @@ interface InstallationSettings {
   };
   customInstructions: string;
   commentHeader: string;
+  approve: boolean;
 }
 
 const DEFAULT_SETTINGS: InstallationSettings = {
@@ -31,6 +32,8 @@ const DEFAULT_SETTINGS: InstallationSettings = {
   },
   customInstructions: "",
   commentHeader: "",
+  // #706 — approving is opt-in.
+  approve: false,
 };
 
 interface SettingsFormProps {
@@ -378,6 +381,22 @@ export default function SettingsForm({
                 summary: { ...s.summary, diagram: v },
               }))
             }
+            disabled={disabled}
+          />
+        </div>
+      </section>
+
+      {/* #706 — formal approval is opt-in */}
+      <section className="mt-8">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-fg-muted pb-2 border-b border-border-default">
+          Review
+        </h2>
+        <div className="mt-3 divide-y divide-border-subtle rounded-lg border border-border-default overflow-hidden">
+          <Toggle
+            label="Approve PRs"
+            description="Submit an APPROVE review for a 4-5 score instead of a comment. A repo's default-branch .mergewatch.yml approve: setting overrides this."
+            value={settings.approve}
+            onChange={(v) => setSettings((s) => ({ ...s, approve: v }))}
             disabled={disabled}
           />
         </div>

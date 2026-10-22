@@ -20,8 +20,11 @@
  * conclusion, title, summary, review event, log line — is derived here.
  */
 import { buildCheckTitle, escapeUserContent } from './comment-formatter.js';
-import { mergeScoreToReviewEvent, withdrawnThreadKey } from './github/client.js';
+import type { Octokit } from '@octokit/rest';
+import { mergeScoreToReviewEvent, withdrawnThreadKey, fetchRepoConfig } from './github/client.js';
 import { BUILTIN_FINDING_CATEGORIES } from './builtin-categories.js';
+import type { MergeWatchConfig } from './config/defaults.js';
+import type { InstallationSettings } from './types/db.js';
 
 export { BUILTIN_FINDING_CATEGORIES, isReservedAgentName } from './builtin-categories.js';
 
@@ -352,17 +355,66 @@ function failedAgentTitleNames(names: ReadonlyArray<string>): string {
  * model, so the PR gets a COMMENT. A failed gating agent (#664) caps an APPROVE
  * at COMMENT the same way. Otherwise the score decides. (#663 will make any
  * failing gate request changes; #640 generalises the cap to any failing gate.)
+ *
+ * #706 — `approve` is required, not defaulted: without it a 4-5 is a COMMENT,
+ * so MergeWatch alone never satisfies a branch-protection review rule. Callers
+ * get it from `resolveApproveForRepo`.
  */
 export function reviewEventForGate(
   gate: MergeGate,
   mergeScore: number,
+  approve: boolean,
 ): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' {
   if (gate.orgBlockedBy.length > 0) return 'REQUEST_CHANGES';
   const byScore = mergeScoreToReviewEvent(mergeScore);
+  if (byScore === 'APPROVE' && !approve) return 'COMMENT';
   // #664 — a gating agent that failed was not evaluated: never APPROVE on it,
   // but a failure alone never requests changes either (a score of 1-2 does).
   if (byScore === 'APPROVE' && (gate.refutedOrgBlockingCount > 0 || gate.failedGatingAgents.length > 0)) return 'COMMENT';
   return byScore;
+}
+
+/**
+ * #706 — may a 4-5 score APPROVE? Precedence: built-in `false` < dashboard
+ * setting < the DEFAULT branch's `.mergewatch.yml`. The PR head's yml is never
+ * an input, so a PR cannot opt itself in. Anything but a literal `true` /
+ * boolean is ignored, never coerced.
+ */
+export function resolveApprove(input: {
+  settings?: Partial<InstallationSettings> | null;
+  defaultBranchConfig?: Partial<MergeWatchConfig> | null;
+}): boolean {
+  const yml = input.defaultBranchConfig?.approve;
+  if (typeof yml === 'boolean') return yml === true;
+  return input.settings?.approve === true;
+}
+
+/**
+ * #706 — `resolveApprove` with the yml read from the default branch. There is
+ * deliberately no ref parameter. A read error reads as no yml, so the dashboard
+ * value decides; fetchRepoConfig returns null silently only on 404 (no file) and
+ * logs a console.warn for any other failure, so a failing read is visible.
+ */
+export async function resolveApproveForRepo(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  settings: Partial<InstallationSettings> | null | undefined,
+): Promise<boolean> {
+  const defaultBranchConfig = await fetchRepoConfig(octokit, owner, repo);
+  return resolveApprove({ settings, defaultBranchConfig });
+}
+
+/**
+ * #706 — a silent clean PR (`shouldStaySilent`) has no summary comment, so a
+ * COMMENT review would point at a comment that does not exist. Skip only that;
+ * an APPROVE or REQUEST_CHANGES still carries its event.
+ */
+export function shouldSubmitFormalReview(
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+  stayingSilent: boolean,
+): boolean {
+  return !(event === 'COMMENT' && stayingSilent);
 }
 
 /** One grep-able log line per review. */

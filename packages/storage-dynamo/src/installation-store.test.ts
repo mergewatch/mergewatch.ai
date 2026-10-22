@@ -58,3 +58,17 @@ describe('DynamoInstallationStore — org custom agents (#235)', () => {
     expect(sent.input.Item.agents).toEqual([agent()]); // junk dropped
   });
 });
+
+describe('DynamoInstallationStore — approve (#706)', () => {
+  it('getSettings on a #SETTINGS row saved before approve existed returns approve: false', async () => {
+    const client = clientReturning({ Item: { settings: { severityThreshold: 'Med', maxComments: 5 } } });
+    const settings = await new DynamoInstallationStore(client, 'tbl').getSettings('42');
+    expect(settings.approve).toBe(false);
+    expect(settings.severityThreshold).toBe('Med');
+  });
+
+  it('getSettings returns a saved approve: true', async () => {
+    const client = clientReturning({ Item: { settings: { approve: true } } });
+    expect((await new DynamoInstallationStore(client, 'tbl').getSettings('42')).approve).toBe(true);
+  });
+});

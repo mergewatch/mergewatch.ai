@@ -131,6 +131,7 @@ ux:
 | `minSeverity` | `string` | `info` | Minimum severity level to report. One of `info`, `warning`, `critical`. Findings below this threshold are suppressed. |
 | `minConfidence` | `number` | `75` | Minimum self-reported confidence (`1`--`100`) a finding needs to be reported. **Lower it** (e.g. `50`) to surface the speculative tier MergeWatch normally withholds — useful when calibrating or when you suspect findings are being over-suppressed. **Raise it** to report only near-certain defects. Values outside `1`--`100` are ignored and the default applies. |
 | `maxFindings` | `number` | `25` | Maximum number of model-generated findings posted per review, applied after filtering and keeping the highest-ranked. Prevents noisy reviews on large PRs. Findings from [custom agents](/dashboard/custom-agents) are exempt and post in addition to this cap. |
+| `approve` | `boolean` | `false` | When `true`, a merge score of 4--5 submits an `APPROVE` review; otherwise it submits `COMMENT`, so MergeWatch never satisfies a "required approvals" rule unless you opt in. **Read from the default branch only**: a value set on a PR's own branch is ignored, so a PR cannot approve itself. Overrides the dashboard **Approve PRs** setting. See [GitHub review events](/overview/how-it-works#github-review-events). |
 | `postSummaryOnClean` | `boolean` | `true` | When `true`, MergeWatch posts a summary comment even when no findings are detected. Set to `false` to stay silent on clean PRs. If an earlier review already posted a comment on the PR, it is still updated — a previously-flagged PR that comes back clean never keeps a stale review. |
 | `codebaseAwareness` | `boolean` | `true` | Enable agentic file fetching for cross-file context. When `true`, agents can request additional files from the repository. |
 | `maxFileRequestRounds` | `number` | `1` | Maximum rounds of file fetching per agent (1--2). Each round lets the agent request more files based on what it learned. |
@@ -450,7 +451,7 @@ Three custom agents with Django-specific prompts alongside the built-in agents.
 
 The `.mergewatch.yml` file must be placed at the **root** of the repository's **default branch** (the branch GitHub shows when you visit the repo — usually `main` or `master`).
 
-MergeWatch reads the file from the default branch, not from the PR's head branch. This means configuration changes in a PR do not take effect until they are merged.
+MergeWatch reads the file at the PR's head commit, so a configuration change made in a PR applies to that PR's own review. The exception is [`approve`](#top-level-properties), which is read only from the default branch, so a PR cannot approve itself.
 
 <Warning>
 If you rename your default branch, MergeWatch automatically detects the new default on the next webhook. No action is required.

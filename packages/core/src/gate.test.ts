@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildMergeGate, buildCheckOutcome, reviewEventForGate, formatGateLog,
+  resolveApprove, resolveApproveForRepo, shouldSubmitFormalReview,
   ORG_BLOCKED_TITLE_PREFIX, REVIEW_FAILED_CHECK_TITLE, AGENT_FAILED_TITLE_PREFIX, emptyGate,
   REVIEW_FAILED_PREFIX, reviewFailedCheckOutput,
   failedAgentPriors, runtimePriorView, shouldStaySilent,
@@ -152,6 +153,7 @@ describe('buildCheckOutcome', () => {
   });
 });
 
+// These pin the opted-in mapping (`approve: true`); #706 below covers the default.
 describe('reviewEventForGate', () => {
   const clean = buildMergeGate([]);
   const blocked = buildMergeGate([crit({ source: org('blocking') })]);
@@ -161,18 +163,96 @@ describe('reviewEventForGate', () => {
 
   for (const score of [1, 2, 3, 4, 5]) {
     it(`score ${score}: org-blocked → REQUEST_CHANGES whatever the score`, () => {
-      expect(reviewEventForGate(blocked, score)).toBe('REQUEST_CHANGES');
+      expect(reviewEventForGate(blocked, score, true)).toBe('REQUEST_CHANGES');
     });
     it(`score ${score}: refuted blocking critical never APPROVEs`, () => {
-      expect(reviewEventForGate(refuted, score)).toBe(byScore[score] === 'APPROVE' ? 'COMMENT' : byScore[score]);
+      expect(reviewEventForGate(refuted, score, true)).toBe(byScore[score] === 'APPROVE' ? 'COMMENT' : byScore[score]);
     });
     it(`score ${score}: clean gate → the score's event`, () => {
-      expect(reviewEventForGate(clean, score)).toBe(byScore[score]);
+      expect(reviewEventForGate(clean, score, true)).toBe(byScore[score]);
     });
     it(`score ${score}: failing gate without an org block → the score's event (#640 changes this)`, () => {
-      expect(reviewEventForGate(failsNoOrg, score)).toBe(byScore[score]);
+      expect(reviewEventForGate(failsNoOrg, score, true)).toBe(byScore[score]);
     });
   }
+});
+
+describe('#706 — reviewEventForGate only approves when approve is on', () => {
+  const blocked = buildMergeGate([crit({ source: org('blocking') })]);
+  const refuted = buildMergeGate([crit({ source: org('blocking'), verificationOutcome: 'refuted', verification: 'unverified' })]);
+  const failedGating = buildMergeGate([], [], [{ agent: 'no-todo', source: org('blocking'), reason: 'error' }]);
+
+  it('off: 1-2 → REQUEST_CHANGES, 3-5 → COMMENT', () => {
+    expect([1, 2, 3, 4, 5].map((s) => reviewEventForGate(emptyGate(), s, false)))
+      .toEqual(['REQUEST_CHANGES', 'REQUEST_CHANGES', 'COMMENT', 'COMMENT', 'COMMENT']);
+  });
+  it('on: 4-5 → APPROVE', () => {
+    expect([1, 2, 3, 4, 5].map((s) => reviewEventForGate(emptyGate(), s, true)))
+      .toEqual(['REQUEST_CHANGES', 'REQUEST_CHANGES', 'COMMENT', 'APPROVE', 'APPROVE']);
+  });
+  for (const approve of [false, true]) {
+    it(`approve=${approve}: org-blocked → REQUEST_CHANGES at every score`, () => {
+      for (const s of [1, 2, 3, 4, 5]) expect(reviewEventForGate(blocked, s, approve)).toBe('REQUEST_CHANGES');
+    });
+    it(`approve=${approve}: refuted / failed gating → COMMENT at 3-5`, () => {
+      for (const g of [refuted, failedGating]) {
+        expect([3, 4, 5].map((s) => reviewEventForGate(g, s, approve))).toEqual(['COMMENT', 'COMMENT', 'COMMENT']);
+      }
+    });
+  }
+});
+
+describe('#706 — resolveApprove', () => {
+  const r = (settings: unknown, defaultBranchConfig: unknown) =>
+    resolveApprove({ settings: settings as any, defaultBranchConfig: defaultBranchConfig as any });
+
+  it('nothing set → false', () => {
+    expect(r(undefined, null)).toBe(false);
+    expect(r({}, {})).toBe(false);
+  });
+  it('dashboard true → true', () => expect(r({ approve: true }, null)).toBe(true));
+  it('default-branch yml false beats dashboard true', () => expect(r({ approve: true }, { approve: false })).toBe(false));
+  it('default-branch yml true beats dashboard false', () => expect(r({ approve: false }, { approve: true })).toBe(true));
+  it('a non-boolean yml value is ignored', () => {
+    expect(r(undefined, { approve: 'yes' })).toBe(false);
+    expect(r({ approve: true }, { approve: 'yes' })).toBe(true);
+  });
+  it('a string dashboard value is not true', () => expect(r({ approve: 'true' }, null)).toBe(false));
+});
+
+describe('#706 — resolveApproveForRepo reads the default branch only', () => {
+  const octokitWith = (yml: string | null) => {
+    const getContent = vi.fn(async (_params: Record<string, unknown>) => {
+      if (yml === null) throw Object.assign(new Error('Not Found'), { status: 404 });
+      return { data: { type: 'file', content: Buffer.from(yml).toString('base64') } };
+    });
+    return { octokit: { repos: { getContent } } as any, getContent };
+  };
+  const cases: Array<[unknown, string | null, boolean]> = [
+    [undefined, null, false],
+    [{ approve: true }, null, true],
+    [{ approve: true }, 'approve: false', false],
+    [{ approve: false }, 'approve: true', true],
+    [undefined, 'approve: "yes"', false],
+    [{ approve: 'true' }, null, false],
+  ];
+  for (const [settings, yml, want] of cases) {
+    it(`dashboard ${JSON.stringify(settings)} + yml ${JSON.stringify(yml)} → ${want}`, async () => {
+      const { octokit, getContent } = octokitWith(yml);
+      expect(await resolveApproveForRepo(octokit, 'o', 'r', settings as any)).toBe(want);
+      expect(getContent).toHaveBeenCalledTimes(1);
+      expect(getContent.mock.calls[0][0]).not.toHaveProperty('ref');
+    });
+  }
+});
+
+describe('#706 — shouldSubmitFormalReview', () => {
+  it('skips only a COMMENT on a silent PR', () => {
+    expect(shouldSubmitFormalReview('COMMENT', true)).toBe(false);
+    expect(shouldSubmitFormalReview('REQUEST_CHANGES', true)).toBe(true);
+    expect(shouldSubmitFormalReview('APPROVE', true)).toBe(true);
+    expect(shouldSubmitFormalReview('COMMENT', false)).toBe(true);
+  });
 });
 
 describe('title constants', () => {
@@ -308,19 +388,19 @@ describe('#664 — reviewEventForGate with a failed gating agent', () => {
   const failed = buildMergeGate([], [], [G]);
   for (const score of [4, 5]) {
     it(`score ${score} → COMMENT, never APPROVE`, () => {
-      expect(reviewEventForGate(failed, score)).toBe('COMMENT');
+      expect(reviewEventForGate(failed, score, true)).toBe('COMMENT');
     });
   }
   it('(pin) scores 1-2 → REQUEST_CHANGES, 3 → COMMENT', () => {
-    expect([1, 2, 3].map((s) => reviewEventForGate(failed, s))).toEqual(['REQUEST_CHANGES', 'REQUEST_CHANGES', 'COMMENT']);
+    expect([1, 2, 3].map((s) => reviewEventForGate(failed, s, true))).toEqual(['REQUEST_CHANGES', 'REQUEST_CHANGES', 'COMMENT']);
   });
   it('(pin) an advisory failure leaves the score\'s event', () => {
     const adv = buildMergeGate([], [], [advisoryFail('a')]);
-    for (const s of [1, 2, 3, 4, 5]) expect(reviewEventForGate(adv, s)).toBe(mergeScoreToReviewEvent(s));
+    for (const s of [1, 2, 3, 4, 5]) expect(reviewEventForGate(adv, s, true)).toBe(mergeScoreToReviewEvent(s));
   });
   it('(pin) org block + failure → REQUEST_CHANGES, org-block title', () => {
     const g = buildMergeGate([crit({ source: org('blocking', 'other') })], [], [G]);
-    expect(reviewEventForGate(g, 5)).toBe('REQUEST_CHANGES');
+    expect(reviewEventForGate(g, 5, true)).toBe('REQUEST_CHANGES');
     expect(buildCheckOutcome(g, { mergeScore: 5, findingCount: 1, warningCount: 0, infoCount: 0, agentFailures: [G] }).title)
       .toBe('5/5 — Blocked by org agent: other');
   });

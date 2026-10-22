@@ -44,6 +44,7 @@ export class PostgresInstallationStore implements IInstallationStore {
       summary: row.summary as InstallationSettings['summary'],
       customInstructions: row.customInstructions,
       commentHeader: row.commentHeader,
+      approve: row.approve,
     };
   }
 

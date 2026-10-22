@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { fetchUserInstallations, checkInstallationAdmin, TokenExpiredError } from "@/lib/github-repos";
+import { settingsValidationError } from "@/lib/settings-validation";
 import { DEFAULT_INSTALLATION_SETTINGS } from "@mergewatch/core";
 import type { InstallationSettings } from "@mergewatch/core";
 
@@ -75,18 +76,10 @@ export async function PUT(req: NextRequest) {
 
   const body = await req.json();
   const settings = body.settings as InstallationSettings;
-  if (!settings) return NextResponse.json({ error: "Missing settings" }, { status: 400 });
 
-  // Validate
-  if (!["Low", "Med", "High"].includes(settings.severityThreshold)) {
-    return NextResponse.json({ error: "Invalid severityThreshold" }, { status: 400 });
-  }
-  if (typeof settings.maxComments !== "number" || settings.maxComments < 1 || settings.maxComments > 50) {
-    return NextResponse.json({ error: "maxComments must be 1-50" }, { status: 400 });
-  }
-  if (typeof settings.customInstructions !== "string" || settings.customInstructions.length > 1000) {
-    return NextResponse.json({ error: "customInstructions too long" }, { status: 400 });
-  }
+  // Validate (#706 — the policy lives in lib/settings-validation.ts)
+  const invalid = settingsValidationError(settings);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
 
   try {
     const store = await getDashboardStore();

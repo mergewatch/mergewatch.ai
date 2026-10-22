@@ -5,6 +5,7 @@ import {
   DEFAULT_AGENT_REVIEW_CONFIG,
   mergeConfig,
 } from './defaults.js';
+import { DEFAULT_INSTALLATION_SETTINGS } from '../types/db.js';
 
 describe('DEFAULT_CONFIG', () => {
   it('has all agent flags as booleans', () => {
@@ -16,6 +17,11 @@ describe('DEFAULT_CONFIG', () => {
   it('model is a non-empty string', () => {
     expect(DEFAULT_CONFIG.model).toBeTypeOf('string');
     expect(DEFAULT_CONFIG.model.length).toBeGreaterThan(0);
+  });
+
+  it('#706 — approving is off by default, in the yml config and the dashboard settings', () => {
+    expect(DEFAULT_CONFIG.approve).toBe(false);
+    expect(DEFAULT_INSTALLATION_SETTINGS.approve).toBe(false);
   });
 });
 

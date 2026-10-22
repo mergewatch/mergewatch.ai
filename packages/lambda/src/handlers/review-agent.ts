@@ -29,6 +29,8 @@ import {
   runReviewPipeline,
   buildCheckOutcome,
   reviewEventForGate,
+  resolveApproveForRepo,
+  shouldSubmitFormalReview,
   formatGateLog,
   reviewFailedCheckOutput,
   runtimePriorView,
@@ -1039,7 +1041,10 @@ export async function handler(
     }
 
     // ── Step A: Upsert issue comment (full review — primary artifact) ──────
-    const reviewEvent = reviewEventForGate(gate, result.mergeScore);
+    // #706 — approving is opt-in, read from the default branch only (never the
+    // PR head's yml, which `config` merged), so a PR cannot approve itself.
+    const approve = await resolveApproveForRepo(octokit, owner, repo, instSettings);
+    const reviewEvent = reviewEventForGate(gate, result.mergeScore, approve);
     let commentId: number | undefined;
 
     // Look up existing comment: job payload → DynamoDB → API scan
@@ -1119,7 +1124,10 @@ export async function handler(
       const selfLogin = await dismissOwnStaleReviews(
         octokit, owner, repo, prNumber, commentId, `lambda:${STAGE ?? 'prod'}`,
       );
-      await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
+      // #706 — a silent clean PR has no summary comment for a COMMENT to point at.
+      if (shouldSubmitFormalReview(reviewEvent, stayingSilent)) {
+        await submitPRReview(octokit, owner, repo, prNumber, reviewBody, reviewEvent, inlineComments);
+      }
       // #526 — close our own inline threads for findings this review no longer
       // raises. Without it a withdrawn critical leaves its comment open
       // forever, so the PR keeps showing blocking feedback the review itself
