@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { estimateCost, DEFAULT_PRICING, parseEnvModelPricing } from './pricing.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 describe('estimateCost', () => {
   it('returns correct cost for a known Bedrock model', () => {
-    // us.anthropic.claude-sonnet-4: the `us.` cross-region profile is billed at
+    // us.anthropic.claude-sonnet-4-5: the `us.` cross-region profile is billed at
     // $3.30/$16.50, not the $3/$15 published base rate (see below).
     const cost = estimateCost(
-      'us.anthropic.claude-sonnet-4-20250514-v1:0',
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
       1000,
       500,
     );
@@ -52,7 +53,7 @@ describe('estimateCost', () => {
     });
 
     it('Opus 4.8 bills at $5.50/$27.50 on Bedrock, $5/$25 direct', () => {
-      expect(estimateCost('us.anthropic.claude-opus-4-8-v1', M, M)).toBeCloseTo(33, 6);
+      expect(estimateCost('us.anthropic.claude-opus-4-8', M, M)).toBeCloseTo(33, 6);
       expect(estimateCost('claude-opus-4-8', M, M)).toBeCloseTo(30, 6);
     });
 
@@ -77,6 +78,11 @@ describe('estimateCost', () => {
         ['us.anthropic.claude-opus-4-6-v1', 'claude-opus-4-6'],
         ['us.anthropic.claude-sonnet-4-6', 'claude-sonnet-4-6'],
         ['us.anthropic.claude-haiku-4-5-20251001-v1:0', 'claude-haiku-4-5-20251001'],
+        ['us.anthropic.claude-sonnet-5-5', 'global.anthropic.claude-sonnet-5-5'],
+        ['us.anthropic.claude-opus-5-5', 'global.anthropic.claude-opus-5-5'],
+        ['us.anthropic.claude-fable-5-1', 'global.anthropic.claude-fable-5-1'],
+        ['us.anthropic.claude-haiku-5-5', 'global.anthropic.claude-haiku-5-5'],
+        ['us.anthropic.claude-opus-4-7', 'global.anthropic.claude-opus-4-7'],
       ];
       for (const [usId, baseId] of pairs) {
         const us = estimateCost(usId, M, M);
@@ -86,6 +92,20 @@ describe('estimateCost', () => {
         expect(us! / base!, `${usId} vs ${baseId}`).toBeCloseTo(1.1, 6);
       }
     });
+  });
+
+  // #722 — the `us.` premium starts at Claude 4.5. Opus 4.1's rate card has a
+  // single rate with no regional dimension, so 1.1x here would over-bill.
+  it('Opus 4.1 us. bills at the flat $15/$75 — no premium before 4.5', () => {
+    expect(estimateCost('us.anthropic.claude-opus-4-1-20250805-v1:0', 1_000_000, 1_000_000)).toBeCloseTo(90, 6);
+  });
+
+  // #722 — Haiku 5.5 is tiered per request ($0.50/$2.50 list above a 100k
+  // prompt, 5x the rate below it). The flat table pins the upper tier.
+  it('Haiku 5.5 us. is pinned at the >100k tier: $0.55/$2.75', () => {
+    expect(estimateCost('us.anthropic.claude-haiku-5-5', 1_000_000, 1_000_000)).toBeCloseTo(3.3, 6);
+    const src = readFileSync(new URL('./pricing.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/Haiku 5\.5[\s\S]{0,400}per request/);
   });
 
   it('the retired claude-3-5-sonnet is no longer priced (returns null)', () => {
@@ -135,11 +155,38 @@ describe('estimateCost', () => {
       tokens.output,
     )!;
     const sonnetCost = estimateCost(
-      'us.anthropic.claude-sonnet-4-20250514-v1:0',
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
       tokens.input,
       tokens.output,
     )!;
     expect(haikuCost).toBeLessThan(sonnetCost);
+  });
+});
+
+// #722 — the 5.5 generation's cache reads are not 0.1x input. Sonnet 5.5 and
+// Opus 5.5 are 0.05x and Fable 5.1 is 0.025x (pricing page footnotes, and the
+// `us.` rate cards: 0.11, 0.22, 0.275).
+describe('per-model cache-read rates (#722)', () => {
+  const M = 1_000_000;
+  const readOnly = (id: string, custom?: Parameters<typeof estimateCost>[3]) =>
+    estimateCost(id, 0, 0, custom, { readTokens: M });
+
+  it('Sonnet 5.5, Opus 5.5 and Fable 5.1 us. carry their real cache-read rates', () => {
+    expect(readOnly('us.anthropic.claude-sonnet-5-5')).toBeCloseTo(0.11, 10);
+    expect(readOnly('us.anthropic.claude-opus-5-5')).toBeCloseTo(0.22, 10);
+    expect(readOnly('us.anthropic.claude-fable-5-1')).toBeCloseTo(0.275, 10);
+  });
+
+  // Deliberate. A two-key override may be a negotiated rate, so the default's
+  // cacheReadPer1M is NOT merged into it; 0.1x over-reports, the safe side.
+  it('a two-key override on a known 5.5 model falls back to 0.1x its input', () => {
+    const custom = { 'us.anthropic.claude-sonnet-5-5': { inputPer1M: 2.20, outputPer1M: 11 } };
+    expect(readOnly('us.anthropic.claude-sonnet-5-5', custom)).toBeCloseTo(0.22, 10);
+  });
+
+  it('an unknown model with a two-key override falls back to 0.1x its input', () => {
+    const custom = { 'my-model': { inputPer1M: 7, outputPer1M: 35 } };
+    expect(readOnly('my-model', custom)).toBeCloseTo(0.7, 10);
   });
 });
 

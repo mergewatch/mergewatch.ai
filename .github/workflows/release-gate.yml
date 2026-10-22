@@ -506,6 +506,32 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # #722 — DEFAULT_PRICING and CONTEXT_WINDOWS are checked against a
+      # committed snapshot of the live Bedrock profiles by a unit test; this
+      # checks the snapshot against AWS. An unpriced profile costs null, and a
+      # null-cost review is never billed. Reported, not blocking: a new AWS
+      # profile does not make a release wrong. Needs bedrock:ListInferenceProfiles
+      # and bedrock:GetFoundationModel on the deploy role.
+      - name: Bedrock profile drift (#722)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-bedrock-profiles.mjs 2>&1 | tee /tmp/profiles.txt || rc=$?
+          {
+            echo "## Bedrock profile drift"
+            echo ""
+            case "$rc" in
+              0) echo "✅ The profile snapshot matches every live Anthropic profile in us-west-2." ;;
+              1) echo "⚠️ **Drift.** AWS's live profiles no longer match the snapshot — see below. Regenerate with \`--write\` and price the new ids." ;;
+              *) echo "❓ **Could not check.** The profiles were NOT compared — this is not a pass." ;;
+            esac
+            echo ""
+            echo '```'
+            cat /tmp/profiles.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Audit the docs against the codebase
         id: audit
         env:
