@@ -35,7 +35,7 @@ MergeWatch validates the `.mergewatch.yml` file on the first webhook it receives
 version: 1
 
 # Model used for all agents. Must be a valid Bedrock model ID.
-model: us.anthropic.claude-sonnet-4-6
+model: us.anthropic.claude-sonnet-5-5
 
 # Codebase awareness — enable agentic file fetching for cross-file context.
 codebaseAwareness: true
@@ -341,7 +341,7 @@ This enables all eight built-in agents with their default prompts, uses Claude S
 <Accordion title="Security-focused pipeline (e.g., payments service)">
 ```yaml .mergewatch.yml
 version: 1
-model: us.anthropic.claude-sonnet-4-6
+model: us.anthropic.claude-sonnet-5-5
 agents:
   style: false
   diagram: false
