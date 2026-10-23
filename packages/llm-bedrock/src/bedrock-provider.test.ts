@@ -449,6 +449,57 @@ describe('#721 — Sonnet 5.5 and the rest of the 5.5 generation', () => {
     });
   });
 
+  describe('#767 — retry once when an auto-tool_choice model answers in text', () => {
+    const prose = (usage = { input_tokens: 10, output_tokens: 3 }) => makeResponse({
+      content: [{ type: 'text', text: 'Here are my findings: none.' }],
+      usage,
+      stop_reason: 'end_turn',
+    });
+    const bodyOf = (n: number) => JSON.parse(new TextDecoder().decode(mockSend.mock.calls[n][0].body));
+
+    it('retries with its own answer and an emit_result follow-up, and returns the tool result', async () => {
+      mockSend.mockResolvedValueOnce(prose()).mockResolvedValueOnce(toolUse());
+      const r = await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(r.object).toEqual({ findings: [] });
+      const retry = bodyOf(1);
+      // Same first turn (same cached prefix), then the model's answer, then the nudge.
+      expect(retry.messages[0]).toEqual(bodyOf(0).messages[0]);
+      expect(retry.messages[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'Here are my findings: none.' }] });
+      expect(retry.messages[2].role).toBe('user');
+      expect(retry.messages[2].content[0].text).toContain('emit_result');
+      expect(retry.tool_choice).toEqual({ type: 'auto' });
+    });
+
+    it('counts the usage of both billed calls', async () => {
+      mockSend.mockResolvedValueOnce(prose()).mockResolvedValueOnce(toolUse());
+      const r = await new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA);
+      expect(r.usage).toMatchObject({ inputTokens: 11, outputTokens: 4 });
+    });
+
+    it('throws after one retry, never loops', async () => {
+      mockSend.mockResolvedValueOnce(prose()).mockResolvedValueOnce(prose());
+      await expect(new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA))
+        .rejects.toThrow(/no tool_use block \(stop_reason: end_turn\)/);
+      expect(mockSend).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry a stop other than end_turn (max_tokens, refusal)', async () => {
+      for (const stop_reason of ['max_tokens', 'refusal']) {
+        mockSend.mockReset();
+        mockSend.mockResolvedValueOnce(makeResponse({ content: [{ type: 'text', text: 'x' }], stop_reason }));
+        await expect(new BedrockLLMProvider().invokeStructured(SONNET_55, 'prompt', SCHEMA)).rejects.toThrow(/no tool_use block/);
+        expect(mockSend).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('does not retry a forced-tool model (Sonnet 4.6), whose miss is a real failure', async () => {
+      mockSend.mockResolvedValueOnce(prose());
+      await expect(new BedrockLLMProvider().invokeStructured(SONNET_46, 'prompt', SCHEMA)).rejects.toThrow(/no tool_use block/);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('[pin] the Sonnet 4.6 bodies are byte-identical to main', () => {
     it('structured, plain string', async () => {
       mockSend.mockResolvedValueOnce(toolUse());
