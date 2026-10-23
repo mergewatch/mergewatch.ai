@@ -1,0 +1,65 @@
+export const dynamic = "force-dynamic";
+
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { resolveActiveInstallation } from "@/lib/server-org";
+import {
+  fetchUserInstallations,
+  fetchInstallationRepos,
+  checkInstallationAdmin,
+  TokenExpiredError,
+} from "@/lib/github-repos";
+import SafetyAreasManager from "@/components/SafetyAreasManager";
+
+interface Props {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}
+
+/**
+ * /dashboard/settings/safety-areas (#718) — org admins define safety areas
+ * applied to every in-scope repo's safety score. Members see a read-only view.
+ */
+export default async function SafetyAreasPage({ searchParams }: Props) {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect("/");
+  const accessToken = (session as any).accessToken as string | undefined;
+  if (!accessToken) redirect("/");
+
+  const params = await searchParams;
+  let installations;
+  try {
+    installations = await fetchUserInstallations(accessToken);
+  } catch (err) {
+    if (err instanceof TokenExpiredError) redirect("/signout");
+    throw err;
+  }
+  if (installations.length === 0) redirect("/onboarding");
+
+  const orgParam = typeof params.org === "string" ? params.org : undefined;
+  const activeInstallation = await resolveActiveInstallation({
+    installations,
+    orgParam,
+    githubUserId: (session as any).githubUserId as string | undefined,
+  });
+
+  const isAdmin = await checkInstallationAdmin(accessToken, activeInstallation);
+
+  // Repo list powers the "selected repos" scope picker. Best-effort — the page
+  // still works (all-repos scope) if the repo fetch fails.
+  let repoNames: string[] = [];
+  try {
+    const { repos } = await fetchInstallationRepos(accessToken, activeInstallation.id);
+    repoNames = repos.map((r) => r.repoFullName).sort();
+  } catch {
+    repoNames = [];
+  }
+
+  return (
+    <SafetyAreasManager
+      installationId={String(activeInstallation.id)}
+      isAdmin={isAdmin}
+      repos={repoNames}
+    />
+  );
+}

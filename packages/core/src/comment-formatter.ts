@@ -735,6 +735,15 @@ const SAFETY_FACTOR_TITLES: Array<[SafetyFactor, string]> = [
 const SAFETY_RISK_RANK: Record<SafetyLevel, number> = { safe: 0, caution: 1, risky: 2 };
 const MAX_UNCOVERED_SHOWN = 5;
 
+/**
+ * #718 — a matched area as prose: escaped, and marked ` (org)` when it came
+ * from the dashboard, since the repo's yml does not show it. The mw-safety
+ * line keeps the raw name.
+ */
+function areaDisplay(m: SafetyResult['matchedAreas'][number]): string {
+  return `${escapeUserContent(matchLabel(m))}${m.source === 'org' ? ' (org)' : ''}`;
+}
+
 /** The pattern-matched areas, then the model-applied ones, deduplicated. Unescaped. */
 function safetyAreaNames(r: SafetyResult): string[] {
   return [...new Set([...r.matchedAreas.map(matchLabel), ...r.appliedAreas])];
@@ -764,13 +773,13 @@ function renderSafety(r: SafetyResult, headSha: string): { head: string[]; detai
   for (const [f, title] of SAFETY_FACTOR_TITLES) {
     const factor = r.factors[f];
     const cap = factor.cappedFrom !== undefined && capper
-      ? ` (capped from ${factor.cappedFromLabel} by ${escapeUserContent(matchLabel(capper))})`
+      ? ` (capped from ${factor.cappedFromLabel} by ${areaDisplay(capper)})`
       : '';
     detail.push(`- ${title}: ${factor.label}. ${factor.note}${cap}`);
   }
 
   const applied = [
-    ...r.matchedAreas.map((m) => `- Area: ${escapeUserContent(matchLabel(m))} (${m.level ?? 'no level'}; ${m.matchedPatterns.map(escapeUserContent).join(', ')})`),
+    ...r.matchedAreas.map((m) => `- Area: ${areaDisplay(m)} (${m.level ?? 'no level'}; ${m.matchedPatterns.map(escapeUserContent).join(', ')})`),
     ...r.appliedAreas.map((a) => `- Area: ${escapeUserContent(a)} (judged by the model)`),
     ...r.appliedNotes.map((n) => `- Note: ${escapeUserContent(n)}`),
   ];

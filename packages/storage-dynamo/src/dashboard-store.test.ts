@@ -360,3 +360,23 @@ describe('DynamoDashboardInstallationStore — safetyScore (#711)', () => {
     expect(settings.maxComments).toBe(5);
   });
 });
+
+describe('DynamoDashboardInstallationStore — org safety areas (#718)', () => {
+  it('listByInstallation leaves out every sentinel row, #SAFETY_AREAS included', async () => {
+    const rows = ['#SETTINGS', '#AGENTS', '#SAFETY_AREAS', 'o/r'].map((repoFullName) => ({ installationId: '42', repoFullName }));
+    const send = vi.fn().mockResolvedValue({ Items: rows });
+    const repos = await new DynamoDashboardInstallationStore({ send } as any, 'tbl').listByInstallation('42');
+    expect(repos.map((r) => r.repoFullName)).toEqual(['o/r']);
+  });
+
+  it('updateSafetyAreas writes the sanitized areas to #SAFETY_AREAS', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    await new DynamoDashboardInstallationStore({ send } as any, 'tbl').updateSafetyAreas('42', [
+      { id: 'a', patterns: ['p/**'], level: 'risky', enabled: true, scope: { mode: 'all' }, updatedAt: 't', updatedBy: 'u' },
+      { id: 'bad', name: 'no patterns or notes' } as any,
+    ]);
+    const item = send.mock.calls[0][0].input.Item;
+    expect(item.repoFullName).toBe('#SAFETY_AREAS');
+    expect(item.areas.map((a: { id: string }) => a.id)).toEqual(['a']);
+  });
+});

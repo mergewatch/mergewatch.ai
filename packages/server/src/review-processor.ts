@@ -19,7 +19,7 @@ import {
   recordFindingSurfacings, recordDisputes, recordResolves, detectQuietDrops, recordQuietDrops,
   pollAndRecordInlineReactions, recordSummaryHelpfulVotes,
   parseEnvModelPricing,
-  selectOrgAgentsForReview, unionCustomAgents, languagesFromFiles,
+  selectOrgAgentsForReview, unionCustomAgents, languagesFromFiles, selectOrgSafetyAreas, unionSafetyAreas,
   findingMatchKeys,
   buildReviewTrace,
   buildReviewDetailUrl,
@@ -727,6 +727,23 @@ export async function processReviewJob(
     }
 
     // Run review pipeline
+    // #718 — org safety areas, read only when the score is on. They are
+    // unioned with the repo's (default-branch) areas, and riskiest-wins
+    // matching means a repo can add an area but never weaken an org one. A
+    // failed read omits the section: scoring without the org's areas would
+    // understate risk. Advisory, so the review itself carries on.
+    if (config.safetyScore.enabled) {
+      try {
+        const orgSafetyAreas = selectOrgSafetyAreas(await deps.installationStore.getSafetyAreas(instId), repoFullName);
+        if (orgSafetyAreas.length > 0) {
+          config.safetyScore = { ...config.safetyScore, areas: unionSafetyAreas(orgSafetyAreas, config.safetyScore.areas) };
+        }
+      } catch (err) {
+        console.warn('[safety] org safety areas read failed — section omitted for this review:', err);
+        config.safetyScore = { ...config.safetyScore, enabled: false };
+      }
+    }
+
     // #717 — the uncovered-folder check needs the base branch's root
     // directories: one listing, only when the score is on and some area has
     // patterns. A failed listing skips the check; it never fails the review.

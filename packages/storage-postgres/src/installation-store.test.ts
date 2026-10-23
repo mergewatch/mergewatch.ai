@@ -92,3 +92,11 @@ describe('PostgresInstallationStore — safetyScore (#711)', () => {
     expect((await new PostgresInstallationStore(chain([])).getSettings('42')).safetyScore).toEqual({ enabled: false });
   });
 });
+
+describe('PostgresInstallationStore — org safety areas (#718)', () => {
+  it('reads safety_areas, sanitized; a missing row is []', async () => {
+    const areas = await new PostgresInstallationStore(chain([{ safetyAreas: [{ id: 'a', patterns: ['p/**'] }, { id: 'bad' }] }])).getSafetyAreas('42');
+    expect(areas.map((a) => a.id)).toEqual(['a']);
+    expect(await new PostgresInstallationStore(chain([])).getSafetyAreas('42')).toEqual([]);
+  });
+});

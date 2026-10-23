@@ -163,6 +163,11 @@ export interface SafetyArea {
   patterns?: string[];
   level?: SafetyLevel;
   notes?: string;
+  /**
+   * #718 — set only on org areas merged in at review time, never parsed from
+   * yml (the parser rejects unknown keys). Drives the comment's ` (org)`.
+   */
+  source?: 'org';
 }
 
 export interface SafetyScoreConfig {

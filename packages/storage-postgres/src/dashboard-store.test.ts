@@ -53,3 +53,27 @@ describe('PostgresDashboardInstallationStore — safetyScore (#711)', () => {
     expect((await new PostgresDashboardInstallationStore(db).getSettings('42')).safetyScore).toEqual({ enabled: false });
   });
 });
+
+describe('PostgresDashboardInstallationStore — org safety areas (#718)', () => {
+  const area = { id: 'a', patterns: ['p/**'], level: 'risky' as const, enabled: true, scope: { mode: 'all' as const }, updatedAt: 't', updatedBy: 'u' };
+
+  it('a fresh row gets core defaults, not the column defaults (maxComments 10, confidenceScore false)', async () => {
+    const db = chain(undefined);
+    await new PostgresDashboardInstallationStore(db).updateSafetyAreas('42', [area]);
+    const values = db.values.mock.calls[0][0];
+    expect(values).toMatchObject({ installationId: '42', maxComments: 10, safetyAreas: [area] });
+    expect(values.summary.confidenceScore).toBe(false);
+    expect(db.onConflictDoUpdate.mock.calls[0][0].set).toEqual({ safetyAreas: [area] });
+  });
+
+  it('getSafetyAreas maps the column; a missing row is []', async () => {
+    expect(await new PostgresDashboardInstallationStore(chain([{ safetyAreas: [area] }])).getSafetyAreas('42')).toEqual([area]);
+    expect(await new PostgresDashboardInstallationStore(chain([])).getSafetyAreas('42')).toEqual([]);
+  });
+
+  it('the safety_areas column exists in the real schema', async () => {
+    const { drizzle } = await import('drizzle-orm/postgres-js');
+    const { installationSettings } = await import('./schema.js');
+    expect(drizzle.mock().update(installationSettings).set({ safetyAreas: [] } as any).toSQL().sql).toContain('"safety_areas"');
+  });
+});

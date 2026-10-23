@@ -131,6 +131,7 @@
               "dashboard/settings",
               "dashboard/api-keys",
               "dashboard/custom-agents",
+              "dashboard/safety-areas",
               "dashboard/billing",
               "dashboard/profile"
             ]

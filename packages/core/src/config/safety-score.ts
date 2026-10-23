@@ -41,7 +41,11 @@ function rejectUnknown(obj: Record<string, unknown>, allowed: readonly string[],
   }
 }
 
-function parseArea(raw: unknown, path: string, errors: string[]): SafetyArea | undefined {
+/**
+ * One area's per-field checks. Exported so org areas (#718) are held to
+ * exactly the repo-area rules rather than a copy of them.
+ */
+export function parseSafetyArea(raw: unknown, path: string, errors: string[]): SafetyArea | undefined {
   if (!isMapping(raw)) { errors.push(`${path}: must be a mapping`); return undefined; }
   rejectUnknown(raw, AREA_KEYS, path, errors);
   const area: SafetyArea = {};
@@ -178,7 +182,7 @@ export function parseSafetyScoreBlock(raw: unknown): { value: SafetyScoreInput; 
       const areas: SafetyArea[] = [];
       const seen = new Set<string>();
       raw.areas.forEach((a, i) => {
-        const area = parseArea(a, `safetyScore.areas[${i}]`, errors);
+        const area = parseSafetyArea(a, `safetyScore.areas[${i}]`, errors);
         if (!area) return;
         if (area.name !== undefined) {
           const key = area.name.toLowerCase();

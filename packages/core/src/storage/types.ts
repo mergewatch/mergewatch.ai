@@ -16,6 +16,7 @@ import type {
   NpsResponseRecord,
   ReviewCostRecord,
   OrgCustomAgent,
+  OrgSafetyArea,
 } from '../types/db.js';
 import type { ReviewJobPayload } from '../types/github.js';
 
@@ -40,6 +41,12 @@ export interface IInstallationStore {
   getCustomAgents(installationId: string): Promise<OrgCustomAgent[]>;
   /** #235 — replace the installation's org custom agents (full set). */
   upsertCustomAgents(installationId: string, agents: OrgCustomAgent[]): Promise<void>;
+  /**
+   * #718 — read the installation's org safety areas (sanitized; [] when
+   * unset). A read error is thrown: the runtime then omits the safety
+   * section, rather than scoring without the org's areas.
+   */
+  getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]>;
 }
 
 export interface IReviewStore {

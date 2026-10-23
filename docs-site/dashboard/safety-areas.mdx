@@ -1,0 +1,33 @@
+---
+title: "Safety Areas"
+description: "Define org-wide safety areas that every in-scope repository's advisory safety score applies, in union with each repo's own areas."
+---
+
+The **Safety Areas** tab under Settings defines areas for the advisory [safety score](/configuration/mergewatch-yml#safety-score) across the whole installation. They apply wherever the safety score is on, in addition to the `safetyScore.areas` in each repository's default-branch `.mergewatch.yml`.
+
+## How org areas combine with repo areas
+
+At review time, the enabled org areas whose scope includes the repository are added to the repository's own areas, and every area is matched against the changed files. **The riskiest matching level wins**, so a repository can add areas but can never weaken one defined here: if the org marks `payments/**` as `risky` and a repository marks it `safe`, the result is `risky`.
+
+In the review comment, a matched org area is marked ` (org)`, because the repository's `.mergewatch.yml` does not show it. The `mw-safety` data line lists it under its plain name.
+
+## Fields
+
+| Field | Rule |
+|---|---|
+| Name | At most 80 characters. Required when the area has no file patterns |
+| File patterns | 1 to 20 globs, each at most 200 characters. Optional when the area has a name and notes |
+| Level | `safe`, `caution` or `risky`; or no level, which makes the area guidance only |
+| Notes | At most 500 characters. Tells the reviewer why the area matters |
+| Enabled | Off keeps the area stored but unused |
+| Applies to | All repositories, or selected ones |
+
+An area with neither file patterns nor notes is dropped when you save. An installation can have at most **50** org areas.
+
+## Who can edit
+
+Organization admins can add, change and remove areas. Other members see a read-only view. Each area records who last edited it and when.
+
+## When it is read
+
+Org areas are read only for repositories where the safety score is on. If they cannot be read during a review, that review omits its safety section rather than scoring without them; the rest of the review is unaffected.

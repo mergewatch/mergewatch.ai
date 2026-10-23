@@ -84,3 +84,21 @@ describe('DynamoInstallationStore — safetyScore (#711)', () => {
     expect((await new DynamoInstallationStore(client, 'tbl').getSettings('42')).safetyScore).toEqual({ enabled: true });
   });
 });
+
+describe('DynamoInstallationStore — org safety areas (#718)', () => {
+  it('getSafetyAreas reads the #SAFETY_AREAS sentinel row', async () => {
+    const client = clientReturning({ Item: { areas: [{ id: 'a', patterns: ['p/**'], level: 'risky' }] } });
+    const areas = await new DynamoInstallationStore(client, 'tbl').getSafetyAreas('42');
+    expect(client.send.mock.calls[0][0].input.Key).toEqual({ installationId: '42', repoFullName: '#SAFETY_AREAS' });
+    expect(areas).toMatchObject([{ id: 'a', patterns: ['p/**'], level: 'risky', enabled: true }]);
+  });
+
+  it('a missing row is []', async () => {
+    expect(await new DynamoInstallationStore(clientReturning({}), 'tbl').getSafetyAreas('42')).toEqual([]);
+  });
+
+  it('a read error is thrown, not read as no areas', async () => {
+    const client = { send: vi.fn().mockRejectedValue(new Error('boom')) } as any;
+    await expect(new DynamoInstallationStore(client, 'tbl').getSafetyAreas('42')).rejects.toThrow('boom');
+  });
+});

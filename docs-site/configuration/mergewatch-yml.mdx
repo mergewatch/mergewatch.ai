@@ -492,6 +492,8 @@ safetyScore:
       notes: "Anything that changes what or when we charge customers is risky"
 ```
 
+**Org-wide areas.** Organization admins can also define areas on the dashboard's [Safety Areas](/dashboard/safety-areas) tab. They apply to every in-scope repository in addition to its own `areas`, and the riskiest matching level wins, so a repository can add areas but never weaken an org one. A matched org area is marked ` (org)` in the comment.
+
 **Uncovered folders.** When at least one area has `patterns`, the safety section also lists every **new top-level folder** the pull request adds that no area pattern covers, for example `` - Uncovered: `edge/`, `payments/` are new top-level folders no area covers. `` (sorted, at most five, then `(+N more)`) A folder is new when it is not a directory at the base branch's root. Dot-folders and files excluded by `excludePatterns` are ignored. The line is a prompt to add an area; it never changes the score. It costs one extra GitHub API call per review and no model call.
 
 Patterns are globs matched against every changed file's path, including dot-files and dot-directories. A file excluded by `excludePatterns` or `maxFileDiffKB` is not matched, and neither is a pure rename out of an area (the diff names only the new path).

@@ -7,8 +7,8 @@
 
 import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import type { IInstallationStore } from '@mergewatch/core';
-import type { InstallationItem, InstallationSettings, OrgCustomAgent } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import type { InstallationItem, InstallationSettings, OrgCustomAgent, OrgSafetyArea } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, sanitizeOrgSafetyAreas } from '@mergewatch/core';
 
 export class DynamoInstallationStore implements IInstallationStore {
   constructor(
@@ -90,6 +90,21 @@ export class DynamoInstallationStore implements IInstallationStore {
         },
       }),
     );
+  }
+
+  /**
+   * #718 — a missing row is `[]`. A read error is thrown, like
+   * getCustomAgents: the runtime then omits the safety section rather than
+   * scoring without the org's areas.
+   */
+  async getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]> {
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { installationId, repoFullName: '#SAFETY_AREAS' },
+      }),
+    );
+    return sanitizeOrgSafetyAreas(result.Item?.areas);
   }
 
   async listInstallationIds(): Promise<string[]> {

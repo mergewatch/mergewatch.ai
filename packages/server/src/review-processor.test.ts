@@ -123,6 +123,7 @@ function makeDeps(overrides?: Partial<Pick<WebhookDeps, 'installationStore' | 'r
       getSettings: vi.fn().mockResolvedValue(DEFAULT_INSTALLATION_SETTINGS),
       upsert: vi.fn(),
       getCustomAgents: vi.fn().mockResolvedValue([]),
+      getSafetyAreas: vi.fn().mockResolvedValue([]),
       upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
     } as unknown as IInstallationStore,
     reviewStore: {
@@ -681,6 +682,7 @@ describe('processReviewJob — config merging', () => {
         }),
         upsert: vi.fn(),
         getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSafetyAreas: vi.fn().mockResolvedValue([]),
       } as unknown as IInstallationStore,
     });
 
@@ -700,6 +702,7 @@ describe('processReviewJob — config merging', () => {
         }),
         upsert: vi.fn(),
         getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSafetyAreas: vi.fn().mockResolvedValue([]),
       } as unknown as IInstallationStore,
     });
 
@@ -731,6 +734,7 @@ describe('processReviewJob — config merging', () => {
       installationStore: {
         get: vi.fn().mockResolvedValue(null),
         getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSafetyAreas: vi.fn().mockResolvedValue([]),
         getSettings: vi.fn().mockResolvedValue({
           ...DEFAULT_INSTALLATION_SETTINGS,
           maxComments: 5,
@@ -756,6 +760,7 @@ describe('processReviewJob — config merging', () => {
       installationStore: {
         get: vi.fn().mockResolvedValue(null),
         getCustomAgents: vi.fn().mockResolvedValue([]),
+        getSafetyAreas: vi.fn().mockResolvedValue([]),
         getSettings: vi.fn().mockResolvedValue({
           ...DEFAULT_INSTALLATION_SETTINGS,
           maxComments: 5,
@@ -1807,6 +1812,7 @@ describe('processReviewJob — approve opt-in (#706)', () => {
       getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_INSTALLATION_SETTINGS, ...over }),
       upsert: vi.fn(),
       getCustomAgents: vi.fn().mockResolvedValue([]),
+      getSafetyAreas: vi.fn().mockResolvedValue([]),
       upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
     } as unknown as IInstallationStore,
   });
@@ -1907,6 +1913,7 @@ describe('processReviewJob — safety score config (#711)', () => {
       getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_INSTALLATION_SETTINGS, safetyScore }),
       upsert: vi.fn(),
       getCustomAgents: vi.fn().mockResolvedValue([]),
+      getSafetyAreas: vi.fn().mockResolvedValue([]),
       upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
     } as unknown as IInstallationStore,
   });
@@ -2043,5 +2050,81 @@ describe('processReviewJob — base-root listing for uncovered folders (#717)', 
     await processReviewJob(makeJob(), deps);
     expect(passed().baseRootDirs).toBeUndefined();
     expect(vi.mocked(deps.reviewStore.updateStatus).mock.calls.some((c) => c[2] === 'complete')).toBe(true);
+  });
+});
+
+describe('processReviewJob — org safety areas (#718)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  const withDefaultBranch = (safetyScore: unknown) =>
+    (fetchRepoConfigResult as any).mockResolvedValue({ ok: true, config: { safetyScore } });
+  const deps = (getSafetyAreas: ReturnType<typeof vi.fn>, getContent = vi.fn().mockResolvedValue({ data: [{ name: 'src', type: 'dir' }] })) => makeDeps({
+    installationStore: {
+      get: vi.fn().mockResolvedValue(null),
+      getSettings: vi.fn().mockResolvedValue(DEFAULT_INSTALLATION_SETTINGS),
+      upsert: vi.fn(),
+      getCustomAgents: vi.fn().mockResolvedValue([]),
+      getSafetyAreas,
+    } as unknown as IInstallationStore,
+    authProvider: { getInstallationOctokit: vi.fn().mockResolvedValue({ repos: { getContent } }) } as unknown as IGitHubAuthProvider,
+  });
+  const passed = () => (vi.mocked(runReviewPipeline).mock.calls[0][0] as any).safetyScore;
+  const ORG_PAYMENTS = { id: 'p', patterns: ['payments/**'], level: 'risky', enabled: true, scope: { mode: 'all' }, updatedAt: '', updatedBy: '' };
+
+  it('not read when the score is off', async () => {
+    withDefaultBranch({ enabled: false });
+    const getSafetyAreas = vi.fn().mockResolvedValue([ORG_PAYMENTS]);
+    await processReviewJob(makeJob(), deps(getSafetyAreas));
+    expect(getSafetyAreas).not.toHaveBeenCalled();
+  });
+
+  it('read once when on, and the org area reaches the pipeline, tagged org, ahead of repo areas', async () => {
+    withDefaultBranch({ enabled: true, areas: [{ name: 'Repo', patterns: ['src/**'] }] });
+    const getSafetyAreas = vi.fn().mockResolvedValue([ORG_PAYMENTS]);
+    await processReviewJob(makeJob(), deps(getSafetyAreas));
+    expect(getSafetyAreas).toHaveBeenCalledTimes(1);
+    expect(passed().areas).toEqual([{ patterns: ['payments/**'], level: 'risky', source: 'org' }, { name: 'Repo', patterns: ['src/**'] }]);
+  });
+
+  it('a failed read turns the score off for this review; the review and its check are as with the feature off', async () => {
+    withDefaultBranch({ enabled: true });
+    const failing = deps(vi.fn().mockRejectedValue(new Error('boom')));
+    await processReviewJob(makeJob(), failing);
+    expect(passed().enabled).toBe(false);
+    expect((vi.mocked(formatReviewComment).mock.calls[0][0] as any).safety).toBeUndefined();
+    const conclusion = () => (vi.mocked(createCheckRun).mock.calls.at(-1)?.[4] as any)?.conclusion;
+    const onFailed = conclusion();
+    expect(vi.mocked(failing.reviewStore.updateStatus).mock.calls.some((c) => c[2] === 'complete')).toBe(true);
+
+    vi.clearAllMocks();
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+    withDefaultBranch({ enabled: false });
+    await processReviewJob(makeJob(), deps(vi.fn().mockResolvedValue([])));
+    expect(onFailed).toBeDefined();
+    expect(conclusion()).toBe(onFailed);
+  });
+
+  it('an org-only patterned area triggers the #717 base-root listing', async () => {
+    withDefaultBranch({ enabled: true });
+    const getContent = vi.fn().mockResolvedValue({ data: [{ name: 'src', type: 'dir' }] });
+    await processReviewJob(makeJob(), deps(vi.fn().mockResolvedValue([ORG_PAYMENTS]), getContent));
+    expect(getContent).toHaveBeenCalledTimes(1);
   });
 });
