@@ -180,6 +180,8 @@ export interface SafetyScoreConfig {
   notes: string[];
   /** #719 — put the factor detail in a collapsed `<details>` block. */
   collapsed: boolean;
+  /** #720 — keep exactly one `safety:<band>` label on the PR. */
+  label: boolean;
   /**
    * #717 — directory names at the base branch's root, listed by the runtime
    * for the uncovered-folder check. Never read from yml (the parser rejects
@@ -197,6 +199,7 @@ export interface SafetyScoreInput {
   areas?: SafetyArea[];
   notes?: string[];
   collapsed?: boolean;
+  label?: boolean;
 }
 
 export const DEFAULT_SAFETY_SCORE_CONFIG: SafetyScoreConfig = {
@@ -213,6 +216,7 @@ export const DEFAULT_SAFETY_SCORE_CONFIG: SafetyScoreConfig = {
   areas: [],
   notes: [],
   collapsed: false,
+  label: false,
 };
 
 export interface MergeWatchConfig {
@@ -464,6 +468,7 @@ export function mergeConfig(
     areas: ss.areas ?? D.areas,
     notes: ss.notes ?? D.notes,
     collapsed: ss.collapsed ?? D.collapsed,
+    label: ss.label ?? D.label,
   };
   const errors = [...(safetyScoreErrors ?? [])];
   const { bands } = merged.safetyScore;

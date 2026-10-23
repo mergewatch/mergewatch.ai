@@ -10,7 +10,7 @@ import {
   BOT_COMMENT_MARKER, submitPRReview, dismissOwnStaleReviews,
   checkInputBudget, describeOverBudget,
   buildInlineComments, extractInlineCommentTitle,
-  fetchRepoConfig, fetchRepoConfigResult, fetchConventions,
+  fetchRepoConfig, fetchRepoConfigResult, fetchConventions, syncSafetyLabel,
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
@@ -962,6 +962,13 @@ export async function processReviewJob(
 
     if (!commentId && !stayingSilent) {
       throw new Error('Failed to create or update issue comment');
+    }
+
+    // #720 — after the comment, keep one safety:<band> label in step with this
+    // commit. A failed or omitted safety result clears it (band null), so an
+    // older commit's band never survives a reviewed commit. Never throws.
+    if (config.safetyScore.enabled && config.safetyScore.label) {
+      await syncSafetyLabel(octokit, owner, repo, prNumber, result.safety?.band ?? null);
     }
 
     // ── Step B: Build inline comments for critical findings ──────────────

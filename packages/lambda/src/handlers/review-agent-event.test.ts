@@ -224,3 +224,12 @@ describe('the review agent unions org safety areas (#718)', () => {
     expect(src).toMatch(/if \(runtimeConfig\.safetyScore\.enabled\) \{\s*try \{\s*const orgSafetyAreas = selectOrgSafetyAreas\(await installationStore\.getSafetyAreas\(/);
   });
 });
+
+// #720 — the label sync after the comment, pinned by source.
+describe('the review agent syncs the safety label (#720)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+  it('calls syncSafetyLabel only when label is on', () => {
+    expect(src).toContain('syncSafetyLabel(');
+    expect(src).toMatch(/if \(runtimeConfig\.safetyScore\.enabled && runtimeConfig\.safetyScore\.label\) \{\s*await syncSafetyLabel\(/);
+  });
+});

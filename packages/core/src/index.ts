@@ -170,6 +170,7 @@ export {
   getPRContext,
   addPRReaction,
   addIssueCommentReaction,
+  syncSafetyLabel,
   removePRReaction,
   postReviewComment,
   updateReviewComment,

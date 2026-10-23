@@ -2128,3 +2128,96 @@ describe('processReviewJob — org safety areas (#718)', () => {
     expect(getContent).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('processReviewJob — safety label sync (#720)', () => {
+  const SAFETY = {
+    score: 50, uncappedScore: 50, band: 'caution', emoji: '⛅',
+    factors: {}, concerns: [], matchedAreas: [], appliedAreas: [], appliedNotes: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+    vi.mocked(runReviewPipeline).mockResolvedValue({ ...basePipelineResult, safety: SAFETY } as any);
+  });
+
+  const withDefaultBranch = (safetyScore: unknown) =>
+    (fetchRepoConfigResult as any).mockResolvedValue({ ok: true, config: { safetyScore } });
+  /** The real syncSafetyLabel runs against these spies. */
+  function labelOctokit(existing: string[] = [], fail = false) {
+    const err = () => vi.fn().mockRejectedValue(new Error('403'));
+    const issues = {
+      listLabelsOnIssue: fail ? err() : vi.fn().mockResolvedValue({ data: existing.map((name) => ({ name })) }),
+      createLabel: fail ? err() : vi.fn().mockResolvedValue({}),
+      addLabels: fail ? err() : vi.fn().mockResolvedValue({}),
+      removeLabel: fail ? err() : vi.fn().mockResolvedValue({}),
+    };
+    const deps = makeDeps({ authProvider: { getInstallationOctokit: vi.fn().mockResolvedValue({ issues }) } as unknown as IGitHubAuthProvider });
+    const anyCall = () => Object.values(issues).some((f) => f.mock.calls.length > 0);
+    return { deps, issues, anyCall };
+  }
+
+  it.each([
+    ['label off', { enabled: true, label: false }],
+    ['the score off', { enabled: false, label: true }],
+  ])('%s → no label API is called', async (_, safetyScore) => {
+    withDefaultBranch(safetyScore);
+    const { deps, anyCall } = labelOctokit();
+    await processReviewJob(makeJob(), deps);
+    expect(anyCall()).toBe(false);
+  });
+
+  it('label on, band caution → adds safety:caution', async () => {
+    withDefaultBranch({ enabled: true, label: true });
+    const { deps, issues } = labelOctokit(['bug']);
+    await processReviewJob(makeJob(), deps);
+    expect(issues.addLabels.mock.calls[0][0]).toMatchObject({ issue_number: makeJob().prNumber, labels: ['safety:caution'] });
+    expect(issues.removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('label on, safety agent failed → band null clears an older label', async () => {
+    withDefaultBranch({ enabled: true, label: true });
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    const { deps, issues } = labelOctokit(['safety:safe']);
+    await processReviewJob(makeJob(), deps);
+    expect(issues.removeLabel.mock.calls.map((c) => c[0].name)).toEqual(['safety:safe']);
+    expect(issues.addLabels).not.toHaveBeenCalled();
+  });
+
+  it('a rules-skipped review touches no label', async () => {
+    withDefaultBranch({ enabled: true, label: true });
+    (shouldSkipByRules as any).mockReturnValue({ kind: 'draft', reason: 'Draft PR skipped' });
+    const { deps, anyCall } = labelOctokit(['safety:safe']);
+    await processReviewJob(makeJob(), deps);
+    expect(anyCall()).toBe(false);
+  });
+
+  it('failing label calls leave the check and the review event as with label off', async () => {
+    const outcome = async (label: boolean, fail: boolean) => {
+      vi.clearAllMocks();
+      (getPRContext as any).mockResolvedValue(basePRContext);
+      (getPRDiff as any).mockResolvedValue('diff content');
+      (shouldSkipByRules as any).mockReturnValue(null);
+      (postReviewComment as any).mockResolvedValue(100);
+      (isStillPRHead as any).mockResolvedValue(true);
+      vi.mocked(runReviewPipeline).mockResolvedValue({ ...basePipelineResult, safety: SAFETY } as any);
+      withDefaultBranch({ enabled: true, label });
+      const { deps, issues } = labelOctokit([], fail);
+      await processReviewJob(makeJob(), deps);
+      const checks = (createCheckRun as any).mock.calls.filter((c: any[]) => c[4]?.status === 'completed').map((c: any[]) => [c[4].conclusion, c[4].output?.title]);
+      return { checks, event: vi.mocked(submitPRReview).mock.calls[0]?.[5], tried: issues.listLabelsOnIssue.mock.calls.length };
+    };
+    const off = await outcome(false, false);
+    const failing = await outcome(true, true);
+    expect(failing.tried).toBe(1); // non-vacuity: the label path really ran and failed
+    expect(failing.checks).toEqual(off.checks);
+    expect(failing.event).toBe(off.event);
+  });
+});

@@ -60,6 +60,9 @@ interface AnalyticsData {
   statusCounts: Record<string, number>;
   findingsPerReviewTrend: FindingsPerReviewPoint[];
   mergeScoreDistribution: Record<number, number>;
+  // #720 — optional so a response from before #720 still renders.
+  safetyBandTrend?: Array<{ date: string; safe: number; caution: number; risky: number }>;
+  safetyDisputes?: { scored: number; withFeedback: number; disputed: number };
 }
 
 interface AnalyticsClientProps {
@@ -99,6 +102,9 @@ const STATUS_COLORS: Record<string, string> = {
   pending: CHART_COLORS.blue,
   in_progress: CHART_COLORS.orange,
 };
+
+/** #720 — the safety bands: safe / caution / risky. */
+const SAFETY_BAND_COLORS = { safe: CHART_COLORS.green, caution: CHART_COLORS.yellow, risky: CHART_COLORS.red };
 
 const SCORE_DIST_COLORS: Record<number, string> = {
   1: CHART_COLORS.red,
@@ -565,17 +571,24 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
   // Merge score distribution
   const scoreDistData = [1, 2, 3, 4, 5].map((score) => ({
     name: String(score),
-    label: score === 1 ? "1 (Risky)" : score === 5 ? "5 (Safe)" : String(score),
+    // #720 — not "Risky"/"Safe": on this tab those words mean the safety band.
+    label: score === 1 ? "1 (Not ready)" : score === 5 ? "5 (Ready)" : String(score),
     value: data.mergeScoreDistribution[score] ?? 0,
     fill: SCORE_DIST_COLORS[score],
   })); // always show all 5 buckets for consistent x-axis
+
+  // #720 — safety bands per day; one bar segment per band. Counts reviewed
+  // commits, not PRs.
+  const safetyBandTrend = (data.safetyBandTrend ?? []).map((p) => ({ ...p, dateLabel: formatDateLabel(p.date) }));
+  const safetyDisputes = data.safetyDisputes ?? { scored: 0, withFeedback: 0, disputed: 0 };
 
     // Whether the active data tab has anything to chart in the selected range.
     // Overview always shows the stat cards, so it's never "empty".
     const hasFindingsCharts =
       severityData.length > 0 ||
       categoryData.length > 0 ||
-      scoreDistData.some((d) => d.value > 0);
+      scoreDistData.some((d) => d.value > 0) ||
+      safetyBandTrend.length > 0;
     const hasActivityCharts =
       data.durationStats.count > 0 ||
       repoData.length > 0 ||
@@ -910,6 +923,40 @@ export default function AnalyticsClient({ installationId }: AnalyticsClientProps
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {/* #720 — Safety Bands */}
+        {activeTab === "findings" && safetyDisputes.scored > 0 && (
+          <ChartCard title="Safety Bands">
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={safetyBandTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                <XAxis
+                  dataKey="dateLabel"
+                  tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
+                  tickLine={false}
+                  axisLine={{ stroke: "var(--border-default)" }}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
+                  tickLine={false}
+                  axisLine={{ stroke: "var(--border-default)" }}
+                  allowDecimals={false}
+                />
+                <Tooltip content={<ChartTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="safe" name="Safe" stackId="band" fill={SAFETY_BAND_COLORS.safe} />
+                <Bar dataKey="caution" name="Caution" stackId="band" fill={SAFETY_BAND_COLORS.caution} />
+                <Bar dataKey="risky" name="Risky" stackId="band" fill={SAFETY_BAND_COLORS.risky} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            <p className="mt-2 text-xs text-fg-tertiary">Counts reviewed commits, not pull requests.</p>
+            {safetyDisputes.withFeedback > 0 && (
+              <p className="mt-1 text-xs text-fg-secondary">
+                Disputed: {safetyDisputes.disputed} of {safetyDisputes.withFeedback} reviewed commits with feedback ({safetyDisputes.scored} scored)
+              </p>
+            )}
           </ChartCard>
         )}
       </div>

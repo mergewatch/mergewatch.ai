@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   aggregateReviews,
   MIN_P95_SAMPLE_SIZE,
@@ -484,5 +485,62 @@ describe("aggregateReviews — p95 duration (#336)", () => {
     const r = aggregateReviews(rows);
     expect(r.durationStats.count).toBe(19);
     expect(r.durationStats.p95Ms).toBeNull();
+  });
+});
+
+describe("aggregateReviews — safety bands (#720)", () => {
+  const banded = (date: string, safetyBand: "safe" | "caution" | "risky", extra: Partial<AggregatableReview> = {}) =>
+    review({ createdAt: `${date}T12:00:00.000Z`, safetyBand, ...extra });
+
+  it("counts bands per UTC day, per reviewed commit; unbanded rows are ignored", () => {
+    const r = aggregateReviews([
+      banded("2026-10-01", "safe"),
+      banded("2026-10-01", "safe"),
+      banded("2026-10-01", "risky"),
+      banded("2026-10-02", "caution"),
+      review({ createdAt: "2026-10-02T12:00:00.000Z" }),
+    ]);
+    expect(r.safetyBandTrend).toEqual([
+      { date: "2026-10-01", safe: 2, caution: 0, risky: 1 },
+      { date: "2026-10-02", safe: 0, caution: 1, risky: 0 },
+    ]);
+    expect(r.safetyDisputes.scored).toBe(4);
+  });
+
+  it("a banded row without feedback is scored, not withFeedback", () => {
+    expect(aggregateReviews([banded("2026-10-01", "safe")]).safetyDisputes).toEqual({ scored: 1, withFeedback: 0, disputed: 0 });
+  });
+
+  it("only each user's last vote counts: a corrected vote that agrees is not disputed", () => {
+    const r = aggregateReviews([banded("2026-10-01", "risky", {
+      safetyFeedback: [{ user: "a", band: "safe", at: "t1" }, { user: "a", band: "risky", at: "t2" }],
+    })]);
+    expect(r.safetyDisputes).toEqual({ scored: 1, withFeedback: 1, disputed: 0 });
+  });
+
+  it("a user whose last vote differs makes the row disputed", () => {
+    const r = aggregateReviews([banded("2026-10-01", "risky", { safetyFeedback: [{ user: "b", band: "safe", at: "t1" }] })]);
+    expect(r.safetyDisputes).toEqual({ scored: 1, withFeedback: 1, disputed: 1 });
+  });
+
+  it("no banded rows: an empty trend", () => {
+    const r = aggregateReviews([review()]);
+    expect(r.safetyBandTrend).toEqual([]);
+    expect(r.safetyDisputes).toEqual({ scored: 0, withFeedback: 0, disputed: 0 });
+  });
+});
+
+// No component harness here (no jsdom), so the chart wiring is pinned by source.
+describe("AnalyticsClient — safety bands (#720)", () => {
+  const src = readFileSync(new URL("../components/AnalyticsClient.tsx", import.meta.url), "utf8");
+  it("the findings tab counts the safety chart, and relabels the merge-score buckets", () => {
+    expect(src).toMatch(/hasFindingsCharts =[\s\S]{0,200}safetyBandTrend\.length > 0/);
+    expect(src).toContain('"1 (Not ready)"');
+    expect(src).toContain('"5 (Ready)"');
+    expect(src).not.toContain('"1 (Risky)"');
+    expect(src).toContain('title="Safety Bands"');
+  });
+  it("the disputed line divides by withFeedback", () => {
+    expect(src).toMatch(/Disputed: \{[^}]*disputed\} of \{[^}]*withFeedback\} reviewed commits with feedback/);
   });
 });
