@@ -43,8 +43,12 @@ export async function GET(req: NextRequest) {
     const store = await getDashboardStore();
     const areas = await store.installations.getSafetyAreas(installationId);
     return NextResponse.json({ areas, canEdit: isAdmin, cap: ORG_SAFETY_AREA_CAP });
-  } catch {
-    return NextResponse.json({ areas: [], canEdit: isAdmin, cap: ORG_SAFETY_AREA_CAP });
+  } catch (err) {
+    // #718 review — never answer a failed read with `areas: []`: the editor
+    // would show an empty list, and the next save would replace the stored
+    // set and wipe the org's areas.
+    console.error("Failed to load safety areas:", err);
+    return NextResponse.json({ error: "Could not load safety areas, please retry" }, { status: 500 });
   }
 }
 

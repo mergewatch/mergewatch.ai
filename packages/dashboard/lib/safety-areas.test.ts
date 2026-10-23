@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import type { OrgSafetyArea } from "@mergewatch/core";
 import { safetyAreasValidationError, stampSafetyAreasAudit } from "./safety-areas";
 
@@ -35,5 +36,26 @@ describe("stampSafetyAreasAudit (#718)", () => {
     expect(out[0]).toMatchObject({ id: "a", updatedAt: "old", updatedBy: "alice" });
     expect(out[1]).toMatchObject({ id: "b", updatedAt: "now", updatedBy: "bob" });
     expect(out[2]).toMatchObject({ id: "new-id", updatedAt: "now", updatedBy: "bob" });
+  });
+});
+
+// #718 review — a failed GET must not read as "no areas": the next save would
+// replace the stored set and wipe the org's areas. There is no route or
+// component harness in the dashboard, so both halves are pinned by source.
+describe("a failed read never looks like an empty set", () => {
+  const route = readFileSync(new URL("../app/api/safety-areas/route.ts", import.meta.url), "utf8");
+  const manager = readFileSync(new URL("../components/SafetyAreasManager.tsx", import.meta.url), "utf8");
+
+  it("GET logs the read failure and answers 500, not 200 with areas: []", () => {
+    const get = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function PUT"));
+    const readCatch = get.slice(get.lastIndexOf("} catch"));
+    expect(readCatch).toMatch(/console\.error\(/);
+    expect(readCatch).toMatch(/status: 500/);
+    expect(readCatch).not.toMatch(/areas: \[\]/);
+  });
+
+  it("the manager refuses to edit or save after a failed load", () => {
+    expect(manager).toMatch(/setLoadFailed\(true\)/);
+    expect(manager).toMatch(/if \(loadFailed\)/);
   });
 });
