@@ -775,6 +775,11 @@ function renderSafety(r: SafetyResult, headSha: string): { head: string[]; detai
   ];
   if (applied.length > 0) detail.push('', 'Applied:', ...applied);
   if (r.concerns.length > 0) detail.push('', 'Concerns:', ...r.concerns.map((c) => `- ${c}`));
+  // #719 — the band line stays outside. The blank line after <summary> is
+  // what makes GitHub render the markdown list inside the block.
+  if (r.collapsed) {
+    return { head, detail: ['<details><summary>Factors and concerns</summary>', '', ...detail, '</details>', ''] };
+  }
   detail.push('');
   return { head, detail };
 }

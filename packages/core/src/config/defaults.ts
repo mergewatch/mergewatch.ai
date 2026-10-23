@@ -173,6 +173,8 @@ export interface SafetyScoreConfig {
   factors: Record<SafetyFactor, SafetyFactorConfig>;
   areas: SafetyArea[];
   notes: string[];
+  /** #719 — put the factor detail in a collapsed `<details>` block. */
+  collapsed: boolean;
 }
 
 /** What a `.mergewatch.yml` `safetyScore:` block parses to: any subset. */
@@ -183,6 +185,7 @@ export interface SafetyScoreInput {
   factors?: Partial<Record<SafetyFactor, Partial<SafetyFactorConfig>>>;
   areas?: SafetyArea[];
   notes?: string[];
+  collapsed?: boolean;
 }
 
 export const DEFAULT_SAFETY_SCORE_CONFIG: SafetyScoreConfig = {
@@ -198,6 +201,7 @@ export const DEFAULT_SAFETY_SCORE_CONFIG: SafetyScoreConfig = {
   },
   areas: [],
   notes: [],
+  collapsed: false,
 };
 
 export interface MergeWatchConfig {
@@ -448,6 +452,7 @@ export function mergeConfig(
     factors,
     areas: ss.areas ?? D.areas,
     notes: ss.notes ?? D.notes,
+    collapsed: ss.collapsed ?? D.collapsed,
   };
   const errors = [...(safetyScoreErrors ?? [])];
   const { bands } = merged.safetyScore;
