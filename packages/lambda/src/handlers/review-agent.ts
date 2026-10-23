@@ -1003,6 +1003,9 @@ export async function handler(
     const commentBody = formatReviewComment({
       summary: result.summary,
       agentFailures: result.agentFailures,
+      // #713 — the safety score (or why it could not be computed).
+      safety: result.safety ? { result: result.safety, headSha } : undefined,
+      safetyConfigErrors: runtimeConfig.safetyScoreErrors,
       findings: result.findings,
       commentFooter: instSettings.commentHeader || undefined,
       showSummary: instSettings.summary.prSummary,
@@ -1235,6 +1238,7 @@ export async function handler(
       reactions,
       mergeScore: result.mergeScore,
       mergeScoreReason: result.mergeScoreReason || undefined,
+      ...(result.safety ? { safetyScore: result.safety.score, safetyBand: result.safety.band } : {}),
       inputTokens: result.inputTokens || undefined,
       outputTokens: result.outputTokens || undefined,
       estimatedCostUsd: result.estimatedCostUsd ?? undefined,

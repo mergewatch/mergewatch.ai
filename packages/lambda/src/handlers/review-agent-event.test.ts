@@ -184,3 +184,22 @@ describe('the review agent reads the safety score from the default branch (#711)
     }
   });
 });
+
+// #713 — the server's wiring is exercised in review-processor.test.ts; the
+// Lambda has no harness, so its two call sites are pinned by source.
+describe('the review agent renders and persists the safety score (#713)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+
+  it('passes the result and the config errors to the comment', () => {
+    expect(src).toContain('safety: result.safety ?');
+    expect(src).toContain('safetyConfigErrors: runtimeConfig.safetyScoreErrors');
+  });
+
+  it("stores the band inside the single 'complete' updateStatus call", () => {
+    const start = src.indexOf("updateStatus(repoFullName, prNumberCommitSha, 'complete'");
+    expect(start).toBeGreaterThan(-1);
+    const call = src.slice(start, src.indexOf('});', start));
+    expect(call).toContain('safetyBand: result.safety.band');
+    expect(src.split("'complete', {").length - 1).toBe(1);
+  });
+});

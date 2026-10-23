@@ -384,6 +384,12 @@ export interface ReviewItem {
   mergeScore?: number;
   /** One-line justification for the merge score. */
   mergeScoreReason?: string;
+  /**
+   * #713 — the advisory safety score (#712) and its band. Present only when
+   * the feature was on and the safety agent answered usably.
+   */
+  safetyScore?: number;
+  safetyBand?: 'safe' | 'caution' | 'risky';
   /** All findings from the review. */
   findings?: ReviewFinding[];
   /** User feedback from dashboard: thumbs up or down. */

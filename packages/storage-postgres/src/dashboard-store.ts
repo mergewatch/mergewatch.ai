@@ -51,6 +51,8 @@ function rowToReviewItem(row: typeof reviews.$inferSelect): ReviewItem {
     ...(row.skipReason ? { skipReason: row.skipReason } : {}),
     ...(row.mergeScore != null ? { mergeScore: row.mergeScore } : {}),
     ...(row.mergeScoreReason ? { mergeScoreReason: row.mergeScoreReason } : {}),
+    ...(row.safetyScore != null ? { safetyScore: row.safetyScore } : {}),
+    ...(row.safetyBand ? { safetyBand: row.safetyBand as ReviewItem['safetyBand'] } : {}),
     ...(row.findings ? { findings: row.findings as any } : {}),
     ...(row.feedback ? { feedback: row.feedback as any } : {}),
     ...(row.reactions ? { reactions: row.reactions as any } : {}),

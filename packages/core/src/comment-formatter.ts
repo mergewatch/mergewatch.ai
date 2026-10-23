@@ -5,7 +5,8 @@
  * handler can find and update an existing comment instead of posting duplicates.
  */
 
-import type { UXConfig } from './config/defaults.js';
+import { SAFETY_LEVELS, type SafetyFactor, type SafetyLevel, type UXConfig } from './config/defaults.js';
+import { matchLabel, type SafetyResult } from './agents/safety.js';
 import type { ReviewDelta } from './review-delta.js';
 import type { FindingEvidence } from './types/db.js';
 import { isValidMermaidDiagram } from './agents/reviewer.js';
@@ -151,6 +152,13 @@ export function buildCheckTitle(input: {
 interface FormatOptions {
   /** Markdown summary text from the summary agent */
   summary: string;
+  /** #713 — the safety score (#712) and the PR head SHA it describes. */
+  safety?: { result: SafetyResult; headSha: string };
+  /**
+   * #713 — why the default branch's `safetyScore` block was rejected (#711).
+   * Renders a one-line notice in place of the score.
+   */
+  safetyConfigErrors?: string[];
   /**
    * #664 — custom agents that produced no usable answer. A gating one gets a
    * notice under the score and suppresses the all-clear: its policy was not
@@ -667,6 +675,110 @@ export function parseCostPayload(body: string): CostPayload | null {
   }
 }
 
+/**
+ * #713 — marker for the machine-readable safety line. Consumers (labels,
+ * trends, other integrations) parse against this constant.
+ */
+export const SAFETY_PAYLOAD_MARKER = 'mw-safety';
+
+export interface SafetyPayload {
+  score: number;
+  band: SafetyLevel;
+  /** The full head SHA the score describes. */
+  sha: string;
+  /** Display names of the areas that applied, unescaped. */
+  areas: string[];
+}
+
+/**
+ * Render the safety line as an HTML comment. Area names are repo-authored, so
+ * `<` and `>` become `\u003c` / `\u003e` (still valid JSON): a name holding
+ * `-->` would otherwise close the comment early.
+ */
+export function renderSafetyPayload(p: SafetyPayload): string {
+  const json = JSON.stringify({ score: p.score, band: p.band, sha: p.sha, areas: p.areas })
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e');
+  return `<!-- ${SAFETY_PAYLOAD_MARKER}:${json} -->`;
+}
+
+/**
+ * Read the safety line back. Returns null when it is absent, its JSON is
+ * invalid, or a field has the wrong type. Takes the first match: the
+ * formatter neutralises every other `mw-safety` opener in the body, so the
+ * first is the real one.
+ */
+export function parseSafetyPayload(body: string): SafetyPayload | null {
+  const m = /<!-- mw-safety:(\{.*?\}) -->/.exec(body ?? '');
+  if (!m) return null;
+  try {
+    const p = JSON.parse(m[1]) as Partial<SafetyPayload>;
+    if (typeof p.score !== 'number' || typeof p.sha !== 'string'
+      || !SAFETY_LEVELS.includes(p.band as SafetyLevel)
+      || !Array.isArray(p.areas) || !p.areas.every((a) => typeof a === 'string')) {
+      return null;
+    }
+    return { score: p.score, band: p.band as SafetyLevel, sha: p.sha, areas: p.areas };
+  } catch {
+    return null;
+  }
+}
+
+const BAND_TITLES: Record<SafetyLevel, string> = { safe: 'Safe', caution: 'Caution', risky: 'Risky' };
+const SAFETY_FACTOR_TITLES: Array<[SafetyFactor, string]> = [
+  ['blastRadius', 'Blast radius'],
+  ['changeSize', 'Change size'],
+  ['testing', 'Testing'],
+  ['errorMonitoring', 'Error monitoring'],
+  ['rollback', 'Rollback'],
+];
+const SAFETY_RISK_RANK: Record<SafetyLevel, number> = { safe: 0, caution: 1, risky: 2 };
+
+/** The pattern-matched areas, then the model-applied ones, deduplicated. Unescaped. */
+function safetyAreaNames(r: SafetyResult): string[] {
+  return [...new Set([...r.matchedAreas.map(matchLabel), ...r.appliedAreas])];
+}
+
+/**
+ * The band line (kept) and the factor detail (sheddable). Config-sourced text
+ * — names, patterns, notes, emoji — is escaped; the model's notes and
+ * concerns render like finding descriptions.
+ */
+function renderSafety(r: SafetyResult, headSha: string): { head: string[]; detail: string[] } {
+  const clamp = r.clampedBy !== undefined
+    ? ` \u2014 capped at ${r.score} by ${escapeUserContent(r.clampedBy)} (was ${r.uncappedScore})`
+    : '';
+  const head = [
+    `${escapeUserContent(r.emoji)} **Safety: ${BAND_TITLES[r.band]} (${r.score}/100)**${clamp}`,
+    renderSafetyPayload({ score: r.score, band: r.band, sha: headSha, areas: safetyAreaNames(r) }),
+    '',
+  ];
+
+  // The first riskiest matched area in config order is the one that capped.
+  let capper: SafetyResult['matchedAreas'][number] | undefined;
+  for (const m of r.matchedAreas) {
+    if (m.level && (!capper || SAFETY_RISK_RANK[m.level] > SAFETY_RISK_RANK[capper.level!])) capper = m;
+  }
+  const detail: string[] = [];
+  for (const [f, title] of SAFETY_FACTOR_TITLES) {
+    const factor = r.factors[f];
+    const cap = factor.cappedFrom !== undefined && capper
+      ? ` (capped from ${factor.cappedFromLabel} by ${escapeUserContent(matchLabel(capper))})`
+      : '';
+    detail.push(`- ${title}: ${factor.label}. ${factor.note}${cap}`);
+  }
+
+  const applied = [
+    ...r.matchedAreas.map((m) => `- Area: ${escapeUserContent(matchLabel(m))} (${m.level ?? 'no level'}; ${m.matchedPatterns.map(escapeUserContent).join(', ')})`),
+    ...r.appliedAreas.map((a) => `- Area: ${escapeUserContent(a)} (judged by the model)`),
+    ...r.appliedNotes.map((n) => `- Note: ${escapeUserContent(n)}`),
+  ];
+  if (applied.length > 0) detail.push('', 'Applied:', ...applied);
+  if (r.concerns.length > 0) detail.push('', 'Concerns:', ...r.concerns.map((c) => `- ${c}`));
+  detail.push('');
+  return { head, detail };
+}
+
 export function formatReviewComment(options: FormatOptions): string {
   const {
     summary,
@@ -699,6 +811,8 @@ export function formatReviewComment(options: FormatOptions): string {
     conventionsSource,
     conventionsTruncated,
     agentFailures = [],
+    safety,
+    safetyConfigErrors,
   } = options;
   const gatingFailures = agentFailures.filter(isGatingFailure);
   const advisoryFailures = agentFailures.filter((f) => !isGatingFailure(f));
@@ -821,6 +935,19 @@ export function formatReviewComment(options: FormatOptions): string {
       notice.push(`<sub>Advisory org agent failed (does not affect the check): ${describeFailures(advisoryFailures)}.</sub>`);
       notice.push('');
     }
+  }
+
+  // #713 — directly under the score and any agent-failure notice. The band
+  // line and its hidden line are never shed; the factor detail is.
+  if (safetyConfigErrors?.length) {
+    section('safety', KEEP).push(
+      `<sub>\u26A0\uFE0F Safety score not computed: invalid \`safetyScore\` config on the default branch \u2014 ${safetyConfigErrors.map(escapeUserContent).join('; ')}</sub>`,
+      '',
+    );
+  } else if (safety) {
+    const { head, detail } = renderSafety(safety.result, safety.headSha);
+    section('safety', KEEP).push(...head);
+    section('safety-detail', 25, 'the safety-score details').push(...detail);
   }
 
   // 5. Diagram (moved up — appears right after merge score)
@@ -1104,6 +1231,15 @@ export function formatReviewComment(options: FormatOptions): string {
   }
   if (footerParts.length > 0) {
     footer.push(`<sub>${footerParts.join(' \u00B7 ')}</sub>`);
+  }
+
+  // #713 (S-19) — model text renders above the safety line (the delta
+  // caption, the score reason), and the parser takes the first match. Every
+  // section but `safety` has the opener neutralised, so the real line is the
+  // only one that parses.
+  for (const s of sections) {
+    if (s.id === 'safety') continue;
+    s.lines = s.lines.map((l) => l.split(`<!-- ${SAFETY_PAYLOAD_MARKER}:`).join(`&lt;!-- ${SAFETY_PAYLOAD_MARKER}:`));
   }
 
   return fitSections(sections, COMMENT_BODY_BUDGET, reviewDetailUrl);
