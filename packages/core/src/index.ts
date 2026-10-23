@@ -68,6 +68,7 @@ export {
 export { bandFor, labelFor, capRating, matchAreas, matchLabel, computeSafetyScore, buildSafetyResult, buildSafetyGuidance } from './agents/safety.js';
 export type { SafetyResult, SafetyAreaMatch, SafetyFactorResult } from './agents/safety.js';
 export { SAFETY_SCHEMA } from './agents/schemas.js';
+export { findUncoveredTopLevelFolders } from './safety-coverage.js';
 // #662 — the merge gate, defined once.
 export {
   BUILTIN_FINDING_CATEGORIES,

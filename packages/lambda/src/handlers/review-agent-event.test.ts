@@ -203,3 +203,13 @@ describe('the review agent renders and persists the safety score (#713)', () => 
     expect(src.split("'complete', {").length - 1).toBe(1);
   });
 });
+
+// #717 — the base-root listing for the uncovered-folder check, pinned by source.
+describe('the review agent lists the base root for uncovered folders (#717)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+  it('lists the base root and hands baseRootDirs to the pipeline', () => {
+    expect(src).toContain('repos.getContent(');
+    expect(src).toContain('baseRootDirs');
+    expect(src).toContain("path: '', ref: prContext.baseBranch");
+  });
+});

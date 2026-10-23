@@ -727,6 +727,19 @@ export async function processReviewJob(
     }
 
     // Run review pipeline
+    // #717 — the uncovered-folder check needs the base branch's root
+    // directories: one listing, only when the score is on and some area has
+    // patterns. A failed listing skips the check; it never fails the review.
+    const safetyCfg = config.safetyScore;
+    if (safetyCfg.enabled && safetyCfg.areas.some((a) => a.patterns?.length)) {
+      try {
+        const { data } = await octokit.repos.getContent({ owner, repo, path: '', ref: prContext.baseBranch });
+        if (Array.isArray(data)) config.safetyScore = { ...safetyCfg, baseRootDirs: data.filter((e) => e.type === 'dir').map((e) => e.name) };
+      } catch (err) {
+        console.warn('[safety] base-branch root listing failed — uncovered-folder check skipped:', err);
+      }
+    }
+
     const result = await runReviewPipeline(
       {
         diff: filteredDiff,

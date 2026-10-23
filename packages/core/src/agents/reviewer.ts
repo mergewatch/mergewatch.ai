@@ -18,6 +18,7 @@ import { assertNonDecreasingVolatility } from '../llm/prompt-segment.js';
 import { isThrottleError } from '../llm/throttle.js';
 import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, SAFETY_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
 import { buildSafetyGuidance, buildSafetyResult, matchAreas, type SafetyResult } from './safety.js';
+import { findUncoveredTopLevelFolders } from '../safety-coverage.js';
 import {
   SECURITY_REVIEWER_PROMPT,
   BUG_REVIEWER_PROMPT,
@@ -4152,6 +4153,11 @@ export async function runReviewPipeline(
   // add a `pricing:` override in .mergewatch.yml. Skipped when all models are
   // priced (including a deliberate $0 local model).
   const safety = await safetyPromise;
+  // #717 — on the same filtered file list the agent saw. Advisory only.
+  if (safety && safetyScore?.baseRootDirs) {
+    const uncovered = findUncoveredTopLevelFolders(changedFiles, safetyScore.baseRootDirs, safetyScore.areas);
+    if (uncovered.length > 0) safety.uncoveredFolders = uncovered;
+  }
   const estimatedCostUsd = accumulator.estimateTotalCost(customPricing);
   if (estimatedCostUsd === null) {
     const newlyUnpriced = accumulator
