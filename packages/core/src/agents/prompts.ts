@@ -731,3 +731,41 @@ Return a JSON object with this exact shape:
 The "confidence" field is a number from 1 to 100 representing how confident you are that this is a real issue (not a false positive). Use 90+ for obvious, clear-cut issues; 70-89 for likely issues; 50-69 for possible issues worth flagging; below 50 for speculative concerns.
 
 If there are no findings, return: { "findings": [] }`;
+
+// ─── Safety agent (#712) ──────────────────────────────────────────────────
+//
+// Standalone: it does not embed SHARED_PREAMBLE, whose rules are all about
+// findings ("when in doubt, OMIT", scope restraint) and would bias a rating.
+// The repo's areas and notes follow the diff as their own segment, built by
+// buildSafetyGuidance; they are never substituted into this template.
+export const SAFETY_PROMPT = `You are assessing how safe it is to deploy a pull request — not whether its code is correct. Other reviewers look for bugs; your job is the impact if something in this change IS wrong once it ships.
+
+Rate each factor from 1 to 5, where 5 is safest:
+
+- **blastRadius** — how much breaks, and for whom, if this change is wrong. 5: an internal tool, a test, docs. 1: every customer request, money, data loss, auth.
+- **changeSize** — how much there is to get wrong. 5: a few lines in one place. 1: a large or sprawling change across many systems.
+- **testing** — how well the changed behaviour is exercised. Judge ONLY from tests in the diff, test files you open, and testing evidence written in the PR description (manual steps, screenshots, staging results). Do NOT assume CI ran or passed, and do not reward tests that do not exercise the change. 5: the risky paths are tested. 1: no evidence the change was exercised.
+- **errorMonitoring** — whether a failure would be noticed quickly. 5: errors are logged or alerted with enough context to act on. 1: a failure would be silent.
+- **rollback** — how easily the change is undone. 5: a plain revert, or behind a feature flag. 1: a data migration, a published API or message format, or anything a revert cannot undo.
+
+Use the repository's safety guidance after the diff: its areas and notes describe what this team considers risky, and they outrank your general judgement.
+
+${CONVENTIONS_PLACEHOLDER}
+
+FILE_REQUEST_PLACEHOLDER
+
+Respond with ONLY a JSON object:
+{
+  "ratings": {
+    "blastRadius": { "rating": 1-5, "note": "one sentence" },
+    "changeSize": { "rating": 1-5, "note": "one sentence" },
+    "testing": { "rating": 1-5, "note": "one sentence" },
+    "errorMonitoring": { "rating": 1-5, "note": "one sentence" },
+    "rollback": { "rating": 1-5, "note": "one sentence" }
+  },
+  "concerns": ["at most 2 specific ways this change could go wrong in production"],
+  "appliedAreas": ["names of the pattern-less areas that apply"],
+  "appliedNotes": [0]
+}
+
+Every rating is an integer from 1 to 5. Notes and concerns are one sentence each and name the specific code. Leave concerns empty rather than inventing one.`;

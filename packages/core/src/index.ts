@@ -55,6 +55,7 @@ export {
   runDiagramAgent,
   runOrchestratorAgent,
   runDeltaCaptionAgent,
+  runSafetyAgent,
   runCustomAgent,
   isValidMermaidDiagram,
   extractDiagramFilePaths,
@@ -63,6 +64,10 @@ export {
   isCustomReEmission,
   sourceForAgent,
 } from './agents/reviewer.js';
+// #712 — the safety score (advisory; never feeds the gate).
+export { bandFor, labelFor, capRating, matchAreas, matchLabel, computeSafetyScore, buildSafetyResult, buildSafetyGuidance } from './agents/safety.js';
+export type { SafetyResult, SafetyAreaMatch, SafetyFactorResult } from './agents/safety.js';
+export { SAFETY_SCHEMA } from './agents/schemas.js';
 // #662 — the merge gate, defined once.
 export {
   BUILTIN_FINDING_CATEGORIES,
@@ -123,6 +128,7 @@ export {
   STYLE_REVIEWER_PROMPT,
   SUMMARY_PROMPT,
   DIAGRAM_PROMPT,
+  SAFETY_PROMPT,
   DELTA_CAPTION_PROMPT,
   ERROR_HANDLING_REVIEWER_PROMPT,
   TEST_COVERAGE_REVIEWER_PROMPT,

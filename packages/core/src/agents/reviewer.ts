@@ -16,7 +16,8 @@ import { TokenAccumulator, TrackingLLMProvider } from '../llm/token-accumulator.
 import type { PromptSegment, PromptInput } from '../llm/prompt-segment.js';
 import { assertNonDecreasingVolatility } from '../llm/prompt-segment.js';
 import { isThrottleError } from '../llm/throttle.js';
-import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
+import { AGENT_FINDINGS_SCHEMA, ORCHESTRATOR_SCHEMA, SAFETY_SCHEMA, VERIFIER_VERDICT_SCHEMA } from './schemas.js';
+import { buildSafetyGuidance, buildSafetyResult, matchAreas, type SafetyResult } from './safety.js';
 import {
   SECURITY_REVIEWER_PROMPT,
   BUG_REVIEWER_PROMPT,
@@ -44,6 +45,7 @@ import {
   SHARED_PREAMBLE,
   PREAMBLE_OPENING,
   PREAMBLE_RULES,
+  SAFETY_PROMPT,
 } from './prompts.js';
 import type { CustomAgentDef, SafetyScoreConfig, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
@@ -56,7 +58,7 @@ import { TraceRecorder, outcomeKey, type FindingOutcome } from '../filter-trace.
 import { FILE_REQUEST_INSTRUCTION, invokeWithFileFetching } from '../context/agentic-fetcher.js';
 import type { FileFetchOptions } from '../context/agentic-fetcher.js';
 import { fetchFileContents } from '../context/file-fetcher.js';
-import { extractChangedLines, isLineNearChange } from '../diff-filter.js';
+import { computeDiffStats, extractChangedLines, isLineNearChange } from '../diff-filter.js';
 import { buildMergeGate, describeSource, failedAgentPriors } from '../gate.js';
 import { BUILTIN_FINDING_CATEGORIES } from '../builtin-categories.js';
 import type { FindingSource, VerificationOutcome, MergeGate, CustomAgentFailure } from '../gate.js';
@@ -1425,6 +1427,43 @@ export async function runDeltaCaptionAgent(
   }
 }
 
+/**
+ * #712 — one call that rates the five safety factors, then the score in code.
+ *
+ * Uses the main model, because it reads the diff and may open files (tests,
+ * mostly) the way the finding agents do. Advisory: it NEVER rejects. Every
+ * failure — a throttle, an unparseable answer, a missing or out-of-range
+ * rating — is logged and returns undefined, and the comment omits the section.
+ * It writes nothing to `diag` or `agentFailures`, so it cannot move the gate.
+ */
+export async function runSafetyAgent(
+  diff: string,
+  context: ReviewContext,
+  modelId: string,
+  llm: ILLMProvider,
+  config: SafetyScoreConfig,
+  changedFiles: string[],
+  fileFetchOptions?: FileFetchOptions,
+  conventions?: string,
+): Promise<SafetyResult | undefined> {
+  try {
+    const matches = matchAreas(config.areas, changedFiles);
+    const guidance = buildSafetyGuidance(config, matches, computeDiffStats(diff));
+    const prompt: PromptSegment[] = [
+      ...buildPrompt(SAFETY_PROMPT, diff, context, !!fileFetchOptions, undefined, conventions),
+      { id: 'safety-guidance', stability: 'per-pr', text: `\n\n${guidance}` },
+    ];
+    const raw = await invokeAgent(llm, modelId, prompt, fileFetchOptions, SAFETY_SCHEMA);
+    const parsed = tryParseJson<unknown>(raw, 'ratings');
+    if (parsed === null) throw new Error('unparseable response');
+    return buildSafetyResult(parsed, config, matches);
+  } catch (err) {
+    const reason = isThrottleError(err) ? 'throttled' : err instanceof Error ? err.message : 'error';
+    console.warn(`[safety] agent failed (${reason}) — section omitted:`, err);
+    return undefined;
+  }
+}
+
 // ─── Custom agents ──────────────────────────────────────────────────────────
 
 /** info < warning < critical. */
@@ -1909,6 +1948,11 @@ export interface ReviewPipelineResult {
    * the delta strip and the merge-readiness verdict in the comment.
    */
   deltaCaption: string | null;
+  /**
+   * #712 — the safety score. Present only when `options.safetyScore.enabled`
+   * and the safety agent answered usably. Advisory: the gate never reads it.
+   */
+  safety?: SafetyResult;
 }
 
 // ─── Finding grounding ─────────────────────────────────────────────────────
@@ -3232,6 +3276,7 @@ export async function runReviewPipeline(
     previousFindings,
     conventions,
     agentAuthored,
+    safetyScore,
   } = options;
 
   // Wrap the LLM provider to track token usage across all agents
@@ -3479,6 +3524,12 @@ export async function runReviewPipeline(
   // built-in verification still use every prior.
   const { kept: orchestratorPriorFindings, removed: customPriors } =
     orchestratorPriors(previousFindings, enabledCustomAgents);
+  // #712 — started here so it overlaps the orchestrator and the verifier, and
+  // awaited before cost is totalled so its tokens are counted. It never
+  // rejects, so leaving it in flight while the orchestrator runs is safe.
+  const safetyPromise: Promise<SafetyResult | undefined> = safetyScore?.enabled
+    ? runSafetyAgent(diff, context, modelId, llm, safetyScore, changedFiles, fileFetchOptions, conventions)
+    : Promise.resolve(undefined);
   const orchestratorResult = await runOrchestratorAgent(
     dedupedTaggedFindings,
     lightModelId,
@@ -4100,6 +4151,7 @@ export async function runReviewPipeline(
   // comment + dashboard). Warn once per model so self-hosted operators know to
   // add a `pricing:` override in .mergewatch.yml. Skipped when all models are
   // priced (including a deliberate $0 local model).
+  const safety = await safetyPromise;
   const estimatedCostUsd = accumulator.estimateTotalCost(customPricing);
   if (estimatedCostUsd === null) {
     const newlyUnpriced = accumulator
@@ -4144,5 +4196,6 @@ export async function runReviewPipeline(
     estimatedCostUsd,
     conventionsUsed: !!(conventions && conventions.trim()),
     deltaCaption,
+    ...(safety ? { safety } : {}),
   };
 }
