@@ -36,7 +36,7 @@ describe('estimateCost', () => {
   describe('Bedrock us. profiles carry a 10% premium over the published rate', () => {
     const M = 1_000_000;
 
-    it('Opus 4.6 — the deployment default — bills at $5.50/$27.50, not $5/$25', () => {
+    it('Opus 4.6 — a former deployment default — bills at $5.50/$27.50, not $5/$25', () => {
       expect(estimateCost('us.anthropic.claude-opus-4-6-v1', M, M)).toBeCloseTo(33, 6);
       // The published rate would have produced 30.
       expect(estimateCost('claude-opus-4-6', M, M)).toBeCloseTo(30, 6);
@@ -47,7 +47,7 @@ describe('estimateCost', () => {
       expect(estimateCost('claude-sonnet-4-5-20250929', M, M)).toBeCloseTo(18, 6);
     });
 
-    it('Sonnet 4.6 — the deployment default — bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
+    it('Sonnet 4.6 — the deployment default until #721 — bills at $3.30/$16.50 on Bedrock, $3/$15 direct', () => {
       expect(estimateCost('us.anthropic.claude-sonnet-4-6', M, M)).toBeCloseTo(19.8, 6);
       expect(estimateCost('claude-sonnet-4-6', M, M)).toBeCloseTo(18, 6);
     });
