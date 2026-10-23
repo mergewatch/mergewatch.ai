@@ -358,6 +358,7 @@ safetyScore:
       notes: "Anything that changes what or when we charge customers is risky"
   notes:
     - "Changing a background job's signature is risky: queued jobs run with the old arguments"
+  collapsed: false    # true puts the factors and concerns in a collapsed block
 ```
 
 The defaults, written out in full. These are what apply when a key is omitted:
@@ -381,6 +382,7 @@ safetyScore:
     rollback:        { weight: 20 }
   areas: []
   notes: []
+  collapsed: false
 ```
 
 | Key | Type | Rule |
@@ -396,6 +398,7 @@ safetyScore:
 | `areas[].name` | string | At most 80 characters. Required when there are no `patterns`. Unique, ignoring case |
 | `areas[].notes` | string | At most 500 characters |
 | `notes` | list of strings | At most 20, each at most 500 characters |
+| `collapsed` | boolean | `true` puts the factor lines and concerns in a collapsed **Factors and concerns** block under the band line. The band line and the `mw-safety` line are unchanged |
 
 Factor names are `blastRadius`, `changeSize`, `testing`, `errorMonitoring` and `rollback`. Bands, emoji and each factor merge key by key with the defaults; `areas` and `notes` replace them.
 

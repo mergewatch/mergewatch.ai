@@ -24,7 +24,7 @@ const MAX_TOP_NOTES = 20;
 const MAX_EMOJI_LEN = 16;
 const MAX_WEIGHT = 1000;
 
-const TOP_KEYS = ['enabled', 'bands', 'emoji', 'factors', 'areas', 'notes'];
+const TOP_KEYS = ['enabled', 'bands', 'emoji', 'factors', 'areas', 'notes', 'collapsed'];
 const BAND_KEYS = ['risky', 'caution'] as const;
 const FACTOR_KEYS = ['weight', 'notes'];
 const AREA_KEYS = ['name', 'patterns', 'level', 'notes'];
@@ -95,6 +95,11 @@ export function parseSafetyScoreBlock(raw: unknown): { value: SafetyScoreInput; 
   if (raw.enabled !== undefined) {
     if (typeof raw.enabled !== 'boolean') errors.push('safetyScore.enabled: must be true or false');
     else value.enabled = raw.enabled;
+  }
+
+  if (raw.collapsed !== undefined) {
+    if (typeof raw.collapsed !== 'boolean') errors.push('safetyScore.collapsed: must be true or false');
+    else value.collapsed = raw.collapsed;
   }
 
   if (raw.bands !== undefined) {

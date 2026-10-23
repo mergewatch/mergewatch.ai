@@ -49,6 +49,8 @@ export interface SafetyResult {
   band: SafetyLevel;
   /** #713 — the configured emoji for `band`, so the comment needs no config. */
   emoji: string;
+  /** #719 — render the factor detail collapsed. Absent reads as expanded. */
+  collapsed?: boolean;
   factors: Record<SafetyFactor, SafetyFactorResult>;
   concerns: string[];
   matchedAreas: SafetyAreaMatch[];
@@ -232,6 +234,7 @@ export function buildSafetyResult(
   return {
     ...scored,
     emoji: config.emoji[scored.band],
+    ...(config.collapsed ? { collapsed: true } : {}),
     concerns,
     matchedAreas: matches,
     appliedAreas,
