@@ -1995,3 +1995,53 @@ describe('processReviewJob — safety rendering and persistence (#713)', () => {
     expect(formatArgs().safetyConfigErrors?.[0]).toMatch(/^safetyScore\.bands/);
   });
 });
+
+describe('processReviewJob — base-root listing for uncovered folders (#717)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  const withDefaultBranch = (safetyScore: unknown) =>
+    (fetchRepoConfigResult as any).mockResolvedValue({ ok: true, config: { safetyScore } });
+  const withOctokit = (getContent: ReturnType<typeof vi.fn>) =>
+    makeDeps({ authProvider: { getInstallationOctokit: vi.fn().mockResolvedValue({ repos: { getContent } }) } as unknown as IGitHubAuthProvider });
+  const passed = () => (vi.mocked(runReviewPipeline).mock.calls[0][0] as any).safetyScore;
+  const ROOT = [{ name: 'src', type: 'dir' }, { name: 'docs', type: 'dir' }, { name: 'README.md', type: 'file' }];
+
+  it.each([
+    ['the score is off', { enabled: false, areas: [{ patterns: ['src/**'] }] }],
+    ['no area has patterns', { enabled: true, areas: [{ name: 'Billing', notes: 'n' }] }],
+  ])('%s → no listing call, no baseRootDirs', async (_, safetyScore) => {
+    withDefaultBranch(safetyScore);
+    const getContent = vi.fn().mockResolvedValue({ data: ROOT });
+    await processReviewJob(makeJob(), withOctokit(getContent));
+    expect(getContent).not.toHaveBeenCalled();
+    expect(passed()?.baseRootDirs).toBeUndefined();
+  });
+
+  it('on with a patterned area → one listing of the base root; dirs only', async () => {
+    withDefaultBranch({ enabled: true, areas: [{ patterns: ['src/**'] }] });
+    const getContent = vi.fn().mockResolvedValue({ data: ROOT });
+    await processReviewJob(makeJob(), withOctokit(getContent));
+    expect(getContent).toHaveBeenCalledTimes(1);
+    expect(getContent.mock.calls[0][0]).toMatchObject({ path: '', ref: basePRContext.baseBranch });
+    expect(passed().baseRootDirs).toEqual(['src', 'docs']);
+  });
+
+  it('a failed listing skips the check; the review completes', async () => {
+    withDefaultBranch({ enabled: true, areas: [{ patterns: ['src/**'] }] });
+    const deps = withOctokit(vi.fn().mockRejectedValue(new Error('boom')));
+    await processReviewJob(makeJob(), deps);
+    expect(passed().baseRootDirs).toBeUndefined();
+    expect(vi.mocked(deps.reviewStore.updateStatus).mock.calls.some((c) => c[2] === 'complete')).toBe(true);
+  });
+});

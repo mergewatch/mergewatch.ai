@@ -175,6 +175,12 @@ export interface SafetyScoreConfig {
   notes: string[];
   /** #719 — put the factor detail in a collapsed `<details>` block. */
   collapsed: boolean;
+  /**
+   * #717 — directory names at the base branch's root, listed by the runtime
+   * for the uncovered-folder check. Never read from yml (the parser rejects
+   * unknown keys); absent means the check did not run.
+   */
+  baseRootDirs?: string[];
 }
 
 /** What a `.mergewatch.yml` `safetyScore:` block parses to: any subset. */

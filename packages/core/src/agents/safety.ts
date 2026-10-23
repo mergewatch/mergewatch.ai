@@ -51,6 +51,8 @@ export interface SafetyResult {
   emoji: string;
   /** #719 — render the factor detail collapsed. Absent reads as expanded. */
   collapsed?: boolean;
+  /** #717 — new top-level folders no area covers. Advisory; never scored. */
+  uncoveredFolders?: string[];
   factors: Record<SafetyFactor, SafetyFactorResult>;
   concerns: string[];
   matchedAreas: SafetyAreaMatch[];

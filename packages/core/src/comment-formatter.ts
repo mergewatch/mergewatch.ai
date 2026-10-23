@@ -733,6 +733,7 @@ const SAFETY_FACTOR_TITLES: Array<[SafetyFactor, string]> = [
   ['rollback', 'Rollback'],
 ];
 const SAFETY_RISK_RANK: Record<SafetyLevel, number> = { safe: 0, caution: 1, risky: 2 };
+const MAX_UNCOVERED_SHOWN = 5;
 
 /** The pattern-matched areas, then the model-applied ones, deduplicated. Unescaped. */
 function safetyAreaNames(r: SafetyResult): string[] {
@@ -774,6 +775,12 @@ function renderSafety(r: SafetyResult, headSha: string): { head: string[]; detai
     ...r.appliedNotes.map((n) => `- Note: ${escapeUserContent(n)}`),
   ];
   if (applied.length > 0) detail.push('', 'Applied:', ...applied);
+  // #717 — advisory: new top-level folders no area pattern covers.
+  if (r.uncoveredFolders?.length) {
+    const shown = r.uncoveredFolders.slice(0, MAX_UNCOVERED_SHOWN).map((f) => `\`${f}/\``).join(', ');
+    const more = r.uncoveredFolders.length - MAX_UNCOVERED_SHOWN;
+    detail.push('', `- Uncovered: ${shown}${more > 0 ? ` (+${more} more)` : ''} are new top-level folders no area covers.`);
+  }
   if (r.concerns.length > 0) detail.push('', 'Concerns:', ...r.concerns.map((c) => `- ${c}`));
   // #719 — the band line stays outside. The blank line after <summary> is
   // what makes GitHub render the markdown list inside the block.
