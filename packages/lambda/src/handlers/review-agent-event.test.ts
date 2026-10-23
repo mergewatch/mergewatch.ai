@@ -213,3 +213,14 @@ describe('the review agent lists the base root for uncovered folders (#717)', ()
     expect(src).toContain("path: '', ref: prContext.baseBranch");
   });
 });
+
+// #718 — org safety areas, pinned by source: selected per repo, and the
+// store is read only inside the safetyScore.enabled branch.
+describe('the review agent unions org safety areas (#718)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+  it('selects org areas, and reads them only when the score is on', () => {
+    expect(src).toContain('selectOrgSafetyAreas(');
+    expect(src.split('getSafetyAreas(').length - 1).toBe(1);
+    expect(src).toMatch(/if \(runtimeConfig\.safetyScore\.enabled\) \{\s*try \{\s*const orgSafetyAreas = selectOrgSafetyAreas\(await installationStore\.getSafetyAreas\(/);
+  });
+});

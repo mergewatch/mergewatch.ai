@@ -23,11 +23,15 @@ import type {
   InstallationSettings,
   ReviewItem,
   OrgCustomAgent,
+  OrgSafetyArea,
   ReviewTraceItem,
 } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, usableOutcomes, TraceStorageNotConfiguredError } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, sanitizeOrgSafetyAreas, usableOutcomes, TraceStorageNotConfiguredError } from '@mergewatch/core';
 
 // ─── Installation store ─────────────────────────────────────────────────────
+
+/** Sort keys on the installations table that are not repos (#718 adds #SAFETY_AREAS). */
+const SENTINEL_ROWS = new Set(['#SETTINGS', '#AGENTS', '#SAFETY_AREAS']);
 
 export class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
   constructor(
@@ -43,9 +47,9 @@ export class DynamoDashboardInstallationStore implements IDashboardInstallationS
         ExpressionAttributeValues: { ':iid': installationId },
       }),
     );
-    // Filter out the sentinel rows (#SETTINGS, #AGENTS) — they aren't repos.
+    // Filter out the sentinel rows — they aren't repos.
     return ((result.Items ?? []) as InstallationItem[]).filter(
-      (item) => item.repoFullName !== '#SETTINGS' && item.repoFullName !== '#AGENTS',
+      (item) => !SENTINEL_ROWS.has(item.repoFullName),
     );
   }
 
@@ -108,6 +112,35 @@ export class DynamoDashboardInstallationStore implements IDashboardInstallationS
           installationId,
           repoFullName: '#AGENTS',
           agents: sanitizeOrgCustomAgents(agents),
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    );
+  }
+
+  /**
+   * #718 — org safety areas (`#SAFETY_AREAS`); [] when unset. A read error is
+   * thrown, never read as []: the editor would show an empty list and the next
+   * save would wipe the org's areas. The route answers it with a 500.
+   */
+  async getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]> {
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { installationId, repoFullName: '#SAFETY_AREAS' },
+      }),
+    );
+    return sanitizeOrgSafetyAreas(result.Item?.areas);
+  }
+
+  async updateSafetyAreas(installationId: string, areas: OrgSafetyArea[]): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          installationId,
+          repoFullName: '#SAFETY_AREAS',
+          areas: sanitizeOrgSafetyAreas(areas),
           updatedAt: new Date().toISOString(),
         },
       }),

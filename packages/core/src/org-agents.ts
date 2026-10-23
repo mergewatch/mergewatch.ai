@@ -22,7 +22,8 @@ function asStringArray(v: unknown): string[] {
   return v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
 }
 
-function sanitizeScope(v: unknown): OrgAgentScope {
+/** Normalise a stored/posted scope; anything but a valid `selected` is `all`. */
+export function sanitizeScope(v: unknown): OrgAgentScope {
   if (v && typeof v === 'object' && (v as { mode?: unknown }).mode === 'selected') {
     return { mode: 'selected', repos: asStringArray((v as { repos?: unknown }).repos) };
   }

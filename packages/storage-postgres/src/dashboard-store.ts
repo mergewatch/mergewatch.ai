@@ -21,10 +21,11 @@ import type {
   ReviewItem,
   ReviewStatus,
   OrgCustomAgent,
+  OrgSafetyArea,
   ReviewTraceItem,
 } from '@mergewatch/core';
 import { usableOutcomes } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, sanitizeOrgSafetyAreas } from '@mergewatch/core';
 import { installations, installationSettings, reviews, reviewTraces } from './schema.js';
 
 // ─── Helper: map a Drizzle row to ReviewItem ────────────────────────────────
@@ -150,6 +151,44 @@ export class PostgresDashboardInstallationStore implements IDashboardInstallatio
       .onConflictDoUpdate({
         target: installationSettings.installationId,
         set: { customAgents: sanitized as any },
+      });
+  }
+
+  async getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]> {
+    const rows = await this.db
+      .select({ safetyAreas: installationSettings.safetyAreas })
+      .from(installationSettings)
+      .where(eq(installationSettings.installationId, installationId))
+      .limit(1);
+    if (rows.length === 0) return [];
+    return sanitizeOrgSafetyAreas(rows[0].safetyAreas);
+  }
+
+  /**
+   * #718 — the only writer of `safety_areas`. A fresh row gets every settings
+   * column from core's defaults, explicitly: the column defaults differ
+   * (max_comments 25 vs 10, confidenceScore true vs false), so a bare insert
+   * would silently change the installation's effective settings (#733).
+   */
+  async updateSafetyAreas(installationId: string, areas: OrgSafetyArea[]): Promise<void> {
+    const sanitized = sanitizeOrgSafetyAreas(areas);
+    await this.db
+      .insert(installationSettings)
+      .values({
+        installationId,
+        severityThreshold: DEFAULTS.severityThreshold,
+        commentTypes: DEFAULTS.commentTypes as any,
+        maxComments: DEFAULTS.maxComments,
+        summary: DEFAULTS.summary as any,
+        customInstructions: DEFAULTS.customInstructions,
+        commentHeader: DEFAULTS.commentHeader,
+        approve: DEFAULTS.approve,
+        safetyScore: DEFAULTS.safetyScore ?? { enabled: false },
+        safetyAreas: sanitized as any,
+      })
+      .onConflictDoUpdate({
+        target: installationSettings.installationId,
+        set: { safetyAreas: sanitized as any },
       });
   }
 

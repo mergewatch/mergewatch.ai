@@ -360,3 +360,38 @@ describe('DynamoDashboardInstallationStore — safetyScore (#711)', () => {
     expect(settings.maxComments).toBe(5);
   });
 });
+
+describe('DynamoDashboardInstallationStore — org safety areas (#718)', () => {
+  it('listByInstallation leaves out every sentinel row, #SAFETY_AREAS included', async () => {
+    const rows = ['#SETTINGS', '#AGENTS', '#SAFETY_AREAS', 'o/r'].map((repoFullName) => ({ installationId: '42', repoFullName }));
+    const send = vi.fn().mockResolvedValue({ Items: rows });
+    const repos = await new DynamoDashboardInstallationStore({ send } as any, 'tbl').listByInstallation('42');
+    expect(repos.map((r) => r.repoFullName)).toEqual(['o/r']);
+  });
+
+  it('updateSafetyAreas writes the sanitized areas to #SAFETY_AREAS', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    await new DynamoDashboardInstallationStore({ send } as any, 'tbl').updateSafetyAreas('42', [
+      { id: 'a', patterns: ['p/**'], level: 'risky', enabled: true, scope: { mode: 'all' }, updatedAt: 't', updatedBy: 'u' },
+      { id: 'bad', name: 'no patterns or notes' } as any,
+    ]);
+    const item = send.mock.calls[0][0].input.Item;
+    expect(item.repoFullName).toBe('#SAFETY_AREAS');
+    expect(item.areas.map((a: { id: string }) => a.id)).toEqual(['a']);
+  });
+});
+
+// #718 review — the dashboard read must not turn a failure into []: the editor
+// would show an empty list and the next save would wipe the org's areas. The
+// route answers a thrown read with 500 and the manager locks.
+describe('DynamoDashboardInstallationStore.getSafetyAreas — read errors (#718 review)', () => {
+  it('rejects on a client error rather than reading as no areas', async () => {
+    const client = { send: vi.fn().mockRejectedValue(new Error('throttled')) } as any;
+    await expect(new DynamoDashboardInstallationStore(client, 'tbl').getSafetyAreas('42')).rejects.toThrow('throttled');
+  });
+
+  it('(pin) a missing row is still []', async () => {
+    const client = { send: vi.fn().mockResolvedValue({}) } as any;
+    expect(await new DynamoDashboardInstallationStore(client, 'tbl').getSafetyAreas('42')).toEqual([]);
+  });
+});

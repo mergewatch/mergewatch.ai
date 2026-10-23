@@ -395,6 +395,7 @@ export type {
   NpsResponseRecord,
   ReviewCostRecord,
   OrgCustomAgent,
+  OrgSafetyArea,
   OrgAgentScope,
   OrgAgentEnforcement,
   ReviewTraceItem,
@@ -414,7 +415,9 @@ export type { FindingOutcome, FilterStage } from './filter-trace.js';
 
 export { resolveReviewModelId } from './config/model-resolution.js';
 export type { ModelResolutionInput, ModelSource, ResolvedModel } from './config/model-resolution.js';
-export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP, periodDayKey } from './types/db.js';
+export { DEFAULT_INSTALLATION_SETTINGS, ORG_CUSTOM_AGENT_SOFT_CAP, ORG_SAFETY_AREA_CAP, periodDayKey } from './types/db.js';
+// #718 — org safety areas.
+export { sanitizeOrgSafetyAreas, selectOrgSafetyAreas, toSafetyArea, unionSafetyAreas } from './org-safety-areas.js';
 export {
   sanitizeOrgCustomAgents,
   agentAppliesToRepo,

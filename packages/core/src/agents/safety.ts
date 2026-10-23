@@ -25,6 +25,8 @@ export interface SafetyAreaMatch {
   name?: string;
   level?: SafetyLevel;
   notes?: string;
+  /** #718 — an org (dashboard) area rather than a repo one. */
+  source?: 'org';
   matchedPatterns: string[];
   files: string[];
 }
@@ -122,6 +124,7 @@ export function matchAreas(areas: SafetyArea[], files: string[]): SafetyAreaMatc
       ...(area.name !== undefined ? { name: area.name } : {}),
       ...(area.level !== undefined ? { level: area.level } : {}),
       ...(area.notes !== undefined ? { notes: area.notes } : {}),
+      ...(area.source ? { source: area.source } : {}),
       matchedPatterns: [...matchedPatterns],
       files: matchedFiles,
     });

@@ -246,6 +246,35 @@ export interface OrgCustomAgent {
 }
 
 // =============================================================================
+// Org Safety Areas (#718) — installation-level safety areas defined in the
+// dashboard. Stored as the `#SAFETY_AREAS` sentinel row (SaaS) / the
+// `safety_areas` jsonb column on installation_settings (self-hosted). At
+// review time they are unioned with the repo's default-branch areas; the
+// riskiest matched level wins, so a repo can add areas but never weaken one.
+// =============================================================================
+
+/** Hard cap on org safety areas per installation (enforced on PUT). */
+export const ORG_SAFETY_AREA_CAP = 50;
+
+export interface OrgSafetyArea {
+  /** Stable id (assigned on create). */
+  id: string;
+  /** Required when there are no `patterns`. */
+  name?: string;
+  patterns?: string[];
+  level?: 'safe' | 'caution' | 'risky';
+  notes?: string;
+  /** Whether this area applies at all. */
+  enabled: boolean;
+  /** Repos this area applies to. */
+  scope: OrgAgentScope;
+  /** ISO timestamp of the last edit (audit). */
+  updatedAt: string;
+  /** GitHub login of the last editor (audit). */
+  updatedBy: string;
+}
+
+// =============================================================================
 // mergewatch-reviews Table
 // =============================================================================
 

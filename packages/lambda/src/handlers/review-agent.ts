@@ -69,6 +69,8 @@ import {
   pollAndRecordInlineReactions,
   recordSummaryHelpfulVotes,
   selectOrgAgentsForReview,
+  selectOrgSafetyAreas,
+  unionSafetyAreas,
   unionCustomAgents,
   languagesFromFiles,
   findingMatchKeys,
@@ -911,6 +913,23 @@ export async function handler(
           '[org-agents] author triaged %d finding(s) from blocking org agent(s) on %s#%d — recorded for admin review',
           triagedBlocking.length, repoFullName, prNumber,
         );
+      }
+    }
+
+    // #718 — org safety areas, read only when the score is on. They are
+    // unioned with the repo's (default-branch) areas, and riskiest-wins
+    // matching means a repo can add an area but never weaken an org one. A
+    // failed read omits the section: scoring without the org's areas would
+    // understate risk. Advisory, so the review itself carries on.
+    if (runtimeConfig.safetyScore.enabled) {
+      try {
+        const orgSafetyAreas = selectOrgSafetyAreas(await installationStore.getSafetyAreas(String(installationId)), repoFullName);
+        if (orgSafetyAreas.length > 0) {
+          runtimeConfig.safetyScore = { ...runtimeConfig.safetyScore, areas: unionSafetyAreas(orgSafetyAreas, runtimeConfig.safetyScore.areas) };
+        }
+      } catch (err) {
+        console.warn('[safety] org safety areas read failed — section omitted for this review:', err);
+        runtimeConfig.safetyScore = { ...runtimeConfig.safetyScore, enabled: false };
       }
     }
 

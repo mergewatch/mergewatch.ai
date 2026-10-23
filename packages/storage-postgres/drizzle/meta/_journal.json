@@ -148,6 +148,13 @@
       "when": 1792733564475,
       "tag": "0020_wild_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792735828846,
+      "tag": "0021_acoustic_raider",
+      "breakpoints": true
     }
   ]
 }

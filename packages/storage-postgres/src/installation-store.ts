@@ -1,7 +1,7 @@
 import { eq, and } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import type { IInstallationStore, InstallationItem, InstallationSettings, OrgCustomAgent } from '@mergewatch/core';
-import { DEFAULT_INSTALLATION_SETTINGS, sanitizeOrgCustomAgents } from '@mergewatch/core';
+import type { IInstallationStore, InstallationItem, InstallationSettings, OrgCustomAgent, OrgSafetyArea } from '@mergewatch/core';
+import { DEFAULT_INSTALLATION_SETTINGS, sanitizeOrgCustomAgents, sanitizeOrgSafetyAreas } from '@mergewatch/core';
 import { installations, installationSettings } from './schema.js';
 
 export class PostgresInstallationStore implements IInstallationStore {
@@ -88,6 +88,20 @@ export class PostgresInstallationStore implements IInstallationStore {
         target: installationSettings.installationId,
         set: { customAgents: sanitized as any },
       });
+  }
+
+  /**
+   * #718 — reader only: the dashboard store is the one writer. A missing
+   * row is `[]`; a read error propagates (the runtime omits the section).
+   */
+  async getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]> {
+    const rows = await this.db
+      .select({ safetyAreas: installationSettings.safetyAreas })
+      .from(installationSettings)
+      .where(eq(installationSettings.installationId, installationId))
+      .limit(1);
+    if (rows.length === 0) return [];
+    return sanitizeOrgSafetyAreas(rows[0].safetyAreas);
   }
 
   async listInstallationIds(): Promise<string[]> {
