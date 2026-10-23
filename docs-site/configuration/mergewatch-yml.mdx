@@ -359,6 +359,7 @@ safetyScore:
   notes:
     - "Changing a background job's signature is risky: queued jobs run with the old arguments"
   collapsed: false    # true puts the factors and concerns in a collapsed block
+  label: false        # true keeps one safety:<band> label on the pull request
 ```
 
 The defaults, written out in full. These are what apply when a key is omitted:
@@ -383,6 +384,7 @@ safetyScore:
   areas: []
   notes: []
   collapsed: false
+  label: false
 ```
 
 | Key | Type | Rule |
@@ -399,6 +401,7 @@ safetyScore:
 | `areas[].notes` | string | At most 500 characters |
 | `notes` | list of strings | At most 20, each at most 500 characters |
 | `collapsed` | boolean | `true` puts the factor lines and concerns in a collapsed **Factors and concerns** block under the band line. The band line and the `mw-safety` line are unchanged |
+| `label` | boolean | `true` keeps exactly one `safety:safe`, `safety:caution` or `safety:risky` label on the pull request. See [Safety labels](#safety-labels) |
 
 Factor names are `blastRadius`, `changeSize`, `testing`, `errorMonitoring` and `rollback`. Bands, emoji and each factor merge key by key with the defaults; `areas` and `notes` replace them.
 
@@ -512,6 +515,17 @@ Reply on the pull request with a line of its own:
 - It never triggers a review or a model call, and it never changes the score, the comment or the check. A comment with this line is handled only as feedback, even if it also says `@mergewatch review`.
 - Anything else after `@mergewatch safety` (for example `@mergewatch safety why so risky?`) is an ordinary question to MergeWatch.
 - Only the pull request's 50 most recently reviewed commits are searched for the latest scored review.
+
+### Safety labels
+
+With `label: true`, MergeWatch keeps exactly one `safety:<band>` label on the pull request, matching the latest reviewed commit. It creates the three labels in the repository on first use (`safety:safe` green, `safety:caution` amber, `safety:risky` red), swaps them as the band changes, and never touches any other label. When the safety agent could not score a commit, the `safety:*` label is removed rather than left showing an older commit's band.
+
+The label is left as it was when:
+
+- the review was skipped (for example a docs-only change), so no score was computed;
+- the default branch has since turned `enabled` or `label` off, or its `safetyScore` block is invalid (which turns the score off).
+
+Adding a label never starts a review. Do **not** list `safety:*` labels in `rules.ignoreLabels`: the label MergeWatch adds would then skip every later review of that pull request. If two MergeWatch Apps are installed on the same repository, each keeps its own band and the label can flip between them. The label needs the App's **Pull requests: write** permission, which it already has.
 
 ### Cost
 

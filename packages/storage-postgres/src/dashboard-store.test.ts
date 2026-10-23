@@ -85,3 +85,11 @@ describe('PostgresDashboardReviewStore — safety feedback (#716)', () => {
     expect((await new PostgresDashboardReviewStore(db).getReview('o/r', '42#a'))?.safetyFeedback).toEqual([entry]);
   });
 });
+
+describe('PostgresDashboardReviewStore — the trends read path (#720)', () => {
+  it('(pin) rowToReviewItem returns safetyBand (#713) and safetyFeedback (#716) together', async () => {
+    const entry = { band: 'safe', user: 'b', at: 't' };
+    const db = chain([{ repoFullName: 'o/r', prNumberCommitSha: '42#a', status: 'complete', createdAt: 't', safetyScore: 30, safetyBand: 'risky', safetyFeedback: [entry] }]);
+    expect(await new PostgresDashboardReviewStore(db).getReview('o/r', '42#a')).toMatchObject({ safetyBand: 'risky', safetyFeedback: [entry] });
+  });
+});

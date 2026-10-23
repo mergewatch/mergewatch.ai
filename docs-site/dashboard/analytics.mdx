@@ -19,6 +19,14 @@ Analytics is a single tabbed surface at `/dashboard/analytics`. Five tabs sit un
 Older links still work. `/dashboard/accuracy` permanently redirects to `/dashboard/analytics?tab=accuracy`, and the even older `/dashboard/insights` redirects through it. The active installation (`?org=`) is preserved across both hops, so a bookmark keeps pointing at the same organization.
 </Note>
 
+## Findings
+
+Alongside the severity, category and merge-score charts, **Safety Bands** shows the advisory [safety score](/configuration/mergewatch-yml#safety-score) per day: how many reviewed commits were safe, caution or risky. It counts **reviewed commits, not pull requests** — a pull request reviewed three times contributes three bars. It appears only when at least one review in the range was safety-scored.
+
+Below it, **Disputed** shows how many of the reviewed commits that received [`@mergewatch safety <band>`](/configuration/mergewatch-yml#telling-mergewatch-it-got-the-band-wrong) feedback had a reviewer whose latest vote disagreed with the band. It appears only once there is feedback.
+
+The merge-score chart labels its ends **1 (Not ready)** and **5 (Ready)**, so that on this tab "safe" and "risky" always mean the safety band.
+
 ## Cost & Impact
 
 Deliberately placed second — one click from the landing tab rather than buried under a wall of charts, because for most teams this is the tab that justifies the tool.

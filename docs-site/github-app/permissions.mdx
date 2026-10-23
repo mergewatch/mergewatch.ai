@@ -13,9 +13,9 @@ MergeWatch follows the principle of least privilege. Every permission below is t
 | --- | --- | --- |
 | **Checks** | `read & write` | Create check runs on the pull request with a findings summary, merge readiness score, and pass/fail status. |
 | **Contents** | `read & write` | **Read:** the pull request diff, file contents used to ground and verify findings against the real code, and `.mergewatch.yml` from the repository root. **Write:** resolving and unresolving review threads MergeWatch itself created — that is the only thing the write half is used for. GitHub offers no narrower permission that covers thread resolution. Declining this permission is supported: reviews, findings, inline comments and check runs all continue to work, and only thread tidying is lost. |
-| **Issues** | `read & write` | Create and update PR summary comments (GitHub's API uses the Issues endpoint for PR comments), list existing comments to avoid duplicates, and add reactions (e.g., :eyes: when a review starts). |
+| **Issues** | `read` | List existing comments to avoid duplicates. The PR summary comment, reactions (e.g., :eyes: when a review starts) and labels go through GitHub's Issues endpoints, but on a pull request they are authorized by **Pull requests: write**, so the App does not request Issues write. |
 | **Metadata** | `read` | Automatically granted to all GitHub Apps. Provides access to basic repository metadata (name, description, default branch). |
-| **Pull requests** | `read & write` | Post inline review findings as PR review comments, create and dismiss reviews, and read PR metadata and diffs. This is the primary output channel for every review. |
+| **Pull requests** | `read & write` | Post inline review findings as PR review comments, create and dismiss reviews, and read PR metadata and diffs. This is the primary output channel for every review. Also applies the `safety:*` labels when [`safetyScore.label`](/configuration/mergewatch-yml#safety-labels) is on. |
 
 ### Organization permissions
 

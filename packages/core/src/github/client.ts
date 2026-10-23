@@ -22,7 +22,7 @@ import type {
   PassThreshold,
   SafetyScoreConfig,
 } from '../config/defaults.js';
-import { PASS_THRESHOLDS } from '../config/defaults.js';
+import { PASS_THRESHOLDS, SAFETY_LEVELS, type SafetyLevel } from '../config/defaults.js';
 import { parseSafetyScoreBlock } from '../config/safety-score.js';
 import { isReservedAgentName } from '../builtin-categories.js';
 import { reviewMarker, inlineMarker, checkRunName } from '../stage.js';
@@ -289,6 +289,56 @@ export async function addIssueCommentReaction(
   } catch (err) {
     console.warn('Failed to add %s reaction to %s/%s comment %d:', reaction, owner, repo, commentId, err);
     return null;
+  }
+}
+
+/** #720 — the label colours, one per band (GitHub's green / amber / red). */
+const SAFETY_LABEL_COLORS: Record<SafetyLevel, string> = { safe: '2da44e', caution: 'd29922', risky: 'cf222e' };
+
+/**
+ * #720 — keep exactly one `safety:<band>` label on a PR: add the band's label
+ * (creating it on first use), remove the other two, and touch no other label.
+ * `band === null` removes all three. Advisory: every error is logged and
+ * swallowed, so a missing permission never fails a review.
+ */
+export async function syncSafetyLabel(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  band: SafetyLevel | null,
+): Promise<void> {
+  let current: string[];
+  try {
+    const { data } = await octokit.issues.listLabelsOnIssue({ owner, repo, issue_number: prNumber, per_page: 100 });
+    current = data.map((l) => l.name);
+  } catch (err) {
+    console.warn('[safety-label] could not read labels on %s/%s#%d — not syncing:', owner, repo, prNumber, err);
+    return;
+  }
+  const want = band ? `safety:${band}` : null;
+  for (const level of SAFETY_LEVELS) {
+    const name = `safety:${level}`;
+    if (name === want || !current.includes(name)) continue;
+    try {
+      await octokit.issues.removeLabel({ owner, repo, issue_number: prNumber, name });
+    } catch (err) {
+      console.warn('[safety-label] could not remove %s on %s/%s#%d:', name, owner, repo, prNumber, err);
+    }
+  }
+  if (!want || current.includes(want)) return;
+  try {
+    await octokit.issues.createLabel({ owner, repo, name: want, color: SAFETY_LABEL_COLORS[band!] });
+  } catch (err) {
+    // 422 = the label already exists in the repo, which is what we wanted.
+    if ((err as { status?: number })?.status !== 422) {
+      console.warn('[safety-label] could not create %s in %s/%s:', want, owner, repo, err);
+    }
+  }
+  try {
+    await octokit.issues.addLabels({ owner, repo, issue_number: prNumber, labels: [want] });
+  } catch (err) {
+    console.warn('[safety-label] could not add %s on %s/%s#%d:', want, owner, repo, prNumber, err);
   }
 }
 

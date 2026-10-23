@@ -33,6 +33,18 @@ export interface AggregatableReview {
   durationMs?: number | null;
   estimatedCostUsd?: number | string | null;
   findings?: Array<{ severity?: string; category?: string }> | null;
+  /** #720 — the advisory safety band (#713). */
+  safetyBand?: "safe" | "caution" | "risky" | null;
+  /** #720 — reviewers' `@mergewatch safety <band>` votes, in arrival order (#716). */
+  safetyFeedback?: Array<{ user: string; band: string }> | null;
+}
+
+/** #720 — safety bands per UTC day. One row = one reviewed commit, not one PR. */
+export interface SafetyBandPoint {
+  date: string;
+  safe: number;
+  caution: number;
+  risky: number;
 }
 
 export interface TrendPoint {
@@ -66,6 +78,12 @@ export interface AnalyticsAggregate {
   findingsPerReviewTrend: FindingsPerReviewPoint[];
   mergeScoreDistribution: Record<number, number>;
   costStats: { totalCostUsd: number; avgCostUsd: number; costCount: number };
+  safetyBandTrend: SafetyBandPoint[];
+  /**
+   * #720 — over reviewed commits with a band: how many had feedback, and how
+   * many had a reviewer whose LAST vote disagreed with the band.
+   */
+  safetyDisputes: { scored: number; withFeedback: number; disputed: number };
 }
 
 /**
@@ -109,6 +127,9 @@ export function aggregateReviews(
   const findingsByDate = new Map<string, { sum: number; count: number }>();
   // Merge score distribution (1-5)
   const mergeScoreDistribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  // #720 — safety bands per day, and disputes from reviewer feedback
+  const bandsByDate = new Map<string, SafetyBandPoint>();
+  const safetyDisputes = { scored: 0, withFeedback: 0, disputed: 0 };
 
   for (const review of reviews) {
     // Status counts
@@ -165,6 +186,23 @@ export function aggregateReviews(
     // Duration stats
     if (review.durationMs != null && review.status === "complete") {
       durations.push(review.durationMs);
+    }
+
+    // #720 — safety bands (same UTC-day bucketing as scoreTrend)
+    if (review.createdAt && review.safetyBand) {
+      const date = review.createdAt.substring(0, 10);
+      const point = bandsByDate.get(date) ?? { date, safe: 0, caution: 0, risky: 0 };
+      point[review.safetyBand]++;
+      bandsByDate.set(date, point);
+      safetyDisputes.scored++;
+      const votes = review.safetyFeedback ?? [];
+      if (votes.length > 0) {
+        safetyDisputes.withFeedback++;
+        // Each user's last vote supersedes their earlier ones (#716).
+        const last = new Map<string, string>();
+        for (const v of votes) last.set(v.user, v.band);
+        if (Array.from(last.values()).some((b) => b !== review.safetyBand)) safetyDisputes.disputed++;
+      }
     }
 
     // Repo breakdown
@@ -229,5 +267,7 @@ export function aggregateReviews(
         : 0,
       costCount,
     },
+    safetyBandTrend: Array.from(bandsByDate.values()).sort((a, b) => a.date.localeCompare(b.date)),
+    safetyDisputes,
   };
 }
