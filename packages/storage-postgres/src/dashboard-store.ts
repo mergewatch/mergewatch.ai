@@ -97,6 +97,7 @@ export class PostgresDashboardInstallationStore implements IDashboardInstallatio
       customInstructions: row.customInstructions,
       commentHeader: row.commentHeader,
       approve: row.approve,
+      safetyScore: { enabled: (row.safetyScore as { enabled?: unknown } | null)?.enabled === true },
     };
   }
 
@@ -112,6 +113,7 @@ export class PostgresDashboardInstallationStore implements IDashboardInstallatio
         customInstructions: settings.customInstructions,
         commentHeader: settings.commentHeader,
         approve: settings.approve,
+        safetyScore: settings.safetyScore ?? { enabled: false },
       })
       .onConflictDoUpdate({
         target: installationSettings.installationId,
@@ -123,6 +125,7 @@ export class PostgresDashboardInstallationStore implements IDashboardInstallatio
           customInstructions: settings.customInstructions,
           commentHeader: settings.commentHeader,
           approve: settings.approve,
+          safetyScore: settings.safetyScore ?? { enabled: false },
         },
       });
   }

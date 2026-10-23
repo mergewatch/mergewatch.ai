@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { DynamoDashboardReviewStore, REVIEWS_BY_CREATED_AT_INDEX } from './dashboard-store.js';
-import { TraceStorageNotConfiguredError } from '@mergewatch/core';
+import { DynamoDashboardReviewStore, DynamoDashboardInstallationStore, REVIEWS_BY_CREATED_AT_INDEX } from './dashboard-store.js';
+import { TraceStorageNotConfiguredError, DEFAULT_INSTALLATION_SETTINGS } from '@mergewatch/core';
 
 /** Build a review item; createdAt is the field under test everywhere here. */
 function review(repoFullName: string, prNumber: number, createdAt: string, over: Record<string, unknown> = {}) {
@@ -328,5 +328,35 @@ describe('DynamoDashboardReviewStore.getReviewTrace — trace storage configurat
       TraceStorageNotConfiguredError,
     );
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A client that keeps the #SETTINGS row: UpdateCommand stores `:settings`,
+ * GetCommand returns it. Enough for a real write-then-read round trip.
+ */
+function settingsTable(initial?: Record<string, unknown>) {
+  let row: Record<string, unknown> | undefined = initial;
+  return {
+    send: vi.fn(async (cmd: any) => {
+      const vals = cmd.input.ExpressionAttributeValues;
+      if (vals?.[':settings'] !== undefined) { row = { settings: vals[':settings'] }; return {}; }
+      return row ? { Item: row } : {};
+    }),
+  } as any;
+}
+
+describe('DynamoDashboardInstallationStore — safetyScore (#711)', () => {
+  it('safetyScore: { enabled: true } round-trips through updateSettings → getSettings', async () => {
+    const store = new DynamoDashboardInstallationStore(settingsTable(), 'tbl');
+    await store.updateSettings('42', { ...DEFAULT_INSTALLATION_SETTINGS, safetyScore: { enabled: true } });
+    expect((await store.getSettings('42')).safetyScore).toEqual({ enabled: true });
+  });
+
+  it('a row saved before #711 reads safetyScore: { enabled: false }', async () => {
+    const store = new DynamoDashboardInstallationStore(settingsTable({ settings: { maxComments: 5 } }), 'tbl');
+    const settings = await store.getSettings('42');
+    expect(settings.safetyScore).toEqual({ enabled: false });
+    expect(settings.maxComments).toBe(5);
   });
 });

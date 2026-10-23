@@ -53,6 +53,8 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
     shouldSkipPR: vi.fn().mockReturnValue(null),
     shouldSkipByRules: vi.fn().mockReturnValue(null),
     fetchRepoConfig,
+    // #711 — the default-branch read for the safety score; no file by default.
+    fetchRepoConfigResult: vi.fn().mockResolvedValue({ ok: true, config: null }),
     /**
      * #706 — core's real resolver reads the default branch through core's own
      * `fetchRepoConfig`, which a module mock cannot observe. Rebuilt here as the
@@ -99,7 +101,7 @@ vi.mock('@mergewatch/core', async (importOriginal) => {
 
 import {
   getPRContext, getPRDiff, createCheckRun, shouldSkipPR, shouldSkipByRules,
-  runReviewPipeline, postReplyComment, fetchRepoConfig, handleInlineReply,
+  runReviewPipeline, postReplyComment, fetchRepoConfig, fetchRepoConfigResult, handleInlineReply,
   addPRReaction, removePRReaction, submitPRReview,
   fetchTriageComments, computeDisputedKeys,
   postReviewComment, updateReviewComment, findExistingBotComment, isStillPRHead,
@@ -1863,5 +1865,85 @@ describe('processReviewJob — approve opt-in (#706)', () => {
     expect(dismissOwnStaleReviews).toHaveBeenCalledTimes(1);
     expect(octokit.pulls.dismissReview).toHaveBeenCalledTimes(1);
     expect(octokit.pulls.dismissReview.mock.calls[0][0]).toMatchObject({ review_id: 7 });
+  });
+});
+
+describe('processReviewJob — safety score config (#711)', () => {
+  const HEAD = 'abc1234567890';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  /**
+   * The head yml (`fetchRepoConfig` at the head SHA) and the default branch
+   * (`fetchRepoConfigResult`, no ref) are separate mocks, so a test can tell
+   * which one the safety score came from. `defaultBranch` is the parsed
+   * partial config, or `'fail'` for a read that failed (not a 404).
+   */
+  const ymlAt = (head: unknown, defaultBranch: unknown) => {
+    (fetchRepoConfig as any).mockImplementation(
+      async (_o: unknown, _ow: unknown, _r: unknown, ref?: string) => (ref === HEAD ? head : null),
+    );
+    (fetchRepoConfigResult as any).mockImplementation(
+      async (_o: unknown, _ow: unknown, _r: unknown, ref?: string) => {
+        if (ref !== undefined) throw new Error(`safety read must not pass a ref, got ${ref}`);
+        return defaultBranch === 'fail' ? { ok: false } : { ok: true, config: defaultBranch };
+      },
+    );
+  };
+  const withDashboard = (safetyScore: unknown) => makeDeps({
+    installationStore: {
+      get: vi.fn().mockResolvedValue(null),
+      getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_INSTALLATION_SETTINGS, safetyScore }),
+      upsert: vi.fn(),
+      getCustomAgents: vi.fn().mockResolvedValue([]),
+      upsertCustomAgents: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IInstallationStore,
+  });
+  const safety = () => (vi.mocked(runReviewPipeline).mock.calls[0][0] as any).safetyScore;
+
+  it.each([
+    ['dashboard on, no default-branch block → on', { enabled: true }, null, true],
+    ['dashboard on, default-branch enabled: false → off', { enabled: true }, { safetyScore: { enabled: false } }, false],
+    ['dashboard off, default-branch enabled: true → on', { enabled: false }, { safetyScore: { enabled: true } }, true],
+    ['dashboard on, default-branch risky above caution → off', { enabled: true }, { safetyScore: { bands: { risky: 70 } } }, false],
+    ['neither → off', { enabled: false }, null, false],
+    ['dashboard stores "yes" → off', { enabled: 'yes' }, null, false],
+    ['the default-branch read fails, dashboard on → off', { enabled: true }, 'fail', false],
+  ])('%s', async (_, dashboard, defaultBranch, expected) => {
+    ymlAt(null, defaultBranch);
+    await processReviewJob(makeJob({ headSha: HEAD }), withDashboard(dashboard));
+    expect(safety().enabled).toBe(expected);
+  });
+
+  it('the PR head cannot rewrite safety: areas come from the default branch only', async () => {
+    const migrations = { enabled: true, areas: [{ name: 'Migrations', patterns: ['**/migrations/**'], level: 'risky' }] };
+    const emptied = { enabled: true, areas: [] };
+
+    ymlAt({ safetyScore: emptied }, { safetyScore: migrations });
+    await processReviewJob(makeJob({ headSha: HEAD }), makeDeps());
+    expect(safety().areas).toEqual(migrations.areas);
+
+    // Swapped: the head's Migrations area is ignored.
+    vi.mocked(runReviewPipeline).mockClear();
+    ymlAt({ safetyScore: migrations }, { safetyScore: emptied });
+    await processReviewJob(makeJob({ headSha: HEAD }), makeDeps());
+    expect(safety().areas).toEqual([]);
+  });
+
+  it("the head's safetyScoreErrors never reach the review", async () => {
+    ymlAt({ safetyScore: { enabled: true }, safetyScoreErrors: ['safetyScore.x: from the head'] }, { safetyScore: { enabled: true } });
+    await processReviewJob(makeJob({ headSha: HEAD }), makeDeps());
+    expect(safety().enabled).toBe(true);
   });
 });

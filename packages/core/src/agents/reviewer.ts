@@ -45,7 +45,7 @@ import {
   PREAMBLE_OPENING,
   PREAMBLE_RULES,
 } from './prompts.js';
-import type { CustomAgentDef, UXConfig } from '../config/defaults.js';
+import type { CustomAgentDef, SafetyScoreConfig, UXConfig } from '../config/defaults.js';
 import type { ReviewDelta } from '../review-delta.js';
 import { computeReviewDelta, fingerprintFromCode } from '../review-delta.js';
 import { partitionDisputed } from '../triage.js';
@@ -1834,6 +1834,12 @@ export interface ReviewPipelineOptions {
    * before passing in. Absent / empty → no down-weighting (back-compat).
    */
   categoryDisputeRates?: Record<string, number>;
+
+  /**
+   * #711 — the effective safety-score config, read only from the default
+   * branch. Declared here and passed by both runtimes; consumed by #712.
+   */
+  safetyScore?: SafetyScoreConfig;
 }
 
 export interface ReviewPipelineResult {

@@ -1,4 +1,4 @@
-import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, MergeWatchConfig, RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
+import type { ReviewJobPayload, IInstallationStore, IReviewStore, IGitHubAuthProvider, ILLMProvider, FileFetchOptions, ReviewDelta, RejectCategory, FindingDispositionRecord } from '@mergewatch/core';
 import {
   getPRDiff, getPRContext, addPRReaction, removePRReaction, postReviewComment, updateReviewComment,
   findExistingBotComment, getCommentReactions, makeCheckRunWriter,
@@ -10,7 +10,7 @@ import {
   BOT_COMMENT_MARKER, submitPRReview, dismissOwnStaleReviews,
   checkInputBudget, describeOverBudget,
   buildInlineComments, extractInlineCommentTitle,
-  fetchRepoConfig, fetchConventions,
+  fetchRepoConfig, fetchRepoConfigResult, fetchConventions,
   buildWorkDoneSection, computeReviewDelta,
   RESPOND_PROMPT, postReplyComment,
   handleInlineReply,
@@ -440,7 +440,7 @@ export async function processReviewJob(
   // Field mapping: logic → security agent, syntax → bugs agent, style → style agent
   // Severity: Low → info, Med → warning, High → critical
   const severityMap: Record<string, 'info' | 'warning' | 'critical'> = { Low: 'info', Med: 'warning', High: 'critical' };
-  const settingsOverrides: Partial<MergeWatchConfig> = {
+  const settingsOverrides: Parameters<typeof mergeConfig>[0] = {
     // #357 — unknown values fall back to 'info' (report everything): a
     // malformed threshold must never silently suppress findings.
     minSeverity: severityMap[instSettings.severityThreshold] ?? 'info',
@@ -458,7 +458,18 @@ export async function processReviewJob(
     customStyleRules: instSettings.customInstructions
       ? [instSettings.customInstructions]
       : [],
+    // #711 — `=== true`: the stored settings body is not validated yet (#714).
+    safetyScore: { enabled: instSettings.safetyScore?.enabled === true },
   };
+
+  // #711 — the safety score is configured only by the DEFAULT branch's
+  // .mergewatch.yml; yamlConfig was read at the head, which a PR controls. A
+  // failed read (not a missing file) turns the score off for this review.
+  const defaultBranchRead = await fetchRepoConfigResult(octokit, owner, repo);
+  const defaultBranchConfig = defaultBranchRead.ok ? defaultBranchRead.config : null;
+  if (!defaultBranchRead.ok) {
+    console.warn('[safety-score] default-branch config read failed — omitted for this review');
+  }
 
   // Merge config. Precedence: defaults < dashboard settings < the repo's
   // committed .mergewatch.yml < LLM_MODEL env (global model pin for
@@ -477,7 +488,15 @@ export async function processReviewJob(
       ...(yamlConfig?.agents ?? {}),
     },
     ...(modelOverride ? { model: modelOverride, lightModel: modelOverride } : {}),
+    // Both keys explicit, so the head's values never leak through the spread.
+    safetyScore: defaultBranchRead.ok
+      ? { ...settingsOverrides.safetyScore, ...(defaultBranchConfig?.safetyScore ?? {}) }
+      : { enabled: false },
+    safetyScoreErrors: defaultBranchConfig?.safetyScoreErrors,
   });
+  if (config.safetyScoreErrors) {
+    console.warn('[safety-score] config invalid — disabled for this review: %s', config.safetyScoreErrors.join('; '));
+  }
 
   // ── Rules-based skip (skipDrafts, maxFiles, ignoreLabels, autoReview, reviewOnMention) ────
   const rulesSkip = shouldSkipByRules(config.rules, {
@@ -744,6 +763,7 @@ export async function processReviewJob(
         conventions: conventionsResult?.content,
         agentAuthored: job.source === 'agent',
         categoryDisputeRates,
+        safetyScore: config.safetyScore,
       },
       { llm: deps.llm },
     );

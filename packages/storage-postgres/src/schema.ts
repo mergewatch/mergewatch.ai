@@ -23,6 +23,9 @@ export const installationSettings = pgTable('installation_settings', {
   customAgents: jsonb('custom_agents').notNull().default([]),
   // #706 — let a 4-5 score APPROVE; off by default.
   approve: boolean('approve').notNull().default(false),
+  // #711 — the dashboard's safety-score switch. Not `safety_score`, which
+  // would read like the per-review integer #713 adds to `reviews`.
+  safetyScore: jsonb('safety_score_config').notNull().default({ enabled: false }),
 });
 
 export const reviews = pgTable('reviews', {

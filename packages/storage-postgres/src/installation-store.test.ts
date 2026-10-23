@@ -72,3 +72,23 @@ describe('PostgresInstallationStore — approve (#706)', () => {
     expect((await new PostgresInstallationStore(chain([])).getSettings('42')).approve).toBe(false);
   });
 });
+
+describe('PostgresInstallationStore — safetyScore (#711)', () => {
+  const row = (extra: Record<string, unknown>) => ({
+    installationId: '42', severityThreshold: 'Low', commentTypes: { syntax: true, logic: true, style: true },
+    maxComments: 10, summary: {}, customInstructions: '', commentHeader: '', customAgents: [], approve: false, ...extra,
+  });
+
+  it('getSettings reads the safety_score_config column', async () => {
+    const store = new PostgresInstallationStore(chain([row({ safetyScore: { enabled: true } })]));
+    expect((await store.getSettings('42')).safetyScore).toEqual({ enabled: true });
+  });
+
+  it('a row without it reads { enabled: false }', async () => {
+    expect((await new PostgresInstallationStore(chain([row({})])).getSettings('42')).safetyScore).toEqual({ enabled: false });
+  });
+
+  it('no settings row → { enabled: false }', async () => {
+    expect((await new PostgresInstallationStore(chain([])).getSettings('42')).safetyScore).toEqual({ enabled: false });
+  });
+});

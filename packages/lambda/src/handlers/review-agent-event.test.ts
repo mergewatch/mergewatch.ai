@@ -165,3 +165,22 @@ describe('review-agent.ts derives the gate outputs from core (#662)', () => {
     expect(src).toMatch(/REVIEW_FAILED_CHECK_TITLE|reviewFailedCheckOutput\(/);
   });
 });
+
+// #711 — the Lambda has no processor-level harness, so the wiring the server's
+// precedence tests exercise is pinned here by source: the dashboard switch is
+// read with `=== true`, the safety block comes from a separate default-branch
+// read, and the merged value reaches the pipeline.
+describe('the review agent reads the safety score from the default branch (#711)', () => {
+  const src = readFileSync(new URL('./review-agent.ts', import.meta.url), 'utf8');
+
+  it('wires the dashboard switch, the default-branch read and the pipeline option', () => {
+    for (const required of [
+      '...settingsOverrides.safetyScore',
+      'safetyScore?.enabled === true',
+      'fetchRepoConfigResult(octokit, owner, repo)',
+      'safetyScore: runtimeConfig.safetyScore',
+    ]) {
+      expect(src, `review-agent.ts lacks ${required}`).toContain(required);
+    }
+  });
+});
