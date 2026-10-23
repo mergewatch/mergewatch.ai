@@ -225,10 +225,23 @@ describe('probe — runProbe with injected fakes', () => {
       expect(r.code).toBe(1);
       expect(r.records[0].problems[0]).toMatch(/reported claude-sonnet-4-6, wanted claude-sonnet-5-5/);
     });
+
+    // A prefix is not a match: `claude-sonnet-5-5` starts with `claude-sonnet-5`
+    // but is a different model.
+    it('a later point release of the requested model', async () => {
+      const r = await run(fakeProvider({ reportedModel: 'claude-sonnet-5-5' }), 'AVAILABLE', 'us.anthropic.claude-sonnet-5');
+      expect(r.code).toBe(1);
+      expect(r.records[0].problems[0]).toMatch(/reported claude-sonnet-5-5, wanted claude-sonnet-5/);
+    });
   });
 
   it('the model check normalises the region and anthropic prefixes on both sides', async () => {
     for (const reported of ['claude-sonnet-4-6', 'anthropic.claude-sonnet-4-6', 'us.anthropic.claude-sonnet-4-6']) {
+      const r = await run(fakeProvider({ reportedModel: reported }), 'AVAILABLE', 'us.anthropic.claude-sonnet-4-6');
+      expect(r.code, reported).toBe(0);
+    }
+    // A dated or versioned echo of the same model still passes.
+    for (const reported of ['claude-sonnet-4-6-20260217', 'claude-sonnet-4-6-v1', 'claude-sonnet-4-6:0']) {
       const r = await run(fakeProvider({ reportedModel: reported }), 'AVAILABLE', 'us.anthropic.claude-sonnet-4-6');
       expect(r.code, reported).toBe(0);
     }

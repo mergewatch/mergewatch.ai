@@ -49,6 +49,17 @@ export const FIXTURE = resolve(REPO, 'scripts/fixtures/probe-bedrock-model.diff'
 export const normalizeModelId = (id) =>
   id.replace(/^(?:us|global|eu|apac)\./, '').replace(/^anthropic\./, '');
 
+/**
+ * Whether the echoed model is the requested one. A bare prefix is not enough:
+ * `claude-sonnet-5-5` starts with `claude-sonnet-5`. Only a date, a `-vN` or a
+ * `:N` suffix may follow.
+ */
+export const isRequestedModel = (reported, requested) => {
+  const r = normalizeModelId(reported);
+  const want = normalizeModelId(requested);
+  return r.startsWith(want) && /^(?:$|-\d{8}|-v\d|:)/.test(r.slice(want.length));
+};
+
 /** `us.anthropic.claude-x` → `anthropic.claude-x`: the agreement's model id. */
 export const baseModelId = (id) => id.replace(/^(?:us|global|eu|apac)\./, '');
 
@@ -169,7 +180,7 @@ export async function runProbe({ modelId, availability, provider, core, diff, ou
       if (call.structured && r.object === undefined) problems.push('no tool_use');
       if (!OK_STOPS.has(r.stopReason)) problems.push(`stop_reason ${r.stopReason}`);
       if (!r.modelId) problems.push('no model reported');
-      else if (!normalizeModelId(r.modelId).startsWith(want)) problems.push(`reported ${r.modelId}, wanted ${want}`);
+      else if (!isRequestedModel(r.modelId, modelId)) problems.push(`reported ${r.modelId}, wanted ${want}`);
     } catch (e) {
       // The provider throws when a structured call returns no tool_use.
       problems.push(`error: ${e.message}`);
