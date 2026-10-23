@@ -116,6 +116,10 @@ ux:
   reviewerChecklist: true    # show a checklist derived from top findings
   allClearMessage: true      # show a special message when no findings
   commentHeader: ""          # custom Markdown header for the review comment
+
+# Advisory safety score. Read ONLY from the default branch — see "Safety score".
+# safetyScore:
+#   enabled: false
 ```
 
 ## Property reference
@@ -303,6 +307,193 @@ pricing:
     inputPer1M: 0.50
     outputPer1M: 0.75
 ```
+
+## Safety score
+
+An optional, **advisory** rating of how risky a pull request is to deploy: not whether its code is correct (that is the merge score), but how much it would hurt if something in it is wrong. Off by default.
+
+<Warning>
+`safetyScore` is read **only from the `.mergewatch.yml` on your default branch**, unlike every other key on this page. A pull request that edits `safetyScore` in its own branch cannot change its own score, remove its own risky areas, or turn the score off. Change it by merging to the default branch.
+</Warning>
+
+### What it is
+
+When enabled, each review makes one extra safety-agent call. It rates five factors from 1 to 5: blast radius, change size, testing, error monitoring and rollback. MergeWatch combines them into a score from 1 to 100 and a band: **safe**, **caution** or **risky**. The score appears in the review comment, under the merge score.
+
+It never changes the review event, the check run or the merge gate. The two scores answer different questions:
+
+| | Safety: `safe` | Safety: `risky` |
+|---|---|---|
+| **Merge score 4–5** | No defects found, small impact. A quick review is enough. | No defects found, but a mistake would hurt (e.g. a clean migration). Review carefully anyway. |
+| **Merge score 1–2** | Fix the findings first; the impact of a miss is small. | Fix the findings first, then review carefully. |
+
+**Turning it on.** Set `enabled: true` on the default branch, or use the **Safety score** toggle in the [dashboard settings](/dashboard/settings). Where the default-branch `.mergewatch.yml` sets `safetyScore.enabled`, it wins over the toggle; where it does not, the toggle applies.
+
+### Reference
+
+Every key is optional. This block is the full reference, with every key set:
+
+```yaml .mergewatch.yml
+safetyScore:
+  enabled: true
+  bands:              # upper bound (inclusive) of each band; risky < caution
+    risky: 33
+    caution: 67
+  emoji:
+    safe: "☀️"
+    caution: "⛅"
+    risky: "⛈️"
+  factors:            # weights are relative; notes steer the agent
+    blastRadius:     { weight: 30 }
+    changeSize:      { weight: 15 }
+    testing:         { weight: 25, notes: "Manual testing evidence in the PR description counts" }
+    errorMonitoring: { weight: 10 }
+    rollback:        { weight: 20, notes: "Sensitive features should be behind a feature flag" }
+  areas:
+    - name: Message delivery
+      patterns: ["services/notifications/**", "workers/messaging/**"]
+      level: risky
+      notes: "Every customer message goes through here"
+    - name: Billing
+      notes: "Anything that changes what or when we charge customers is risky"
+  notes:
+    - "Changing a background job's signature is risky: queued jobs run with the old arguments"
+```
+
+The defaults, written out in full. These are what apply when a key is omitted:
+
+{/* safety-defaults */}
+```yaml .mergewatch.yml
+safetyScore:
+  enabled: false
+  bands:
+    risky: 33
+    caution: 67
+  emoji:
+    safe: "☀️"
+    caution: "⛅"
+    risky: "⛈️"
+  factors:
+    blastRadius:     { weight: 30 }
+    changeSize:      { weight: 15 }
+    testing:         { weight: 25 }
+    errorMonitoring: { weight: 10 }
+    rollback:        { weight: 20 }
+  areas: []
+  notes: []
+```
+
+| Key | Type | Rule |
+|---|---|---|
+| `enabled` | boolean | `true` or `false` |
+| `bands.risky`, `bands.caution` | integer | 1 to 99, and `risky` must be below `caution` |
+| `emoji.safe`, `emoji.caution`, `emoji.risky` | string | Non-empty, at most 16 characters, one line |
+| `factors.<name>.weight` | number | 0 to 1000; at least one weight above 0 |
+| `factors.<name>.notes` | string | At most 500 characters |
+| `areas` | list | At most 50. Each needs `patterns` or `notes` |
+| `areas[].patterns` | list of globs | 1 to 20, each at most 200 characters |
+| `areas[].level` | string | `safe`, `caution` or `risky` |
+| `areas[].name` | string | At most 80 characters. Required when there are no `patterns`. Unique, ignoring case |
+| `areas[].notes` | string | At most 500 characters |
+| `notes` | list of strings | At most 20, each at most 500 characters |
+
+Factor names are `blastRadius`, `changeSize`, `testing`, `errorMonitoring` and `rollback`. Bands, emoji and each factor merge key by key with the defaults; `areas` and `notes` replace them.
+
+**Invalid config turns the score off.** An unknown key, an out-of-range value or a broken rule disables the safety score for every review until it is fixed. The review comment then shows one line naming each problem by its path, for example `safetyScore.bands: risky (80) must be below caution (67)`. The rest of the review is unaffected.
+
+### Reading the comment
+
+For a migration in a `risky` area, the safety section reads:
+
+{/* safety-comment-example */}
+```markdown
+⛈️ **Safety: Risky (33/100)** — capped at 33 by Migrations (was 53)
+<!-- mw-safety:{"score":33,"band":"risky","sha":"3f2c9a1e7b4d6c8a0e5f1b2d3c4a5e6f7a8b9c0d","areas":["Migrations"]} -->
+
+- Blast radius: risky. Adds a NOT NULL column to the orders table. (capped from safe by Migrations)
+- Change size: safe. One migration and one model field, +24/−2.
+- Testing: caution. The model change is tested; the migration is not.
+- Error monitoring: safe. Migration failures are logged by the runner.
+- Rollback: caution. The down migration drops the column and its data.
+
+Applied:
+- Area: Migrations (risky; \*\*/migrations/\*\*)
+
+Concerns:
+- The backfill locks the orders table while it runs.
+```
+
+- **The band line** shows the score and band. When a matched area's level lowered it, it says so: `— capped at {score} by {area} (was {score before})`.
+- **A matched area's level caps and clamps.** A `risky` area caps the blast-radius rating and holds the whole score at or below the `risky` band; a `caution` area does the same at `caution`. A level never raises a score.
+- **Factors** are always listed in the same order, each with its band and one sentence from the agent.
+- **Applied** lists every area whose patterns matched a changed file (with its level and patterns), every pattern-less area the agent judged relevant, and every global note it applied.
+- **Concerns** lists at most two specific ways the change could go wrong in production.
+- When the comment is too long for GitHub, the factor detail can be dropped (after the diagram and the work-done stats); the band line and the data line always stay.
+
+### `mw-safety` data line
+
+The hidden line under the band line is for other tools (labels, dashboards, bots):
+
+```
+<!-- mw-safety:{"score":33,"band":"risky","sha":"<full head SHA>","areas":["Migrations"]} -->
+```
+
+- Keys appear in that order: `score` (1–100), `band` (`safe`, `caution` or `risky`), `sha` (the full 40-character head SHA the score describes) and `areas` (the display names of every area that applied, unescaped; `[]` when none).
+- `<` and `>` are written as `<` and `>`, which is still valid JSON, so an area name cannot close the comment.
+- Each review comment carries exactly one line, and it moves to the new head SHA on every push.
+
+```js
+const m = /<!-- mw-safety:(\{.*?\}) -->/.exec(commentBody);
+const safety = m ? JSON.parse(m[1]) : null; // { score, band, sha, areas }
+```
+
+From TypeScript, `parseSafetyPayload(commentBody)` in `@mergewatch/core` does the same and returns `null` for a missing or malformed line.
+
+### Writing areas
+
+An area tells the agent what matters in your repository. There are three shapes.
+
+A **named business flow**, matched by file pattern:
+
+```yaml .mergewatch.yml
+safetyScore:
+  enabled: true
+  areas:
+    - name: Checkout
+      patterns: ["services/checkout/**", "web/src/cart/**"]
+      level: risky
+      notes: "A failure here stops every purchase"
+```
+
+A **file type**, where the pattern is the name:
+
+```yaml .mergewatch.yml
+safetyScore:
+  enabled: true
+  areas:
+    - patterns: ["**/migrations/**"]
+      level: risky
+      notes: "Schema change; check it can be rolled back"
+    - patterns: ["internal-tools/**"]
+      level: safe
+      notes: "Staff-only tooling; missing tests are acceptable"
+```
+
+A **pattern-less** area, which the agent judges from the diff. It needs a `name`, and its `level` and `notes` are guidance rather than a cap:
+
+```yaml .mergewatch.yml
+safetyScore:
+  enabled: true
+  areas:
+    - name: Billing
+      notes: "Anything that changes what or when we charge customers is risky"
+```
+
+Patterns are globs matched against every changed file's path, including dot-files and dot-directories. A file excluded by `excludePatterns` or `maxFileDiffKB` is not matched, and neither is a pure rename out of an area (the diff names only the new path).
+
+### Cost
+
+One safety-agent call per review on the primary model, plus one more for each round in which the agent asks to open files (for example, tests), when codebase awareness is on. That is at most `1 + maxFileRequestRounds` calls. The calls are included in the review's reported cost. When the safety score is disabled, it costs nothing.
 
 ## Which model actually runs
 

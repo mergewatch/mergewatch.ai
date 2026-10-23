@@ -1,0 +1,20 @@
+{
+  "score": 33,
+  "uncappedScore": 53,
+  "clampedBy": "Migrations",
+  "band": "risky",
+  "emoji": "⛈️",
+  "factors": {
+    "blastRadius": { "rating": 2, "label": "risky", "note": "Adds a NOT NULL column to the orders table.", "cappedFrom": 4, "cappedFromLabel": "safe" },
+    "changeSize": { "rating": 5, "label": "safe", "note": "One migration and one model field, +24/−2." },
+    "testing": { "rating": 3, "label": "caution", "note": "The model change is tested; the migration is not." },
+    "errorMonitoring": { "rating": 4, "label": "safe", "note": "Migration failures are logged by the runner." },
+    "rollback": { "rating": 3, "label": "caution", "note": "The down migration drops the column and its data." }
+  },
+  "concerns": ["The backfill locks the orders table while it runs."],
+  "matchedAreas": [
+    { "name": "Migrations", "level": "risky", "notes": "Schema change; check it can be rolled back", "matchedPatterns": ["**/migrations/**"], "files": ["db/migrations/0042_add_region.sql"] }
+  ],
+  "appliedAreas": [],
+  "appliedNotes": []
+}

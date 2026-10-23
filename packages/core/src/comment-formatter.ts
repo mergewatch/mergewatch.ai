@@ -779,6 +779,15 @@ function renderSafety(r: SafetyResult, headSha: string): { head: string[]; detai
   return { head, detail };
 }
 
+/**
+ * #715 — the safety section exactly as the comment renders it, band line
+ * through concerns. The docs' comment example is generated from this.
+ */
+export function formatSafetySection(result: SafetyResult, headSha: string): string {
+  const { head, detail } = renderSafety(result, headSha);
+  return [...head, ...detail].join('\n').trimEnd();
+}
+
 export function formatReviewComment(options: FormatOptions): string {
   const {
     summary,
