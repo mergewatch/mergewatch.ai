@@ -80,7 +80,11 @@ export class PostgresReviewStore implements IReviewStore {
         ${review.headBranch ?? null}, ${review.baseBranch ?? null}, ${review.installationId ?? null}
       )
       ON CONFLICT (repo_full_name, pr_number_commit_sha)
-      DO UPDATE SET status = 'in_progress', created_at = ${review.createdAt}
+      DO UPDATE SET status = 'in_progress', created_at = ${review.createdAt},
+        -- #713: a re-claim starts a fresh safety result. The 'complete' write
+        -- skips undefined fields, so a re-run whose safety agent fails would
+        -- otherwise keep the previous run's band.
+        safety_score = NULL, safety_band = NULL
       -- #355: 'pending' is claimable — a throttled review is parked back at
       -- 'pending' before the retry, and the retry must be able to re-claim it.
       WHERE reviews.status IN ('failed', 'skipped', 'complete', 'pending')
@@ -145,6 +149,8 @@ export class PostgresReviewStore implements IReviewStore {
       ...(row.skipReason ? { skipReason: row.skipReason } : {}),
       ...(row.mergeScore != null ? { mergeScore: row.mergeScore } : {}),
       ...(row.mergeScoreReason ? { mergeScoreReason: row.mergeScoreReason } : {}),
+      ...(row.safetyScore != null ? { safetyScore: row.safetyScore } : {}),
+      ...(row.safetyBand ? { safetyBand: row.safetyBand as ReviewItem['safetyBand'] } : {}),
       ...(row.findings ? { findings: row.findings as any } : {}),
       ...(row.feedback ? { feedback: row.feedback as any } : {}),
       ...(row.reactions ? { reactions: row.reactions as any } : {}),

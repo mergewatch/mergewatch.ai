@@ -43,3 +43,14 @@ describe('DynamoReviewStore.claimReview (#355)', () => {
     await expect(store.claimReview(review as any)).rejects.toThrow('boom');
   });
 });
+
+describe('DynamoReviewStore — safety score and band (#713)', () => {
+  it("the 'complete' write sets both attributes", async () => {
+    const send = vi.fn().mockResolvedValue({});
+    await new DynamoReviewStore({ send } as any, 'reviews').updateStatus('octo/repo', '7#abc', 'complete', { safetyScore: 33, safetyBand: 'risky' });
+    const { UpdateExpression: expr, ExpressionAttributeValues: vals } = send.mock.calls[0][0].input;
+    const valueFor = (attr: string) => vals[expr.match(new RegExp(`${attr} = (:v\\d+)`))![1]];
+    expect(valueFor('safetyScore')).toBe(33);
+    expect(valueFor('safetyBand')).toBe('risky');
+  });
+});

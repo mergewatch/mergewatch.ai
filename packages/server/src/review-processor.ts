@@ -832,6 +832,9 @@ export async function processReviewJob(
     const comment = formatReviewComment({
       summary: result.summary,
       agentFailures: result.agentFailures,
+      // #713 — the safety score (or why it could not be computed).
+      safety: result.safety ? { result: result.safety, headSha } : undefined,
+      safetyConfigErrors: config.safetyScoreErrors,
       findings: result.findings,
       showSummary: instSettings.summary?.prSummary !== false,
       showIssuesTable: instSettings.summary?.issuesTable !== false,
@@ -1059,6 +1062,7 @@ export async function processReviewJob(
       diagramText: result.diagram,
       mergeScore: result.mergeScore,
       mergeScoreReason: result.mergeScoreReason,
+      ...(result.safety ? { safetyScore: result.safety.score, safetyBand: result.safety.band } : {}),
       findings: result.findings as any,
       reactions,
       inputTokens: result.inputTokens || undefined,

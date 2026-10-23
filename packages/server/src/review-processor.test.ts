@@ -1947,3 +1947,51 @@ describe('processReviewJob — safety score config (#711)', () => {
     expect(safety().enabled).toBe(true);
   });
 });
+
+describe('processReviewJob — safety rendering and persistence (#713)', () => {
+  const SAFETY = {
+    score: 33, uncappedScore: 78, clampedBy: 'Migrations', band: 'risky', emoji: '⛈️',
+    factors: {}, concerns: [], matchedAreas: [], appliedAreas: [], appliedNotes: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getPRContext as any).mockResolvedValue(basePRContext);
+    (getPRDiff as any).mockResolvedValue('diff content');
+    (shouldSkipPR as any).mockReturnValue(null);
+    (shouldSkipByRules as any).mockReturnValue(null);
+    (fetchRepoConfig as any).mockResolvedValue(null);
+    (fetchRepoConfigResult as any).mockResolvedValue({ ok: true, config: null });
+    (findExistingBotComment as any).mockResolvedValue(null);
+    (postReviewComment as any).mockResolvedValue(100);
+    (isStillPRHead as any).mockResolvedValue(true);
+  });
+
+  const completeExtra = (deps: ReturnType<typeof makeDeps>) =>
+    vi.mocked(deps.reviewStore.updateStatus).mock.calls.find((c) => c[2] === 'complete')?.[3] as Record<string, unknown>;
+  const formatArgs = () => vi.mocked(formatReviewComment).mock.calls[0][0] as any;
+
+  it('a safety result reaches the comment with the PR head, and the complete write', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue({ ...basePipelineResult, safety: SAFETY } as any);
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+    expect(formatArgs().safety).toEqual({ result: SAFETY, headSha: basePRContext.headSha });
+    expect(completeExtra(deps)).toMatchObject({ safetyScore: 33, safetyBand: 'risky' });
+  });
+
+  it('no result: neither the comment option nor the stored keys', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    const deps = makeDeps();
+    await processReviewJob(makeJob(), deps);
+    expect(formatArgs().safety).toBeUndefined();
+    expect(completeExtra(deps)).not.toHaveProperty('safetyScore');
+    expect(completeExtra(deps)).not.toHaveProperty('safetyBand');
+  });
+
+  it('an invalid default-branch block reaches the comment as safetyConfigErrors', async () => {
+    vi.mocked(runReviewPipeline).mockResolvedValue(basePipelineResult);
+    (fetchRepoConfigResult as any).mockResolvedValue({ ok: true, config: { safetyScore: { enabled: true, bands: { risky: 70 } } } });
+    await processReviewJob(makeJob(), makeDeps());
+    expect(formatArgs().safetyConfigErrors?.[0]).toMatch(/^safetyScore\.bands/);
+  });
+});

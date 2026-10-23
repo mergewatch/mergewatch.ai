@@ -66,6 +66,9 @@ export const reviews = pgTable('reviews', {
   // commentId. Drives the reaction-delta → dispute/agreement increments
   // on subsequent reviews.
   inlineReactionsSnapshot: jsonb('inline_reactions_snapshot').default({}),
+  // #713 — the advisory safety score and band (#712); null when not computed.
+  safetyScore: integer('safety_score'),
+  safetyBand: text('safety_band'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.repoFullName, t.prNumberCommitSha] }),
   installationIdx: index('reviews_installation_idx').on(t.installationId),

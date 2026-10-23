@@ -111,3 +111,45 @@ describe('PostgresReviewStore.claimReview (#355)', () => {
     expect(text).toContain("IN ('failed', 'skipped', 'complete', 'pending')");
   });
 });
+
+describe('PostgresReviewStore — safety score and band (#713)', () => {
+  it("the 'complete' write reaches real SQL with safety_score and safety_band", async () => {
+    // Capture what updateStatus hands to set(), then build it with a real
+    // drizzle builder (no connection): set() drops keys that have no column,
+    // so this is what proves the columns exist.
+    let captured: Record<string, unknown> | undefined;
+    const chain = { set: vi.fn((s: Record<string, unknown>) => { captured = s; return chain; }), where: vi.fn(async () => undefined) };
+    const store = new PostgresReviewStore({ update: vi.fn(() => chain) } as any);
+    await store.updateStatus('octo/repo', '7#abc1234', 'complete', { safetyScore: 33, safetyBand: 'risky' });
+
+    const { drizzle } = await import('drizzle-orm/postgres-js');
+    const { reviews } = await import('./schema.js');
+    const { eq } = await import('drizzle-orm');
+    const q = drizzle.mock().update(reviews).set(captured as any).where(eq(reviews.repoFullName, 'octo/repo')).toSQL();
+    expect(q.sql).toContain('"safety_score"');
+    expect(q.sql).toContain('"safety_band"');
+    expect(q.params).toContain(33);
+    expect(q.params).toContain('risky');
+  });
+
+  it('queryByPR reads them back', async () => {
+    const { db, rows } = makeMockDb();
+    rows.push({ repoFullName: 'octo/repo', prNumberCommitSha: '7#abc1234', status: 'complete', createdAt: 't', safetyScore: 33, safetyBand: 'risky' });
+    const [r] = await new PostgresReviewStore(db).queryByPR('octo/repo', '7#');
+    expect(r).toMatchObject({ safetyScore: 33, safetyBand: 'risky' });
+  });
+
+  it('a re-claim resets the safety fields in DO UPDATE SET', async () => {
+    const execute = vi.fn(async (_stmt: unknown) => [] as unknown[]);
+    await new PostgresReviewStore({ execute } as any).claimReview({
+      repoFullName: 'octo/repo', prNumberCommitSha: '7#abc1234', status: 'pending', createdAt: 't',
+    } as ReviewItem);
+    const sqlArg = execute.mock.calls[0][0] as any;
+    const text = (sqlArg.queryChunks ?? [])
+      .map((c: any) => (typeof c === 'string' ? c : Array.isArray(c?.value) ? c.value.join('') : ''))
+      .join('');
+    const doUpdate = text.slice(text.indexOf('DO UPDATE SET'), text.indexOf('WHERE reviews.status'));
+    expect(doUpdate).toContain('safety_score = NULL');
+    expect(doUpdate).toContain('safety_band = NULL');
+  });
+});

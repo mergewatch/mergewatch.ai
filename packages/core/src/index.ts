@@ -203,6 +203,9 @@ export { formatReviewComment,
   mergeScoreMeta, buildReviewDetailUrl, buildWorkDoneSection, countBlockingCriticals, buildCheckTitle, escapeUserContent } from './comment-formatter.js';
 export { renderCostPayload, parseCostPayload, COST_PAYLOAD_MARKER } from './comment-formatter.js';
 export type { CostPayload } from './comment-formatter.js';
+// #713 — the machine-readable safety line.
+export { renderSafetyPayload, parseSafetyPayload, SAFETY_PAYLOAD_MARKER } from './comment-formatter.js';
+export type { SafetyPayload } from './comment-formatter.js';
 export type { Finding, WorkDoneSection } from './comment-formatter.js';
 
 // ─── Review delta ────────────────────────────────────────────────────────────

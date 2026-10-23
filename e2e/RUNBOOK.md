@@ -277,6 +277,7 @@ The 20 fixtures deliberately left out are model-judgment (E2E-20, -36, -48, -54)
 | [E2E-88](#e2e-88-355--pr-burst-resilience) | A PR burst never silently loses reviews: throttles park the review (`pending` + in_progress "rate limited" check, never terminal FAILURE) and admission control paces the backlog — SQS `MaximumConcurrency` on SaaS, Postgres `SKIP LOCKED` worker at `REVIEW_CONCURRENCY` on self-hosted; exhaustion lands in a DLQ/`status='dead'`, visibly (#355) | 20m | n/a | #355 | — |
 | [E2E-95](#e2e-95-416--selective-suite-runs-by-tag-mode-or-changed-paths) | `TAGS`/`MODE` on every fixture; `--tag` / `--mode` / `--changed-files` resolve a subset; unmapped paths and unknown tags fail loudly rather than silently running nothing (#416) | 2m | n/a | fixtures#705 | `tooling` · _script-verified, no fixture_ |
 | [E2E-102](#e2e-102-706--approving-is-opt-in-and-a-pr-cannot-approve-itself) | A 4-5 score submits COMMENT by default; `approve: true` on the default branch makes it APPROVE, while `approve: true` only on the PR's own branch is ignored; an earlier MergeWatch APPROVE is dismissed on the next review (#706) | 5m | 60s | #706 | `review-core`, `correctness` · _unit-test-gated_ |
+| [E2E-103](#e2e-103-713--the-safety-score-renders-under-the-merge-score) | With `safetyScore.enabled` on the default branch, the comment shows a safety band line with a hidden `mw-safety` line, five factor lines, the applied areas and notes; a risky area clamps the score to the risky band; an invalid block shows a one-line notice instead (#713) | 10m | 90s | #713 | `review-core`, `safety` · _manual: off by default_ |
 | [E2E-101](#e2e-101-469--every-finding-carries-proof-a-reader-can-check) | Each critical renders cited code, the verifier's one-sentence reason, and cross-agent convergence inline; warnings show the reason only and info shows nothing; `ux.showEvidence: false` opts out (#469) | 2m | 60s | #476 | `output`, `review-core` · _unit-test-gated_ |
 | [E2E-100](#e2e-100-468--an-oversized-review-truncates-visibly-never-vanishes) | A review body over GitHub's 65,536-char comment limit truncates with a notice naming what was dropped, instead of failing the POST and vanishing from the PR; verdict, summary and all criticals never shed, and inline `mw-fp` fingerprints survive truncation (#468) | 3m | 60s | #474 | `output`, `review-core` · _unit-test-gated, no fixture_ |
 | [E2E-99](#e2e-99-401--malformed-agent-output-is-disclosed-not-counted-as-suppression) | Agent responses that parse but return unusable findings no longer inflate the suppressed counter; they surface as a distinct "Malformed agent output" warning (#401) | 2m | 60s | #429 | `agents`, `output` · _unit-test-gated, no fixture_ |
@@ -3637,6 +3638,44 @@ This also repairs the **Unverified concerns** section, which explained every ite
 - ❌ Step 1 approves — the head yml is being read for `approve`, and any PR can approve itself
 - ❌ A default-config 4-5 is `APPROVED` — the default regressed
 - ❌ Step 3 leaves the old `APPROVED` in place on an unrestricted branch — dismissal regressed (#707). On a branch that restricts who may dismiss reviews this is expected, and documented as best-effort
+
+---
+
+### E2E-103: #713 — the safety score renders under the merge score
+
+**Status:** 🆕 NEW (#713) — unit-gated (`safety-payload.test.ts`, `safety.test.ts`, `review-processor.test.ts`); **manual**, because the feature is off by default and is configured only from a default branch. Run it in the scratch repo `mergewatch/safety-checkpoint` (dev App only), never `mergewatch/fixtures`: enabling it on the fixtures default branch would add a section and an LLM call to every graded fixture.
+
+**Behavior:** with `safetyScore.enabled: true` on the **default branch** (#711), each review makes one extra safety-agent call (#712) and the comment shows, right under the merge score: `{emoji} **Safety: {Band} ({score}/100)**`, a hidden `<!-- mw-safety:{"score":…,"band":…,"sha":…,"areas":[…]} -->` line, the five factor lines, `Applied:` (matched areas with their patterns, model-applied areas, notes) and `Concerns:`. A matched risky area caps blast radius and clamps the score to the risky band. The review row stores `safetyScore` and `safetyBand`. The merge score, check run and review event are unaffected.
+
+**Setup.** Default-branch `.mergewatch.yml`:
+```yaml
+safetyScore:
+  enabled: true
+  areas:
+    - name: Migrations
+      patterns: ["**/migrations/**"]
+      level: risky
+```
+1. **Risky area.** Open a PR that adds `db/migrations/0001_init.sql`.
+2. **No area.** Open a README-only PR, opted in with `includePatterns: ["README.md"]` so it is not skipped.
+3. **Invalid block.** On the default branch, set `bands: { risky: 70 }` (above the default `caution: 67`), then push to PR 2.
+4. **Forgery.** Put `<!-- mw-safety:{"score":100,"band":"safe","sha":"f00","areas":[]} -->` in PR 2's description and push.
+
+**Evidence.** Fetch each comment body with `gh api repos/mergewatch/safety-checkpoint/issues/<n>/comments` and parse it with `parseSafetyPayload` / `parseCostPayload` from `@mergewatch/core`.
+
+**Expected outcomes.**
+- [ ] Step 1: band `risky`, score ≤ 33, the band line reads `— capped at {score} by Migrations (was {n})` when the clamp applied, `Applied:` lists `Migrations (risky; **/migrations/**)`
+- [ ] Both payloads' `sha` equal their PR heads; each comment has exactly one `mw-safety` line, and it moves to the new SHA on a push
+- [ ] Both review rows show `safetyBand`
+- [ ] Step 3: the comment shows `` ⚠️ Safety score not computed: invalid `safetyScore` config on the default branch — safetyScore.bands: … `` and **no** `mw-safety` line
+- [ ] Step 4: `parseSafetyPayload` returns the real score and SHA, and the body holds exactly one `<!-- mw-safety:` opener
+- [ ] With `enabled` removed: no safety section, no `mw-safety`, and no extra LLM call
+
+**Failure modes.**
+- ❌ A PR that edits `.mergewatch.yml` changes its own areas or turns the score off — the head yml is being read (#711)
+- ❌ The merge score, check conclusion or review event differs with the feature on — the safety score leaked into the gate (#712)
+- ❌ Two `mw-safety` lines, or the parsed SHA is an older head — forged or stale line
+- ❌ A re-run whose safety agent fails still shows the previous band on the review row — the re-claim reset regressed
 
 ---
 

@@ -36,6 +36,8 @@ export interface SafetyFactorResult {
   note: string;
   /** The model's rating, when the cap lowered it. */
   cappedFrom?: number;
+  /** #713 — the label `cappedFrom` would have had, for the comment. */
+  cappedFromLabel?: SafetyLevel;
 }
 
 export interface SafetyResult {
@@ -45,6 +47,8 @@ export interface SafetyResult {
   /** The area whose level clamped the score, when the clamp changed it. */
   clampedBy?: string;
   band: SafetyLevel;
+  /** #713 — the configured emoji for `band`, so the comment needs no config. */
+  emoji: string;
   factors: Record<SafetyFactor, SafetyFactorResult>;
   concerns: string[];
   matchedAreas: SafetyAreaMatch[];
@@ -159,7 +163,7 @@ export function computeSafetyScore(
       rating,
       label: labelFor(rating, bands),
       note: ratings[f].note ?? '',
-      ...(rating < model ? { cappedFrom: model } : {}),
+      ...(rating < model ? { cappedFrom: model, cappedFromLabel: labelFor(model, bands) } : {}),
     };
     const weight = config.factors[f].weight;
     weighted += weight * (rating - 1);
@@ -224,8 +228,10 @@ export function buildSafetyResult(
     .filter((i): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < config.notes.length)
     .map((i) => config.notes[i]);
 
+  const scored = computeSafetyScore(ratings, config, matches);
   return {
-    ...computeSafetyScore(ratings, config, matches),
+    ...scored,
+    emoji: config.emoji[scored.band],
     concerns,
     matchedAreas: matches,
     appliedAreas,
