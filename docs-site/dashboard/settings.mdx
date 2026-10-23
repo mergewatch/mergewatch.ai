@@ -37,6 +37,7 @@ The stored settings object (`InstallationSettings` in `@mergewatch/core`) has th
 | `customInstructions` | string (≤ 1000 chars) | `""` | Free-text instructions injected into every agent prompt. |
 | `commentHeader` | string | `""` | Optional header line prepended to every MergeWatch comment. When empty, MergeWatch uses its built-in header. |
 | `approve` | boolean | `false` | **Approve PRs** toggle. When `true`, a merge score of 4--5 submits an `APPROVE` review instead of a `COMMENT`. A repository's default-branch `.mergewatch.yml` `approve:` overrides it; a value on a PR's own branch never does. See [GitHub review events](/overview/how-it-works#github-review-events). |
+| `safetyScore.enabled` | boolean | `false` | **Safety score** toggle. When on, each review adds an advisory safe / caution / risky rating to the comment, at the cost of one extra safety-agent call. It never affects the merge score or the check. A repository's default-branch `.mergewatch.yml` `safetyScore.enabled` overrides it; a value on a PR's own branch never does. |
 
 <Tip>
 Use **custom instructions** to encode team-wide conventions: *"We use structured logging — flag any use of console.log in production code"* or *"All API endpoints must validate input with Zod schemas."* The live character counter enforces the 1,000-character cap.
@@ -70,6 +71,7 @@ The API rejects requests that fail any of the following checks with `400 Bad Req
 - `maxComments` must be a number between 1 and 50 (inclusive).
 - `customInstructions` must be a string of at most 1,000 characters.
 - `approve` must be present and a boolean. The request replaces the stored settings whole, so an omitted field would otherwise be erased.
+- `safetyScore.enabled` must be present and a boolean, for the same reason.
 
 ---
 

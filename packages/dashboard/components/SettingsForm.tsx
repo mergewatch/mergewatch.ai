@@ -16,6 +16,7 @@ interface InstallationSettings {
   customInstructions: string;
   commentHeader: string;
   approve: boolean;
+  safetyScore: { enabled: boolean };
 }
 
 const DEFAULT_SETTINGS: InstallationSettings = {
@@ -34,6 +35,8 @@ const DEFAULT_SETTINGS: InstallationSettings = {
   commentHeader: "",
   // #706 — approving is opt-in.
   approve: false,
+  // #714 — the safety score is opt-in.
+  safetyScore: { enabled: false },
 };
 
 interface SettingsFormProps {
@@ -381,6 +384,22 @@ export default function SettingsForm({
                 summary: { ...s.summary, diagram: v },
               }))
             }
+            disabled={disabled}
+          />
+        </div>
+      </section>
+
+      {/* #714 — advisory safety score */}
+      <section className="mt-8">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-fg-muted pb-2 border-b border-border-default">
+          Safety score
+        </h2>
+        <div className="mt-3 divide-y divide-border-subtle rounded-lg border border-border-default overflow-hidden">
+          <Toggle
+            label="Safety score"
+            description="Advisory safe / caution / risky rating in the review comment. Adds one safety-agent call per review. Repos whose default-branch .mergewatch.yml sets safetyScore.enabled override this toggle."
+            value={settings.safetyScore.enabled}
+            onChange={(v) => setSettings((s) => ({ ...s, safetyScore: { enabled: v } }))}
             disabled={disabled}
           />
         </div>
