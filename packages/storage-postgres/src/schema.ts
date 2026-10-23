@@ -71,6 +71,8 @@ export const reviews = pgTable('reviews', {
   // #713 — the advisory safety score and band (#712); null when not computed.
   safetyScore: integer('safety_score'),
   safetyBand: text('safety_band'),
+  // #716 — reviewers' `@mergewatch safety` votes, append-only.
+  safetyFeedback: jsonb('safety_feedback').notNull().default([]),
 }, (t) => ({
   pk: primaryKey({ columns: [t.repoFullName, t.prNumberCommitSha] }),
   installationIdx: index('reviews_installation_idx').on(t.installationId),

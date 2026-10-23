@@ -308,6 +308,16 @@ export type ReviewStatus = 'pending' | 'in_progress' | 'complete' | 'failed' | '
  *   - List reviews for a repo:   PK=repoFullName (Query)
  *   - List reviews for a PR:     PK=repoFullName, SK begins_with("42#") (Query)
  */
+/** #716 — one `@mergewatch safety <band> [reason]` vote. */
+export interface SafetyFeedbackEntry {
+  band: 'safe' | 'caution' | 'risky';
+  /** GitHub login of the commenter. */
+  user: string;
+  /** ISO timestamp. */
+  at: string;
+  reason?: string;
+}
+
 export interface ReviewItem {
   // --- Key attributes ---
 
@@ -419,6 +429,11 @@ export interface ReviewItem {
    */
   safetyScore?: number;
   safetyBand?: 'safe' | 'caution' | 'risky';
+  /**
+   * #716 — reviewers' `@mergewatch safety <band>` votes on this review, in
+   * the order cast. Append-only: readers take the last entry per user.
+   */
+  safetyFeedback?: SafetyFeedbackEntry[];
   /** All findings from the review. */
   findings?: ReviewFinding[];
   /** User feedback from dashboard: thumbs up or down. */

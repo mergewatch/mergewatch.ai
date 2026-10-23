@@ -4,7 +4,7 @@ import type { IInstallationStore, IReviewStore, IFindingDispositionStore, IFPIns
   IReviewTraceStore,
 } from '@mergewatch/core';
 import type { ReviewJobPayload, ReviewMode, PullRequestEvent, IssueCommentEvent, PullRequestReviewCommentEvent, InstallationEvent, CheckRunEvent, CheckSuiteEvent, GitHubRepository, IReviewJobQueue } from '@mergewatch/core';
-import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, decideCheckSuiteRereview, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose } from '@mergewatch/core';
+import { REVIEW_TRIGGERING_ACTIONS, COMMENT_LOOKUP_ACTIONS, MERGEWATCH_CHECK_RUN_NAME, checkRunName, decideCheckSuiteRereview, findExistingBotComment, classifyPrSource, fetchRepoConfig, mergeConfig, isBotActor, sweepInlineReactionsOnClose, parseSafetyFeedback, recordSafetyFeedback } from '@mergewatch/core';
 import { processReviewJob } from './review-processor.js';
 // #416 — deployment stage, so review artifacts (comment marker, check-run
 // name) are scoped per stage. Absent means prod, which is the frozen
@@ -288,6 +288,26 @@ async function handleIssueComment(payload: IssueCommentEvent, deps: WebhookDeps)
   // carry a `[bot]` login suffix; we want to catch those too so MergeWatch
   // never replies to CopilotAI / dependabot / other reviewer bots.
   if (isBotActor(sender) || isBotActor(comment.user)) return;
+
+  // #716 — `@mergewatch safety <band>` is feedback, not a review request:
+  // recorded here, synchronously, and it never dispatches a job — even when
+  // the same comment also says `@mergewatch review`.
+  const safetyFeedback = parseSafetyFeedback(comment.body);
+  if (safetyFeedback) {
+    const outcome = await recordSafetyFeedback({
+      command: safetyFeedback,
+      user: sender.login,
+      repoFullName: repository.full_name,
+      owner: repository.owner.login,
+      repo: repository.name,
+      prNumber: issue.number,
+      commentId: comment.id,
+      octokit: await deps.authProvider.getInstallationOctokit(installation.id),
+      reviewStore: deps.reviewStore,
+    });
+    console.log(`[safety-feedback] ${repository.full_name}#${issue.number}: ${outcome}`);
+    return;
+  }
 
   const parsed = parseReviewMode(comment.body);
   if (!parsed) return; // No @mergewatch mention — ignore comment

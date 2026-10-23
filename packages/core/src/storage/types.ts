@@ -17,6 +17,7 @@ import type {
   ReviewCostRecord,
   OrgCustomAgent,
   OrgSafetyArea,
+  SafetyFeedbackEntry,
 } from '../types/db.js';
 import type { ReviewJobPayload } from '../types/github.js';
 
@@ -65,6 +66,11 @@ export interface IReviewStore {
     extra?: Partial<ReviewItem>,
   ): Promise<void>;
   queryByPR(repoFullName: string, prPrefix: string, limit?: number): Promise<ReviewItem[]>;
+  /**
+   * #716 — append one `@mergewatch safety` vote to a review row, atomically
+   * (no read-modify-write), so concurrent votes are all kept.
+   */
+  appendSafetyFeedback(repoFullName: string, key: string, entry: SafetyFeedbackEntry): Promise<void>;
 }
 
 /**

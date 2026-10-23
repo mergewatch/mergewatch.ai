@@ -27,6 +27,8 @@ import {
   mergeConfig,
   isBotActor,
   sweepInlineReactionsOnClose,
+  parseSafetyFeedback,
+  recordSafetyFeedback,
 } from '@mergewatch/core';
 import {
   claimOssPreapproval,
@@ -346,6 +348,28 @@ async function handleIssueCommentEvent(
   // and the comment author since OAuth-driven Apps may surface as type=User
   // while still carrying a `[bot]` login suffix.
   if (isBotActor(event.sender) || isBotActor(event.comment.user)) return;
+
+  // #716 — `@mergewatch safety <band>` is feedback, not a review request:
+  // recorded here, synchronously, and it never enqueues a job — even when the
+  // same comment also says `@mergewatch review`.
+  const safetyFeedback = parseSafetyFeedback(event.comment.body);
+  if (safetyFeedback) {
+    const feedbackInstallationId = event.installation?.id;
+    if (!feedbackInstallationId) return;
+    const outcome = await recordSafetyFeedback({
+      command: safetyFeedback,
+      user: event.sender.login,
+      repoFullName: event.repository.full_name,
+      owner: event.repository.owner.login,
+      repo: event.repository.name,
+      prNumber: event.issue.number,
+      commentId: event.comment.id,
+      octokit: await authProvider.getInstallationOctokit(feedbackInstallationId),
+      reviewStore,
+    });
+    console.log(`[safety-feedback] ${event.repository.full_name}#${event.issue.number}: ${outcome}`);
+    return;
+  }
 
   const mode = parseReviewMode(event.comment.body);
   if (!mode) return;

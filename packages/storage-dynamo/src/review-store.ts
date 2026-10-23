@@ -7,7 +7,7 @@
 
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { IReviewStore } from '@mergewatch/core';
-import type { ReviewItem, ReviewStatus } from '@mergewatch/core';
+import type { ReviewItem, ReviewStatus, SafetyFeedbackEntry } from '@mergewatch/core';
 
 export class DynamoReviewStore implements IReviewStore {
   constructor(
@@ -88,6 +88,21 @@ export class DynamoReviewStore implements IReviewStore {
         UpdateExpression: `SET ${updateParts.join(', ')}`,
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
+      }),
+    );
+  }
+
+  /**
+   * #716 — atomic append: `list_append` on the server, so concurrent votes
+   * are all kept and nothing is read first.
+   */
+  async appendSafetyFeedback(repoFullName: string, prNumberCommitSha: string, entry: SafetyFeedbackEntry): Promise<void> {
+    await this.client.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { repoFullName, prNumberCommitSha },
+        UpdateExpression: 'SET safetyFeedback = list_append(if_not_exists(safetyFeedback, :empty), :entry)',
+        ExpressionAttributeValues: { ':empty': [], ':entry': [entry] },
       }),
     );
   }

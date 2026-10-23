@@ -996,3 +996,74 @@ describe('dispatch via review queue (#355)', () => {
     expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #716 — `@mergewatch safety <band>` feedback
+// ---------------------------------------------------------------------------
+
+describe('createWebhookHandler — @mergewatch safety feedback (#716)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchRepoConfig.mockResolvedValue(null);
+    mockClassifyPrSource.mockResolvedValue({ source: 'human' });
+  });
+
+  // DynamoDB-shaped: descending SHA order, so the newest scored row is second.
+  const ROWS = [
+    { repoFullName: 'octo/repo', prNumberCommitSha: '42#f00', status: 'complete', createdAt: '2026-01-01T00:00:00Z', safetyBand: 'safe' },
+    { repoFullName: 'octo/repo', prNumberCommitSha: '42#000', status: 'complete', createdAt: '2026-01-02T00:00:00Z', safetyBand: 'risky' },
+    { repoFullName: 'octo/repo', prNumberCommitSha: '42#aaa', status: 'complete', createdAt: '2026-01-03T00:00:00Z' },
+  ];
+
+  async function send(body: string, rows: unknown[] = ROWS, senderType: 'User' | 'Bot' = 'User') {
+    const deps = makeDeps();
+    const createForIssueComment = vi.fn().mockResolvedValue({ data: { id: 1 } });
+    (deps.authProvider.getInstallationOctokit as any).mockResolvedValue({
+      reactions: { createForIssueComment },
+      pulls: { get: vi.fn().mockResolvedValue({ data: { head: { sha: 'h' } } }) },
+    });
+    (deps.reviewStore as any).queryByPR = vi.fn().mockResolvedValue(rows);
+    (deps.reviewStore as any).appendSafetyFeedback = vi.fn().mockResolvedValue(undefined);
+    const event = makeIssueCommentEvent({ body, senderType, senderLogin: senderType === 'Bot' ? 'ci[bot]' : 'alice' });
+    const { req, res } = makeReqRes(JSON.stringify(event), 'issue_comment');
+    await createWebhookHandler(deps)(req, res);
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    return { deps, createForIssueComment, append: (deps.reviewStore as any).appendSafetyFeedback, query: (deps.reviewStore as any).queryByPR };
+  }
+
+  it('records the vote on the newest scored row, reacts +1, and dispatches no job', async () => {
+    const { append, query, createForIssueComment } = await send('@mergewatch safety risky');
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledWith('octo/repo', '42#', 50);
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(append.mock.calls[0][1]).toBe('42#000');
+    expect(append.mock.calls[0][2]).toMatchObject({ band: 'risky', user: 'alice' });
+    expect(createForIssueComment.mock.calls[0][0]).toMatchObject({ comment_id: 555, content: '+1' });
+  });
+
+  it('with no scored row: no write, a confused reaction, no job', async () => {
+    const { append, createForIssueComment } = await send('@mergewatch safety caution', [ROWS[2]]);
+    expect(append).not.toHaveBeenCalled();
+    expect(createForIssueComment.mock.calls[0][0]).toMatchObject({ content: 'confused' });
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('a comment that also says @mergewatch review is handled only as feedback', async () => {
+    const { append } = await send('@mergewatch safety caution\n@mergewatch review');
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('(pin) a bot\'s vote is ignored by the existing bot filter', async () => {
+    const { append } = await send('@mergewatch safety risky', ROWS, 'Bot');
+    expect(append).not.toHaveBeenCalled();
+    expect(mockProcessReviewJob).not.toHaveBeenCalled();
+  });
+
+  it('(pin) @mergewatch safety why so risky? is still a respond job', async () => {
+    const { append } = await send('@mergewatch safety why so risky?');
+    expect(append).not.toHaveBeenCalled();
+    expect(mockProcessReviewJob).toHaveBeenCalledTimes(1);
+    expect(mockProcessReviewJob.mock.calls[0][0]).toMatchObject({ mode: 'respond' });
+  });
+});

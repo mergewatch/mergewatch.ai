@@ -153,3 +153,40 @@ describe('PostgresReviewStore — safety score and band (#713)', () => {
     expect(doUpdate).toContain('safety_band = NULL');
   });
 });
+
+describe('PostgresReviewStore — safety feedback (#716)', () => {
+  it('appendSafetyFeedback reaches real SQL on safety_feedback with a jsonb concat', async () => {
+    let captured: Record<string, unknown> | undefined;
+    const chain = { set: vi.fn((s: Record<string, unknown>) => { captured = s; return chain; }), where: vi.fn(async () => undefined) };
+    await new PostgresReviewStore({ update: vi.fn(() => chain) } as any)
+      .appendSafetyFeedback('octo/repo', '7#abc', { band: 'risky', user: 'alice', at: 't' });
+    const { drizzle } = await import('drizzle-orm/postgres-js');
+    const { reviews } = await import('./schema.js');
+    const { eq } = await import('drizzle-orm');
+    const q = drizzle.mock().update(reviews).set(captured as any).where(eq(reviews.repoFullName, 'octo/repo')).toSQL();
+    expect(q.sql).toContain('"safety_feedback"');
+    expect(q.sql).toContain('||');
+    expect(q.params.some((p) => typeof p === 'string' && p.includes('"band":"risky"'))).toBe(true);
+  });
+
+  it('queryByPR returns safetyFeedback from a row that has it', async () => {
+    const { db, rows } = makeMockDb();
+    const entry = { band: 'caution', user: 'bob', at: 't' };
+    rows.push({ repoFullName: 'octo/repo', prNumberCommitSha: '7#abc', status: 'complete', createdAt: 't', safetyFeedback: [entry] });
+    const [r] = await new PostgresReviewStore(db).queryByPR('octo/repo', '7#');
+    expect(r.safetyFeedback).toEqual([entry]);
+  });
+
+  it("a re-claim resets safety_feedback to '[]' in DO UPDATE SET", async () => {
+    const execute = vi.fn(async (_stmt: unknown) => [] as unknown[]);
+    await new PostgresReviewStore({ execute } as any).claimReview({
+      repoFullName: 'octo/repo', prNumberCommitSha: '7#abc', status: 'pending', createdAt: 't',
+    } as ReviewItem);
+    const sqlArg = execute.mock.calls[0][0] as any;
+    const text = (sqlArg.queryChunks ?? [])
+      .map((c: any) => (typeof c === 'string' ? c : Array.isArray(c?.value) ? c.value.join('') : ''))
+      .join('');
+    const doUpdate = text.slice(text.indexOf('DO UPDATE SET'), text.indexOf('WHERE reviews.status'));
+    expect(doUpdate).toContain("safety_feedback = '[]'::jsonb");
+  });
+});

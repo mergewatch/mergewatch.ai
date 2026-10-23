@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DEFAULT_INSTALLATION_SETTINGS } from '@mergewatch/core';
-import { PostgresDashboardInstallationStore } from './dashboard-store';
+import { PostgresDashboardInstallationStore, PostgresDashboardReviewStore } from './dashboard-store';
 
 /** Drizzle chain mock (mirrors installation-store.test). */
 function chain(result: any) {
@@ -75,5 +75,13 @@ describe('PostgresDashboardInstallationStore — org safety areas (#718)', () =>
     const { drizzle } = await import('drizzle-orm/postgres-js');
     const { installationSettings } = await import('./schema.js');
     expect(drizzle.mock().update(installationSettings).set({ safetyAreas: [] } as any).toSQL().sql).toContain('"safety_areas"');
+  });
+});
+
+describe('PostgresDashboardReviewStore — safety feedback (#716)', () => {
+  it('rowToReviewItem returns safetyFeedback from a row that has it', async () => {
+    const entry = { band: 'risky', user: 'alice', at: 't' };
+    const db = chain([{ repoFullName: 'o/r', prNumberCommitSha: '42#a', status: 'complete', createdAt: 't', safetyFeedback: [entry] }]);
+    expect((await new PostgresDashboardReviewStore(db).getReview('o/r', '42#a'))?.safetyFeedback).toEqual([entry]);
   });
 });

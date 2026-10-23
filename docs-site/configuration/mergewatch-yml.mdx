@@ -498,6 +498,21 @@ safetyScore:
 
 Patterns are globs matched against every changed file's path, including dot-files and dot-directories. A file excluded by `excludePatterns` or `maxFileDiffKB` is not matched, and neither is a pure rename out of an area (the diff names only the new path).
 
+### Telling MergeWatch it got the band wrong
+
+Reply on the pull request with a line of its own:
+
+```
+@mergewatch safety risky because the retry path can double-charge
+```
+
+- The band is `safe`, `caution` or `risky` (any case), optionally followed by a reason (at most 500 characters kept).
+- The vote is recorded on the pull request's latest safety-scored review, with your GitHub login and the time. A later vote from the same person supersedes their earlier one; nothing is overwritten in storage.
+- MergeWatch reacts 👍 to your comment when the vote is recorded, and 😕 when there is no safety-scored review to record it on (the score is off, or the pull request was never scored).
+- It never triggers a review or a model call, and it never changes the score, the comment or the check. A comment with this line is handled only as feedback, even if it also says `@mergewatch review`.
+- Anything else after `@mergewatch safety` (for example `@mergewatch safety why so risky?`) is an ordinary question to MergeWatch.
+- Only the pull request's 50 most recently reviewed commits are searched for the latest scored review.
+
 ### Cost
 
 One safety-agent call per review on the primary model, plus one more for each round in which the agent asks to open files (for example, tests), when codebase awareness is on. That is at most `1 + maxFileRequestRounds` calls. The calls are included in the review's reported cost. When the safety score is disabled, it costs nothing.

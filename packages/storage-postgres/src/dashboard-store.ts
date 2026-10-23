@@ -10,6 +10,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type {
+  SafetyFeedbackEntry,
   IDashboardStore,
   IDashboardInstallationStore,
   IDashboardReviewStore,
@@ -54,6 +55,9 @@ function rowToReviewItem(row: typeof reviews.$inferSelect): ReviewItem {
     ...(row.mergeScoreReason ? { mergeScoreReason: row.mergeScoreReason } : {}),
     ...(row.safetyScore != null ? { safetyScore: row.safetyScore } : {}),
     ...(row.safetyBand ? { safetyBand: row.safetyBand as ReviewItem['safetyBand'] } : {}),
+    ...(Array.isArray(row.safetyFeedback) && row.safetyFeedback.length > 0
+      ? { safetyFeedback: row.safetyFeedback as SafetyFeedbackEntry[] }
+      : {}),
     ...(row.findings ? { findings: row.findings as any } : {}),
     ...(row.feedback ? { feedback: row.feedback as any } : {}),
     ...(row.reactions ? { reactions: row.reactions as any } : {}),
@@ -196,7 +200,7 @@ export class PostgresDashboardInstallationStore implements IDashboardInstallatio
 
 // ─── Review store ───────────────────────────────────────────────────────────
 
-class PostgresDashboardReviewStore implements IDashboardReviewStore {
+export class PostgresDashboardReviewStore implements IDashboardReviewStore {
   constructor(private db: PostgresJsDatabase) {}
 
   async listReviews(

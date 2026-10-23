@@ -169,6 +169,7 @@ describe('persistInlineResolveMemory', () => {
         return updateStatusImpl(...args);
       },
       async queryByPR() { return []; },
+      async appendSafetyFeedback() {},
     };
     return store;
   }

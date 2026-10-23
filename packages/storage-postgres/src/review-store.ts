@@ -1,6 +1,6 @@
 import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import type { IReviewStore, ReviewItem, ReviewStatus } from '@mergewatch/core';
+import type { IReviewStore, ReviewItem, ReviewStatus, SafetyFeedbackEntry } from '@mergewatch/core';
 import { reviews } from './schema.js';
 
 export class PostgresReviewStore implements IReviewStore {
@@ -84,7 +84,9 @@ export class PostgresReviewStore implements IReviewStore {
         -- #713: a re-claim starts a fresh safety result. The 'complete' write
         -- skips undefined fields, so a re-run whose safety agent fails would
         -- otherwise keep the previous run's band.
-        safety_score = NULL, safety_band = NULL
+        safety_score = NULL, safety_band = NULL,
+        -- #716: votes belong to one review run of one sha.
+        safety_feedback = '[]'::jsonb
       -- #355: 'pending' is claimable — a throttled review is parked back at
       -- 'pending' before the retry, and the retry must be able to re-claim it.
       WHERE reviews.status IN ('failed', 'skipped', 'complete', 'pending')
@@ -110,6 +112,17 @@ export class PostgresReviewStore implements IReviewStore {
     await this.db
       .update(reviews)
       .set(set)
+      .where(and(
+        eq(reviews.repoFullName, repoFullName),
+        eq(reviews.prNumberCommitSha, prNumberCommitSha),
+      ));
+  }
+
+  /** #716 — atomic append (`||` on the jsonb array); nothing is read first. */
+  async appendSafetyFeedback(repoFullName: string, prNumberCommitSha: string, entry: SafetyFeedbackEntry): Promise<void> {
+    await this.db
+      .update(reviews)
+      .set({ safetyFeedback: sql`${reviews.safetyFeedback} || ${JSON.stringify([entry])}::jsonb` })
       .where(and(
         eq(reviews.repoFullName, repoFullName),
         eq(reviews.prNumberCommitSha, prNumberCommitSha),
@@ -151,6 +164,9 @@ export class PostgresReviewStore implements IReviewStore {
       ...(row.mergeScoreReason ? { mergeScoreReason: row.mergeScoreReason } : {}),
       ...(row.safetyScore != null ? { safetyScore: row.safetyScore } : {}),
       ...(row.safetyBand ? { safetyBand: row.safetyBand as ReviewItem['safetyBand'] } : {}),
+      ...(Array.isArray(row.safetyFeedback) && row.safetyFeedback.length > 0
+        ? { safetyFeedback: row.safetyFeedback as SafetyFeedbackEntry[] }
+        : {}),
       ...(row.findings ? { findings: row.findings as any } : {}),
       ...(row.feedback ? { feedback: row.feedback as any } : {}),
       ...(row.reactions ? { reactions: row.reactions as any } : {}),
