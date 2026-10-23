@@ -380,3 +380,18 @@ describe('DynamoDashboardInstallationStore — org safety areas (#718)', () => {
     expect(item.areas.map((a: { id: string }) => a.id)).toEqual(['a']);
   });
 });
+
+// #718 review — the dashboard read must not turn a failure into []: the editor
+// would show an empty list and the next save would wipe the org's areas. The
+// route answers a thrown read with 500 and the manager locks.
+describe('DynamoDashboardInstallationStore.getSafetyAreas — read errors (#718 review)', () => {
+  it('rejects on a client error rather than reading as no areas', async () => {
+    const client = { send: vi.fn().mockRejectedValue(new Error('throttled')) } as any;
+    await expect(new DynamoDashboardInstallationStore(client, 'tbl').getSafetyAreas('42')).rejects.toThrow('throttled');
+  });
+
+  it('(pin) a missing row is still []', async () => {
+    const client = { send: vi.fn().mockResolvedValue({}) } as any;
+    expect(await new DynamoDashboardInstallationStore(client, 'tbl').getSafetyAreas('42')).toEqual([]);
+  });
+});

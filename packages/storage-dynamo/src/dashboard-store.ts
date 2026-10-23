@@ -118,20 +118,19 @@ export class DynamoDashboardInstallationStore implements IDashboardInstallationS
     );
   }
 
-  /** #718 — org safety areas (`#SAFETY_AREAS`); [] when unset or unreadable. */
+  /**
+   * #718 — org safety areas (`#SAFETY_AREAS`); [] when unset. A read error is
+   * thrown, never read as []: the editor would show an empty list and the next
+   * save would wipe the org's areas. The route answers it with a 500.
+   */
   async getSafetyAreas(installationId: string): Promise<OrgSafetyArea[]> {
-    try {
-      const result = await this.client.send(
-        new GetCommand({
-          TableName: this.tableName,
-          Key: { installationId, repoFullName: '#SAFETY_AREAS' },
-        }),
-      );
-      return sanitizeOrgSafetyAreas(result.Item?.areas);
-    } catch (err) {
-      console.error('[dashboard-store] getSafetyAreas failed:', err);
-      return [];
-    }
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { installationId, repoFullName: '#SAFETY_AREAS' },
+      }),
+    );
+    return sanitizeOrgSafetyAreas(result.Item?.areas);
   }
 
   async updateSafetyAreas(installationId: string, areas: OrgSafetyArea[]): Promise<void> {
