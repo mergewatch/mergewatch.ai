@@ -67,3 +67,44 @@ export const VERIFIER_VERDICT_SCHEMA = {
   },
   required: ['valid', 'reason'],
 } as const;
+
+/**
+ * #712 — the safety agent: a 1-5 rating and a note per factor (5 safest).
+ * All five ratings are required; `buildSafetyResult` also rejects a
+ * non-integer or out-of-range rating, since a schema is advisory on the
+ * text path. `requestFiles` is the file-fetch protocol, as above.
+ */
+const SAFETY_RATING_SCHEMA = {
+  type: 'object',
+  properties: {
+    rating: { type: 'integer', minimum: 1, maximum: 5 },
+    note: { type: 'string', description: 'One sentence on why' },
+  },
+  required: ['rating', 'note'],
+} as const;
+
+export const SAFETY_SCHEMA = {
+  type: 'object',
+  properties: {
+    ratings: {
+      type: 'object',
+      properties: {
+        blastRadius: SAFETY_RATING_SCHEMA,
+        changeSize: SAFETY_RATING_SCHEMA,
+        testing: SAFETY_RATING_SCHEMA,
+        errorMonitoring: SAFETY_RATING_SCHEMA,
+        rollback: SAFETY_RATING_SCHEMA,
+      },
+      required: ['blastRadius', 'changeSize', 'testing', 'errorMonitoring', 'rollback'],
+    },
+    concerns: { type: 'array', items: { type: 'string' }, description: 'At most 2 specific ways this change could go wrong in production' },
+    appliedAreas: { type: 'array', items: { type: 'string' }, description: 'Names of the pattern-less areas that apply' },
+    appliedNotes: { type: 'array', items: { type: 'integer' }, description: 'Indices of the repository notes that apply' },
+    requestFiles: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Repo-relative file paths to fetch (e.g. tests) before rating. Leave empty (or omit) to finalize now.',
+    },
+  },
+  required: ['ratings'],
+} as const;
