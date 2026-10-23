@@ -83,6 +83,9 @@ const THINKS_BETWEEN_TOOLS_ONLY = /claude-sonnet-5-5(?![\d-])/;
 /** Final user block for models that cannot be forced onto the tool (#721). */
 const EMIT_RESULT_INSTRUCTION = 'Return your result by calling the emit_result tool. Do not answer in text.';
 
+/** #767 — follow-up turn when such a model answered in text anyway. */
+const EMIT_RESULT_RETRY_INSTRUCTION = 'You answered in text. Call the emit_result tool now with your result; do not reply with text.';
+
 /**
  * Whether this model accepts `temperature` / `top_p` / `top_k`.
  *
@@ -343,32 +346,53 @@ export class BedrockLLMProvider implements ILLMProvider {
       throw new StructuredOutputUnsupportedError(`Titan models have no tool support (${modelId})`);
     }
     const { body, contentType, accept } = buildAnthropicStructuredBody(prompt, schema, maxTokens, sampling, modelId);
-    const command = new InvokeModelCommand({
-      modelId,
-      body: new TextEncoder().encode(body),
-      contentType,
-      accept,
-    });
-    const response = await this.sendWithSignatureRecovery(command);
-    const parsed = JSON.parse(new TextDecoder().decode(response.body));
-    logRefusal(modelId, parsed);
-    const block = Array.isArray(parsed.content)
-      ? parsed.content.find((b: { type?: string }) => b.type === 'tool_use')
-      : undefined;
+    const send = async (json: string) => {
+      const response = await this.sendWithSignatureRecovery(new InvokeModelCommand({
+        modelId,
+        body: new TextEncoder().encode(json),
+        contentType,
+        accept,
+      }));
+      const out = JSON.parse(new TextDecoder().decode(response.body));
+      logRefusal(modelId, out);
+      return out;
+    };
+    const toolUseOf = (r: { content?: unknown }) => (Array.isArray(r.content)
+      ? r.content.find((b: { type?: string }) => b.type === 'tool_use')
+      : undefined);
+    let parsed = await send(body);
+    let block = toolUseOf(parsed);
+    // #767 — under `tool_choice: auto` the model can still end its turn in
+    // text. Retry once, showing it its own answer and asking for the tool
+    // call; both calls are billed, so both are counted.
+    let priorUsage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined;
+    if (!block && parsed.stop_reason === 'end_turn' && REJECTS_FORCED_TOOL_CHOICE.test(modelId) && Array.isArray(parsed.content)) {
+      console.warn(`[structured] model=${modelId} answered in text instead of emit_result — retrying once`);
+      priorUsage = parsed.usage;
+      const retry = JSON.parse(body);
+      retry.messages.push(
+        { role: 'assistant', content: parsed.content },
+        { role: 'user', content: [{ type: 'text', text: EMIT_RESULT_RETRY_INSTRUCTION }] },
+      );
+      parsed = await send(JSON.stringify(retry));
+      block = toolUseOf(parsed);
+    }
     if (!block) {
       throw new Error(`Structured invocation returned no tool_use block (stop_reason: ${parsed.stop_reason})`);
     }
+    const sum = (k: 'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens') =>
+      (parsed.usage?.[k] ?? 0) + (priorUsage?.[k] ?? 0);
     return {
       object: block.input,
       usage: parsed.usage
         ? {
-        inputTokens: parsed.usage.input_tokens ?? 0,
-        outputTokens: parsed.usage.output_tokens ?? 0,
+        inputTokens: sum('input_tokens'),
+        outputTokens: sum('output_tokens'),
         // #490 — the API reports these SEPARATELY from input_tokens, which
         // counts uncached input only. Unread, cached tokens vanish from the
         // bill entirely and reported cost falls further than true cost.
-        cacheReadInputTokens: parsed.usage.cache_read_input_tokens ?? 0,
-        cacheWriteInputTokens: parsed.usage.cache_creation_input_tokens ?? 0,
+        cacheReadInputTokens: sum('cache_read_input_tokens'),
+        cacheWriteInputTokens: sum('cache_creation_input_tokens'),
       }
         : undefined,
       stopReason: parsed.stop_reason ?? undefined,
