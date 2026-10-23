@@ -99,6 +99,11 @@ describe('safety score — area matching (#712)', () => {
     expect(r.score).toBe(1);
   });
 
+  it('an unnamed area is named by its first matched pattern when it clamps', () => {
+    const matches = matchAreas([{ patterns: ['**/migrations/**', 'db/**'], level: 'risky' }], ['db/migrations/1.sql']);
+    expect(score([5, 5, 5, 5, 5], matches).clampedBy).toBe('**/migrations/**');
+  });
+
   it('a pattern-less area is never a match', () => {
     expect(matchAreas([{ name: 'Billing', notes: 'n' }], ['billing/x.ts'])).toEqual([]);
   });

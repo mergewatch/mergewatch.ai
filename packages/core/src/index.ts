@@ -65,7 +65,7 @@ export {
   sourceForAgent,
 } from './agents/reviewer.js';
 // #712 — the safety score (advisory; never feeds the gate).
-export { bandFor, labelFor, capRating, matchAreas, computeSafetyScore, buildSafetyResult, buildSafetyGuidance } from './agents/safety.js';
+export { bandFor, labelFor, capRating, matchAreas, matchLabel, computeSafetyScore, buildSafetyResult, buildSafetyGuidance } from './agents/safety.js';
 export type { SafetyResult, SafetyAreaMatch, SafetyFactorResult } from './agents/safety.js';
 export { SAFETY_SCHEMA } from './agents/schemas.js';
 // #662 — the merge gate, defined once.

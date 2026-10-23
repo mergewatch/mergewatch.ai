@@ -82,6 +82,11 @@ export function areaLabel(area: Pick<SafetyArea, 'name' | 'patterns'>): string {
   return area.name ?? (area.patterns ?? []).join(', ');
 }
 
+/** How a matched area is named: its name, or its first matched pattern. */
+export function matchLabel(m: Pick<SafetyAreaMatch, 'name' | 'matchedPatterns'>): string {
+  return m.name ?? m.matchedPatterns[0];
+}
+
 /**
  * Tests every changed file against every area that has patterns. Each pattern
  * is compiled once: calling `minimatch()` per file costs seconds at the config
@@ -166,7 +171,7 @@ export function computeSafetyScore(
   return {
     score,
     uncappedScore,
-    ...(score < uncappedScore && worst ? { clampedBy: areaLabel(worst) } : {}),
+    ...(score < uncappedScore && worst ? { clampedBy: matchLabel(worst) } : {}),
     band: bandFor(score, bands),
     factors,
   };
