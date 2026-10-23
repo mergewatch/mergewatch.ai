@@ -268,6 +268,31 @@ export async function addPRReaction(
 }
 
 /**
+ * #716 — react to an issue (PR conversation) comment, e.g. to acknowledge an
+ * `@mergewatch safety` vote. Non-fatal, like addPRReaction.
+ */
+export async function addIssueCommentReaction(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  commentId: number,
+  reaction: '+1' | '-1' | 'laugh' | 'confused' | 'heart' | 'hooray' | 'rocket' | 'eyes',
+): Promise<number | null> {
+  try {
+    const { data } = await octokit.reactions.createForIssueComment({
+      owner,
+      repo,
+      comment_id: commentId,
+      content: reaction,
+    });
+    return data.id;
+  } catch (err) {
+    console.warn('Failed to add %s reaction to %s/%s comment %d:', reaction, owner, repo, commentId, err);
+    return null;
+  }
+}
+
+/**
  * Remove a previously-added reaction from a PR. Used to clear the eyes
  * reaction once review completes, so the PR doesn't stay in a "MergeWatch
  * is still looking" state forever.

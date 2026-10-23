@@ -54,3 +54,16 @@ describe('DynamoReviewStore — safety score and band (#713)', () => {
     expect(valueFor('safetyBand')).toBe('risky');
   });
 });
+
+describe('DynamoReviewStore — safety feedback (#716)', () => {
+  it('appends with list_append(if_not_exists(...)) and a one-element list', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const entry = { band: 'risky' as const, user: 'alice', at: 't' };
+    await new DynamoReviewStore({ send } as any, 'reviews').appendSafetyFeedback('octo/repo', '7#abc', entry);
+    const input = send.mock.calls[0][0].input;
+    expect(input.Key).toEqual({ repoFullName: 'octo/repo', prNumberCommitSha: '7#abc' });
+    expect(input.UpdateExpression).toContain('list_append(if_not_exists(safetyFeedback, :empty), :entry)');
+    expect(input.ExpressionAttributeValues[':entry']).toEqual([entry]);
+    expect(input.ExpressionAttributeValues[':empty']).toEqual([]);
+  });
+});

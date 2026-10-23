@@ -69,6 +69,9 @@ export { bandFor, labelFor, capRating, matchAreas, matchLabel, computeSafetyScor
 export type { SafetyResult, SafetyAreaMatch, SafetyFactorResult } from './agents/safety.js';
 export { SAFETY_SCHEMA } from './agents/schemas.js';
 export { findUncoveredTopLevelFolders } from './safety-coverage.js';
+// #716 — `@mergewatch safety <band>` reviewer feedback.
+export { parseSafetyFeedback, latestScoredReview, recordSafetyFeedback, SAFETY_FEEDBACK_LOOKBACK } from './safety-feedback.js';
+export type { SafetyFeedbackCommand, RecordSafetyFeedbackInput } from './safety-feedback.js';
 // #662 — the merge gate, defined once.
 export {
   BUILTIN_FINDING_CATEGORIES,
@@ -166,6 +169,7 @@ export {
   getPRDiff,
   getPRContext,
   addPRReaction,
+  addIssueCommentReaction,
   removePRReaction,
   postReviewComment,
   updateReviewComment,
@@ -380,6 +384,7 @@ export type {
   OssGrantRepo,
   OssGrantAccount,
   ReviewItem,
+  SafetyFeedbackEntry,
   ReviewStatus,
   ReviewFinding,
   InstallationKey,

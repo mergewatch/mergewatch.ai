@@ -1620,3 +1620,90 @@ describe('#597 — an attacker-controlled event name cannot forge log lines', ()
     expect(logSafe(undefined)).toBe('(none)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #716 — `@mergewatch safety <band>` feedback
+// ---------------------------------------------------------------------------
+
+// The handler builds its DynamoReviewStore at module load; swap in the two
+// methods feedback uses, only while a #716 test turns `on` (vi.mock is hoisted).
+const safetyStore = vi.hoisted(() => ({ on: false, queryByPR: (() => {}) as any, append: (() => {}) as any }));
+vi.mock('@mergewatch/storage-dynamo', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mergewatch/storage-dynamo')>();
+  class DynamoReviewStore extends actual.DynamoReviewStore {
+    queryByPR(...args: Parameters<typeof actual.DynamoReviewStore.prototype.queryByPR>) {
+      return safetyStore.on ? safetyStore.queryByPR(...args) : super.queryByPR(...args);
+    }
+    appendSafetyFeedback(...args: Parameters<typeof actual.DynamoReviewStore.prototype.appendSafetyFeedback>) {
+      return safetyStore.on ? safetyStore.append(...args) : super.appendSafetyFeedback(...args);
+    }
+  }
+  return { ...actual, DynamoReviewStore };
+});
+
+describe('handler — @mergewatch safety feedback (#716)', () => {
+  const ROWS = [
+    { repoFullName: 'octo/repo', prNumberCommitSha: '7#f00', status: 'complete', createdAt: '2026-01-01T00:00:00Z', safetyBand: 'safe' },
+    { repoFullName: 'octo/repo', prNumberCommitSha: '7#000', status: 'complete', createdAt: '2026-01-02T00:00:00Z', safetyBand: 'risky' },
+    { repoFullName: 'octo/repo', prNumberCommitSha: '7#aaa', status: 'complete', createdAt: '2026-01-03T00:00:00Z' },
+  ];
+  let createForIssueComment: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindExistingBotComment.mockResolvedValue(null);
+    createForIssueComment = vi.fn().mockResolvedValue({ data: { id: 1 } });
+    mockGetInstallationOctokit.mockResolvedValue({
+      reactions: { createForIssueComment },
+      pulls: { get: vi.fn().mockResolvedValue({ data: { head: { sha: 'h' } } }) },
+    });
+    safetyStore.on = true;
+    safetyStore.queryByPR = vi.fn().mockResolvedValue(ROWS);
+    safetyStore.append = vi.fn().mockResolvedValue(undefined);
+  });
+  afterEach(() => { safetyStore.on = false; });
+
+  const send = (body: string, sender: Record<string, unknown> = { login: 'alice', id: 1, avatar_url: '', type: 'User' }) => {
+    const event = makeIssueCommentEvent({ comment: { id: 555, body, user: sender }, sender });
+    return handler(makeIssueCommentApiEvent(JSON.stringify(event)));
+  };
+
+  it('records the vote on the newest scored row, reacts +1, and enqueues no job', async () => {
+    await send('@mergewatch safety risky');
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    expect(mockSqsSend).not.toHaveBeenCalled();
+    expect(safetyStore.queryByPR).toHaveBeenCalledWith('octo/repo', '7#', 50);
+    expect(safetyStore.append).toHaveBeenCalledTimes(1);
+    expect(safetyStore.append.mock.calls[0][1]).toBe('7#000');
+    expect(safetyStore.append.mock.calls[0][2]).toMatchObject({ band: 'risky', user: 'alice' });
+    expect(createForIssueComment.mock.calls[0][0]).toMatchObject({ comment_id: 555, content: '+1' });
+  });
+
+  it('with no scored row: no write, a confused reaction, no job', async () => {
+    safetyStore.queryByPR = vi.fn().mockResolvedValue([ROWS[2]]);
+    await send('@mergewatch safety caution');
+    expect(safetyStore.append).not.toHaveBeenCalled();
+    expect(createForIssueComment.mock.calls[0][0]).toMatchObject({ content: 'confused' });
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('a comment that also says @mergewatch review is handled only as feedback', async () => {
+    await send('@mergewatch safety caution\n@mergewatch review');
+    expect(safetyStore.append).toHaveBeenCalledTimes(1);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('(pin) a bot\'s vote is ignored by the existing bot filter', async () => {
+    await send('@mergewatch safety risky', { login: 'ci[bot]', id: 2, avatar_url: '', type: 'Bot' });
+    expect(safetyStore.append).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('(pin) @mergewatch safety why so risky? is still a respond job', async () => {
+    await send('@mergewatch safety why so risky?');
+    expect(safetyStore.append).not.toHaveBeenCalled();
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockEnqueue.mock.calls[0][0] as { input: { Payload: Buffer } }).input.Payload.toString());
+    expect(payload.mode).toBe('respond');
+  });
+});
