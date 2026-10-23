@@ -24,5 +24,10 @@ export function settingsValidationError(settings: unknown): string | null {
   if (typeof s.approve !== "boolean") {
     return "approve must be a boolean";
   }
+  // #714 — same policy: an omitted safetyScore would read back as off.
+  const safety = s.safetyScore as Record<string, unknown> | undefined;
+  if (!safety || typeof safety !== "object" || typeof safety.enabled !== "boolean") {
+    return "safetyScore.enabled must be a boolean";
+  }
   return null;
 }
