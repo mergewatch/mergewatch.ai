@@ -306,7 +306,11 @@ async function auditPage(page) {
     { id: 'audit-facts', stability: 'static', text: `${SYSTEM}\n\n# Ground truth\n\n${factSheet}\n\n` },
     { id: 'page-evidence', stability: 'per-call', text: `# Source evidence for this page\n\n${ctx.text}\n\n# Page: ${page}\n\n${text.slice(0, 40000)}\n\nAudit this page.` },
   ];
-  const r = await provider.invokeStructured(MODEL, segments, SCHEMA, 4096);
+  // 8192, not 4096: the release-gate dry run for v0.6.9 lost mergewatch-yml.mdx
+  // (37.8k chars after the safety-score docs) to `stop: max_tokens`, which
+  // fails the audit as incomplete. The `unverifiable` list alone ran to 105
+  // entries on that page; output varies run to run, so 4096 was a coin flip.
+  const r = await provider.invokeStructured(MODEL, segments, SCHEMA, 8192);
   inTok += r.usage?.inputTokens ?? 0;
   outTok += r.usage?.outputTokens ?? 0;
   cacheRead += r.usage?.cacheReadInputTokens ?? 0;
