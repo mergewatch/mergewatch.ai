@@ -154,6 +154,12 @@ export interface InstallationSettings {
    * `approve:` overrides it; the PR head's value never does.
    */
   approve: boolean;
+  /**
+   * #711 — the dashboard's safety-score switch. A default-branch
+   * `.mergewatch.yml` `safetyScore.enabled` overrides it; the PR head's never
+   * does. Optional so settings rows written before #711 still type-check.
+   */
+  safetyScore?: { enabled: boolean };
 }
 
 export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
@@ -182,6 +188,7 @@ export const DEFAULT_INSTALLATION_SETTINGS: InstallationSettings = {
   // #706 — approving is opt-in: MergeWatch alone must not satisfy a
   // branch-protection review requirement.
   approve: false,
+  safetyScore: { enabled: false },
 };
 
 // =============================================================================

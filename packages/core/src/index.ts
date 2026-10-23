@@ -187,9 +187,10 @@ export {
   extractInlineCommentTitle,
   extractInlineCommentFingerprint,
   fetchRepoConfig,
+  fetchRepoConfigResult,
   parseRepoConfigYaml,
 } from './github/client.js';
-export type { ReviewThreadComment } from './github/client.js';
+export type { ReviewThreadComment, RepoConfigResult } from './github/client.js';
 
 // ─── Comment formatter ──────────────────────────────────────────────────────
 export { formatReviewComment,
@@ -265,8 +266,12 @@ export {
   DEFAULT_RULES_CONFIG,
   DEFAULT_AGENT_REVIEW_CONFIG,
   PASS_THRESHOLDS,
+  SAFETY_LEVELS,
+  SAFETY_FACTORS,
+  DEFAULT_SAFETY_SCORE_CONFIG,
   mergeConfig,
 } from './config/defaults.js';
+export { parseSafetyScoreBlock } from './config/safety-score.js';
 export type {
   MergeWatchConfig,
   CustomAgentDef,
@@ -275,6 +280,12 @@ export type {
   AgentReviewConfig,
   AgentReviewDetectionConfig,
   PassThreshold,
+  SafetyLevel,
+  SafetyFactor,
+  SafetyFactorConfig,
+  SafetyArea,
+  SafetyScoreConfig,
+  SafetyScoreInput,
 } from './config/defaults.js';
 export {
   fetchConventions,

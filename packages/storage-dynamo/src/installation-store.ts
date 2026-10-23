@@ -48,6 +48,7 @@ export class DynamoInstallationStore implements IInstallationStore {
         ...saved,
         commentTypes: { ...DEFAULTS.commentTypes, ...(saved.commentTypes ?? {}) },
         summary: { ...DEFAULTS.summary, ...(saved.summary ?? {}) },
+        safetyScore: { ...DEFAULTS.safetyScore!, ...(saved.safetyScore ?? {}) },
       };
     } catch {
       return DEFAULTS;

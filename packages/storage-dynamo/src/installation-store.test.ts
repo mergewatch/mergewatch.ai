@@ -72,3 +72,15 @@ describe('DynamoInstallationStore — approve (#706)', () => {
     expect((await new DynamoInstallationStore(client, 'tbl').getSettings('42')).approve).toBe(true);
   });
 });
+
+describe('DynamoInstallationStore — safetyScore (#711)', () => {
+  it('a #SETTINGS row saved before #711 reads safetyScore: { enabled: false }', async () => {
+    const client = clientReturning({ Item: { settings: { severityThreshold: 'Med', approve: true } } });
+    expect((await new DynamoInstallationStore(client, 'tbl').getSettings('42')).safetyScore).toEqual({ enabled: false });
+  });
+
+  it('getSettings returns a saved safetyScore: { enabled: true }', async () => {
+    const client = clientReturning({ Item: { settings: { safetyScore: { enabled: true } } } });
+    expect((await new DynamoInstallationStore(client, 'tbl').getSettings('42')).safetyScore).toEqual({ enabled: true });
+  });
+});

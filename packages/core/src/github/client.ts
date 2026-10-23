@@ -20,8 +20,10 @@ import type {
   AgentReviewConfig,
   AgentReviewDetectionConfig,
   PassThreshold,
+  SafetyScoreConfig,
 } from '../config/defaults.js';
 import { PASS_THRESHOLDS } from '../config/defaults.js';
+import { parseSafetyScoreBlock } from '../config/safety-score.js';
 import { isReservedAgentName } from '../builtin-categories.js';
 import { reviewMarker, inlineMarker, checkRunName } from '../stage.js';
 import type { Stage } from '../stage.js';
@@ -1820,7 +1822,53 @@ export function parseRepoConfigYaml(content: string): Partial<MergeWatchConfig> 
       }
     }
 
+    // #711 — validated per field; the cross-field rules run in mergeConfig.
+    if (parsed.safetyScore !== undefined) {
+      const { value, errors } = parseSafetyScoreBlock(parsed.safetyScore);
+      config.safetyScore = value as SafetyScoreConfig;
+      if (errors.length > 0) config.safetyScoreErrors = errors;
+    }
+
   return config;
+}
+
+/**
+ * #711 — like `fetchRepoConfig`, but a failed read is `ok: false` instead of
+ * looking like a missing file. No file (404) is `ok: true, config: null`.
+ * The safety score needs the difference: it fails closed on a failed read.
+ */
+export type RepoConfigResult =
+  | { ok: true; config: Partial<MergeWatchConfig> | null }
+  | { ok: false };
+
+export async function fetchRepoConfigResult(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref?: string,
+): Promise<RepoConfigResult> {
+  try {
+    const { data } = await octokit.repos.getContent({
+      owner,
+      repo,
+      path: '.mergewatch.yml',
+      ...(ref ? { ref } : {}),
+    });
+
+    if (Array.isArray(data) || data.type !== 'file' || !data.content) {
+      return { ok: true, config: null };
+    }
+
+    const content = Buffer.from(data.content, 'base64').toString('utf-8');
+    return { ok: true, config: parseRepoConfigYaml(content) };
+  } catch (err: unknown) {
+    // 404 means no config file — that's fine
+    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+      return { ok: true, config: null };
+    }
+    console.warn('Failed to fetch .mergewatch.yml from %s/%s:', owner, repo, err);
+    return { ok: false };
+  }
 }
 
 /**
@@ -1835,26 +1883,6 @@ export async function fetchRepoConfig(
   repo: string,
   ref?: string,
 ): Promise<Partial<MergeWatchConfig> | null> {
-  try {
-    const { data } = await octokit.repos.getContent({
-      owner,
-      repo,
-      path: '.mergewatch.yml',
-      ...(ref ? { ref } : {}),
-    });
-
-    if (Array.isArray(data) || data.type !== 'file' || !data.content) {
-      return null;
-    }
-
-    const content = Buffer.from(data.content, 'base64').toString('utf-8');
-    return parseRepoConfigYaml(content);
-  } catch (err: unknown) {
-    // 404 means no config file — that's fine
-    if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
-      return null;
-    }
-    console.warn('Failed to fetch .mergewatch.yml from %s/%s:', owner, repo, err);
-    return null;
-  }
+  const result = await fetchRepoConfigResult(octokit, owner, repo, ref);
+  return result.ok ? result.config : null;
 }

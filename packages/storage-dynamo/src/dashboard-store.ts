@@ -29,7 +29,7 @@ import { DEFAULT_INSTALLATION_SETTINGS as DEFAULTS, sanitizeOrgCustomAgents, usa
 
 // ─── Installation store ─────────────────────────────────────────────────────
 
-class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
+export class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
   constructor(
     private readonly client: DynamoDBDocumentClient,
     private readonly tableName: string,
@@ -64,6 +64,7 @@ class DynamoDashboardInstallationStore implements IDashboardInstallationStore {
         ...saved,
         commentTypes: { ...DEFAULTS.commentTypes, ...(saved.commentTypes ?? {}) },
         summary: { ...DEFAULTS.summary, ...(saved.summary ?? {}) },
+        safetyScore: { ...DEFAULTS.safetyScore!, ...(saved.safetyScore ?? {}) },
       };
     } catch {
       return { ...DEFAULTS };

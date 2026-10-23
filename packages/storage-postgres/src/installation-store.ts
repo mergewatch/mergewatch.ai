@@ -45,6 +45,7 @@ export class PostgresInstallationStore implements IInstallationStore {
       customInstructions: row.customInstructions,
       commentHeader: row.commentHeader,
       approve: row.approve,
+      safetyScore: { enabled: (row.safetyScore as { enabled?: unknown } | null)?.enabled === true },
     };
   }
 

@@ -53,6 +53,7 @@ import {
   buildInlineComments,
   extractInlineCommentTitle,
   fetchRepoConfig,
+  fetchRepoConfigResult,
   fetchConventions,
   loadCategoryDisputeRates,
   handleInlineReply,
@@ -80,7 +81,6 @@ import type {
   ReviewJobPayload,
   ReviewItem,
   ReviewFinding,
-  MergeWatchConfig,
   FileFetchOptions,
   ReviewDelta,
 } from '@mergewatch/core';
@@ -605,7 +605,7 @@ export async function handler(
     const orgCustomAgents = await installationStore.getCustomAgents(String(installationId));
 
     const severityMap = { Low: 'info', Med: 'warning', High: 'critical' } as const;
-    const settingsOverrides: Partial<MergeWatchConfig> = {
+    const settingsOverrides: Parameters<typeof mergeConfig>[0] = {
       minSeverity: severityMap[instSettings.severityThreshold],
       maxFindings: instSettings.maxComments,
       agents: {
@@ -621,7 +621,20 @@ export async function handler(
       customStyleRules: instSettings.customInstructions
         ? [instSettings.customInstructions]
         : [],
+      // #711 — `=== true`: until #714 validates it, /api/settings stores the
+      // body as sent, so a stored "yes" must not read as on.
+      safetyScore: { enabled: instSettings.safetyScore?.enabled === true },
     };
+
+    // #711 — the safety score is configured only by the DEFAULT branch's
+    // .mergewatch.yml. yamlConfig was read at the head, and a PR must not be
+    // able to delete its own risky areas or switch the score off. A failed
+    // read (not a missing file) turns the score off for this review.
+    const defaultBranchRead = await fetchRepoConfigResult(octokit, owner, repo);
+    const defaultBranchConfig = defaultBranchRead.ok ? defaultBranchRead.config : null;
+    if (!defaultBranchRead.ok) {
+      console.warn('[safety-score] default-branch config read failed — omitted for this review');
+    }
 
     // yamlConfig was loaded earlier for the smart-skip includePatterns
     // override; reuse it here instead of paying another GitHub round-trip.
@@ -632,7 +645,15 @@ export async function handler(
       ...settingsOverrides,
       ...(yamlConfig ?? {}),
       agents: { ...settingsOverrides.agents, ...(yamlConfig?.agents ?? {}) },
+      // Both keys explicit, so the head's values never leak through the spread.
+      safetyScore: defaultBranchRead.ok
+        ? { ...settingsOverrides.safetyScore, ...(defaultBranchConfig?.safetyScore ?? {}) }
+        : { enabled: false },
+      safetyScoreErrors: defaultBranchConfig?.safetyScoreErrors,
     });
+    if (runtimeConfig.safetyScoreErrors) {
+      console.warn('[safety-score] config invalid — disabled for this review: %s', runtimeConfig.safetyScoreErrors.join('; '));
+    }
 
     // ── Rules-based skip (skipDrafts, maxFiles, ignoreLabels, autoReview, reviewOnMention) ────
     const rulesSkip = shouldSkipByRules(runtimeConfig.rules, {
@@ -926,6 +947,7 @@ export async function handler(
       conventions: conventionsResult?.content,
       agentAuthored: event.source === 'agent',
       categoryDisputeRates,
+      safetyScore: runtimeConfig.safetyScore,
     }, { llm });
 
     // #486 — shared with the self-hosted server so the two cannot drift.

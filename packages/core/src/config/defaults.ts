@@ -138,6 +138,68 @@ export const DEFAULT_AGENT_REVIEW_CONFIG: AgentReviewConfig = {
   },
 };
 
+// ─── Safety score (#710) ─────────────────────────────────────────────────────
+// #711 owns the config surface; the agent and scoring are #712, rendering #713.
+
+/** The three safety bands, safest first. */
+export const SAFETY_LEVELS = ['safe', 'caution', 'risky'] as const;
+
+export type SafetyLevel = (typeof SAFETY_LEVELS)[number];
+
+/** The factors the safety score weighs. */
+export const SAFETY_FACTORS = ['blastRadius', 'changeSize', 'testing', 'errorMonitoring', 'rollback'] as const;
+
+export type SafetyFactor = (typeof SAFETY_FACTORS)[number];
+
+export interface SafetyFactorConfig {
+  weight: number;
+  notes?: string;
+}
+
+/** A named business flow, a file type, or both. Needs `patterns` or `notes`. */
+export interface SafetyArea {
+  /** Required when there are no `patterns`. Unique, case-insensitively. */
+  name?: string;
+  patterns?: string[];
+  level?: SafetyLevel;
+  notes?: string;
+}
+
+export interface SafetyScoreConfig {
+  enabled: boolean;
+  /** Upper bound (inclusive) of each band on the 0-100 score. `risky < caution`. */
+  bands: { risky: number; caution: number };
+  emoji: Record<SafetyLevel, string>;
+  factors: Record<SafetyFactor, SafetyFactorConfig>;
+  areas: SafetyArea[];
+  notes: string[];
+}
+
+/** What a `.mergewatch.yml` `safetyScore:` block parses to: any subset. */
+export interface SafetyScoreInput {
+  enabled?: boolean;
+  bands?: Partial<SafetyScoreConfig['bands']>;
+  emoji?: Partial<SafetyScoreConfig['emoji']>;
+  factors?: Partial<Record<SafetyFactor, Partial<SafetyFactorConfig>>>;
+  areas?: SafetyArea[];
+  notes?: string[];
+}
+
+export const DEFAULT_SAFETY_SCORE_CONFIG: SafetyScoreConfig = {
+  enabled: false,
+  bands: { risky: 33, caution: 67 },
+  emoji: { safe: '☀️', caution: '⛅', risky: '⛈️' },
+  factors: {
+    blastRadius: { weight: 30 },
+    changeSize: { weight: 15 },
+    testing: { weight: 25 },
+    errorMonitoring: { weight: 10 },
+    rollback: { weight: 20 },
+  },
+  areas: [],
+  notes: [],
+};
+
 export interface MergeWatchConfig {
   /** Primary model used for review agents */
   model: string;
@@ -237,6 +299,16 @@ export interface MergeWatchConfig {
   pricing?: Record<string, { inputPer1M: number; outputPer1M: number }>;
   /** Agent-authored PR detection + strict-mode review settings */
   agentReview?: AgentReviewConfig;
+  /**
+   * #711 — the safety score. Always present after `mergeConfig`. Read only
+   * from the default branch's `.mergewatch.yml`; a PR head cannot change it.
+   */
+  safetyScore: SafetyScoreConfig;
+  /**
+   * #711 — why the `safetyScore` block was rejected; any entry forces
+   * `enabled: false`. Each starts with the field's path. Omitted when empty.
+   */
+  safetyScoreErrors?: string[];
 }
 
 export const DEFAULT_CONFIG: MergeWatchConfig = {
@@ -295,6 +367,7 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
   customAgents: [],
   ux: { ...DEFAULT_UX_CONFIG },
   rules: { ...DEFAULT_RULES_CONFIG },
+  safetyScore: DEFAULT_SAFETY_SCORE_CONFIG,
 };
 
 /**
@@ -302,16 +375,17 @@ export const DEFAULT_CONFIG: MergeWatchConfig = {
  * Only defined fields in the partial override the defaults.
  */
 export function mergeConfig(
-  partial: Partial<Omit<MergeWatchConfig, 'agents' | 'ux' | 'rules' | 'agentReview'>> & {
+  partial: Partial<Omit<MergeWatchConfig, 'agents' | 'ux' | 'rules' | 'agentReview' | 'safetyScore'>> & {
     agents?: Partial<MergeWatchConfig['agents']>;
     ux?: Partial<UXConfig>;
     rules?: Partial<RulesConfig>;
     agentReview?: Partial<Omit<AgentReviewConfig, 'detection'>> & {
       detection?: Partial<AgentReviewDetectionConfig>;
     };
+    safetyScore?: SafetyScoreInput;
   },
 ): MergeWatchConfig {
-  const { agentReview, ...rest } = partial;
+  const { agentReview, safetyScore, safetyScoreErrors, ...rest } = partial;
   const merged: MergeWatchConfig = {
     ...DEFAULT_CONFIG,
     ...rest,
@@ -358,6 +432,34 @@ export function mergeConfig(
         labels: d.labels ?? DEFAULT_AGENT_REVIEW_CONFIG.detection.labels,
       },
     };
+  }
+
+  // #711 — bands, emoji and each factor merge key by key; areas and notes
+  // replace the defaults. Cross-field rules run on the merged value, because
+  // `risky: 70` alone is only wrong against the default `caution: 67`.
+  const ss = safetyScore ?? {};
+  const D = DEFAULT_SAFETY_SCORE_CONFIG;
+  const factors = {} as SafetyScoreConfig['factors'];
+  for (const f of SAFETY_FACTORS) factors[f] = { ...D.factors[f], ...(ss.factors?.[f] ?? {}) };
+  merged.safetyScore = {
+    enabled: ss.enabled ?? D.enabled,
+    bands: { ...D.bands, ...(ss.bands ?? {}) },
+    emoji: { ...D.emoji, ...(ss.emoji ?? {}) },
+    factors,
+    areas: ss.areas ?? D.areas,
+    notes: ss.notes ?? D.notes,
+  };
+  const errors = [...(safetyScoreErrors ?? [])];
+  const { bands } = merged.safetyScore;
+  if (bands.risky >= bands.caution) {
+    errors.push(`safetyScore.bands: risky (${bands.risky}) must be below caution (${bands.caution})`);
+  }
+  if (SAFETY_FACTORS.every((f) => factors[f].weight === 0)) {
+    errors.push('safetyScore.factors: at least one weight must be above 0');
+  }
+  if (errors.length > 0) {
+    merged.safetyScore.enabled = false;
+    merged.safetyScoreErrors = errors;
   }
   return merged;
 }
