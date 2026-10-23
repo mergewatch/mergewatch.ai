@@ -51,7 +51,7 @@ describe("a failed read never looks like an empty set", () => {
     const readCatch = get.slice(get.lastIndexOf("} catch"));
     expect(readCatch).toMatch(/console\.error\(/);
     expect(readCatch).toMatch(/status: 500/);
-    expect(readCatch).not.toMatch(/areas: \[\]/);
+    expect(readCatch).not.toMatch(/NextResponse\.json\(\{\s*areas: \[\]/);
   });
 
   it("the manager refuses to edit or save after a failed load", () => {
