@@ -23,6 +23,7 @@ import { StructuredOutputUnsupportedError, renderPrompt, toCacheableBlocks, hasC
 export const SUPPORTED_MODELS = {
   'claude-opus-4.6': 'us.anthropic.claude-opus-4-6-v1',
   'claude-sonnet-4.6': 'us.anthropic.claude-sonnet-4-6',
+  'claude-sonnet-5.5': 'us.anthropic.claude-sonnet-5-5',
   'claude-sonnet-4.5': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
   'claude-sonnet-4': 'us.anthropic.claude-sonnet-4-20250514-v1:0',
   'claude-haiku-4.5': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -56,11 +57,31 @@ interface ModelRequestBody {
 const REJECTS_SAMPLING_PARAMS: readonly RegExp[] = [
   // Opus 4.7, 4.8, and any later 4.x
   /claude-opus-4-(?:[7-9]|\d{2,})/,
-  // The 5 generation. `haiku` is included for symmetry with a future Haiku 5
-  // that would follow the same rule — no such model exists today, and the
-  // negative lookahead keeps `claude-haiku-4-5` out of this pattern.
-  /claude-(?:sonnet|opus|haiku|fable|mythos)-5(?![\d-])/,
+  // The 5 generation, including its point releases (#721): Sonnet 5.5 and
+  // Haiku 5.5 reject non-default values, Opus 5.5 and Fable 5.1 reject the
+  // parameters outright. The optional `-\d+` takes in `-5-5` / `-5-1`; the
+  // negative lookahead still keeps `claude-haiku-4-5` out of this pattern.
+  /claude-(?:sonnet|opus|haiku|fable|mythos)-5(?:-\d+)?(?![\d-])/,
 ];
+
+/**
+ * #721 — models that return a 400 on a forced `tool_choice` (`tool` / `any`).
+ * They get `auto` plus a final instruction naming the tool. Haiku 5.5 accepts
+ * a forced tool and is deliberately absent. An unlisted rejecting model fails
+ * loudly (400 → the caller's text fallback, logged), never silently.
+ */
+const REJECTS_FORCED_TOOL_CHOICE = /claude-(?:sonnet-5-5|opus-5-5|fable-5-1|mythos-5-1)(?![\d-])/;
+
+/**
+ * #721 — the only model that accepts `thinking: {type: 'between_tools'}`, its
+ * thinking-off setting. Every other model rejects it with a 400. Reviews on
+ * Sonnet 4.6 ran without thinking, so this keeps them like-for-like and keeps
+ * adaptive thinking from spending the per-agent `max_tokens` budget.
+ */
+const THINKS_BETWEEN_TOOLS_ONLY = /claude-sonnet-5-5(?![\d-])/;
+
+/** Final user block for models that cannot be forced onto the tool (#721). */
+const EMIT_RESULT_INSTRUCTION = 'Return your result by calling the emit_result tool. Do not answer in text.';
 
 /**
  * Whether this model accepts `temperature` / `top_p` / `top_k`.
@@ -92,6 +113,7 @@ function buildAnthropicBody(
       content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
     }],
   };
+  if (THINKS_BETWEEN_TOOLS_ONLY.test(modelId)) body.thinking = { type: 'between_tools' };
   if (acceptsSamplingParams(modelId)) {
     body.temperature = sampling.temperature ?? 0;
     if (sampling.topP !== undefined) body.top_p = sampling.topP;
@@ -115,6 +137,14 @@ function buildAnthropicStructuredBody(
   sampling: LLMSamplingConfig,
   modelId: string,
 ): ModelRequestBody {
+  // #721 — a model that rejects forced tool use gets `auto`, steered by one
+  // extra text block AFTER the cacheable blocks, so the cached prefix is the
+  // same bytes it would otherwise be.
+  const forced = !REJECTS_FORCED_TOOL_CHOICE.test(modelId);
+  const content = forced
+    ? (hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt))
+    : [...toCacheableBlocks(hasCacheableBoundary(prompt) ? prompt : renderPrompt(prompt)),
+      { type: 'text', text: EMIT_RESULT_INSTRUCTION }];
   const body: Record<string, unknown> = {
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: maxTokens,
@@ -124,17 +154,15 @@ function buildAnthropicStructuredBody(
     // call sending no cache_control at all. The first gate run after
     // breakpoints shipped showed cost unchanged and zero cache tokens, which
     // is exactly what a half-wired provider looks like.
-    messages: [{
-      role: 'user',
-      content: hasCacheableBoundary(prompt) ? toCacheableBlocks(prompt) : renderPrompt(prompt),
-    }],
+    messages: [{ role: 'user', content }],
     tools: [{
       name: 'emit_result',
       description: 'Emit the structured result of your analysis.',
       input_schema: schema,
     }],
-    tool_choice: { type: 'tool', name: 'emit_result' },
+    tool_choice: forced ? { type: 'tool', name: 'emit_result' } : { type: 'auto' },
   };
+  if (THINKS_BETWEEN_TOOLS_ONLY.test(modelId)) body.thinking = { type: 'between_tools' };
   if (acceptsSamplingParams(modelId)) {
     body.temperature = sampling.temperature ?? 0;
     if (sampling.topP !== undefined) body.top_p = sampling.topP;
@@ -199,9 +227,27 @@ interface ParsedResponse {
   stopReason?: string;
 }
 
-function parseAnthropicResponse(raw: string): ParsedResponse {
+/**
+ * #721 — a refusal is HTTP 200 with `stop_reason: 'refusal'` and no usable
+ * content, so without this it reads as "zero findings". Bedrock has no
+ * server-side fallback; this is observability only.
+ */
+function logRefusal(modelId: string, parsed: { stop_reason?: string; stop_details?: { category?: string | null } }): void {
+  if (parsed.stop_reason !== 'refusal') return;
+  console.warn(`[refusal] model=${modelId} category=${parsed.stop_details?.category ?? 'unknown'}`);
+}
+
+function parseAnthropicResponse(raw: string, modelId: string): ParsedResponse {
   const parsed = JSON.parse(raw);
-  const text = parsed.content?.[0]?.text ?? '';
+  logRefusal(modelId, parsed);
+  // #721 — read text by block type, not position: with adaptive thinking the
+  // first block can be an empty `thinking` block, and `content[0].text` was ''.
+  const text = Array.isArray(parsed.content)
+    ? parsed.content
+      .filter((b: { type?: string; text?: unknown }) => b.type === 'text' && typeof b.text === 'string')
+      .map((b: { text: string }) => b.text)
+      .join('')
+    : '';
   const usage: TokenUsage | undefined = parsed.usage
     ? {
         inputTokens: parsed.usage.input_tokens ?? 0,
@@ -234,9 +280,9 @@ function parseTitanResponse(raw: string): ParsedResponse {
 }
 
 function parseResponse(modelId: string, raw: string): ParsedResponse {
-  if (isAnthropicModel(modelId)) return parseAnthropicResponse(raw);
+  if (isAnthropicModel(modelId)) return parseAnthropicResponse(raw, modelId);
   if (isTitanModel(modelId)) return parseTitanResponse(raw);
-  return parseAnthropicResponse(raw);
+  return parseAnthropicResponse(raw, modelId);
 }
 
 // ─── Provider class ────────────────────────────────────────────────────────
@@ -279,7 +325,7 @@ export class BedrockLLMProvider implements ILLMProvider {
     const response = await this.sendWithSignatureRecovery(command);
     const rawResponse = new TextDecoder().decode(response.body);
     const parsed = parseResponse(modelId, rawResponse);
-    return { text: parsed.text, usage: parsed.usage, stopReason: parsed.stopReason };
+    return { text: parsed.text, usage: parsed.usage, stopReason: parsed.stopReason, modelId: parsed.modelId };
   }
 
   // #390 — schema-constrained invocation via forced tool use. Only the
@@ -305,6 +351,7 @@ export class BedrockLLMProvider implements ILLMProvider {
     });
     const response = await this.sendWithSignatureRecovery(command);
     const parsed = JSON.parse(new TextDecoder().decode(response.body));
+    logRefusal(modelId, parsed);
     const block = Array.isArray(parsed.content)
       ? parsed.content.find((b: { type?: string }) => b.type === 'tool_use')
       : undefined;
@@ -325,6 +372,8 @@ export class BedrockLLMProvider implements ILLMProvider {
       }
         : undefined,
       stopReason: parsed.stop_reason ?? undefined,
+      // #721 — see parseAnthropicResponse; the probe checks this echo.
+      modelId: typeof parsed.model === 'string' ? parsed.model : undefined,
     };
   }
 

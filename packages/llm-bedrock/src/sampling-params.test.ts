@@ -21,6 +21,14 @@ describe('acceptsSamplingParams', () => {
       'anthropic.claude-sonnet-5',
       'claude-sonnet-5',
       'claude-opus-5',
+      // #721 — the 5.5 / 5.1 point releases. `-5-5` and `-5-1` put a hyphen
+      // after the "5", which the original lookahead read as "not the 5
+      // generation" and so kept `temperature: 0` — a 400 on every call.
+      ...['sonnet-5-5', 'haiku-5-5', 'opus-5-5', 'fable-5-1'].flatMap((m) => [
+        `us.anthropic.claude-${m}`,
+        `global.anthropic.claude-${m}`,
+        `claude-${m}`,
+      ]),
     ];
     for (const id of rejecting) {
       it(`${id}`, () => expect(acceptsSamplingParams(id)).toBe(false));

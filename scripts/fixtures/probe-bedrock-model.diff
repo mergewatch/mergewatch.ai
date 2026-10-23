@@ -1,0 +1,20 @@
+diff --git a/src/users.ts b/src/users.ts
+--- a/src/users.ts
++++ b/src/users.ts
+@@ -1,9 +1,16 @@
+ import { db } from './db';
++import { exec } from 'node:child_process';
+ 
+ export async function findUser(name: string) {
+-  return db.query('SELECT * FROM users WHERE name = $1', [name]);
++  return db.query(`SELECT * FROM users WHERE name = '${name}'`);
+ }
+ 
++export function exportUser(name: string) {
++  // Writes a CSV for the support team.
++  exec(`node scripts/export.js --user ${name}`);
++}
++
+ export async function deleteUser(id: number) {
+   return db.query('DELETE FROM users WHERE id = $1', [id]);
+ }
