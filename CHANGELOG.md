@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.6.9](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.7...v0.6.9) (2026-10-27)
+
+### Features
+- feat(safety): safety:<band> PR label and band trends (#720) (#765) (250f3eb)
+- feat(safety): `@mergewatch safety <band>` records a reviewer's band (#716) (#764) (7983615)
+- feat(safety): org-wide safety areas on the dashboard (#718) (#763) (5863457)
+- feat(safety): flag new top-level folders no area covers (#717) (#762) (f838336)
+- feat(safety): safetyScore.collapsed puts the factor detail in a <details> block (#719) (#761) (b3c47dd)
+- feat(dashboard): Safety score toggle; PUT rejects a body without it (#714) (#759) (eb4cc5c)
+- feat(safety): render the safety score, its hidden line, and persist it (#713) (#758) (6d2012a)
+- feat(safety): the safety agent and score (#712) (#757) (d87e16c)
+- feat(safety): safetyScore config surface, read only from the default branch (#711) (#756) (1282056)
+- feat(review): default to Claude Sonnet 5.5 on Bedrock (#721) (#755) (a77b2c4)
+- feat(review)!: approving is opt-in and read only from the default branch (#706) (#749) (c7c7cad)
+- feat(bench): offline benchmark harness that grades a corpus (#699) (#705) (a9f469c)
+
+### Bug Fixes
+- fix(release): give the docs audit 8192 output tokens per page (#769) (1833ce3)
+- fix(bedrock): retry once when an auto-tool_choice model answers in text (#767) (#768) (e320544)
+- fix(deps): raise the ip-address override to 10.7.4 (Dependabot #185) (#766) (79ca8d4)
+- fix(bedrock): make the provider work on the Claude 5.5 generation; add a gated probe (#721 PR A) (#754) (7e7348f)
+- fix(pricing): price every live Bedrock profile; guard the tables against drift (#722) (#753) (1ac80df)
+- fix(deps): bump vitest to 4.1.12 (Dependabot #183, #184) (#751) (b3d9790)
+- fix(deps): bump vite to 8.1.6 and raise the hono override to 4.13.11 (Dependabot #180-#182) (#750) (f573163)
+- fix(review): dismiss our stale reviews on silent PRs and past page 1 (#707) (#748) (4f12a56)
+- fix(deps): raise the sharp override to 0.35.5 (Dependabot #179) (#747) (efe4b60)
+- fix(deps): close 20 of 21 Dependabot alerts; restore tailwind group-hover (#745) (a2013d8)
+- fix(bench): project the spend cap at the dearer model; align the two path guards (#724) (4bb75f3)
 ## [0.6.7](https://github.com/mergewatch/mergewatch.ai/compare/v0.6.6...v0.6.7) (2026-10-01)
 
 ### Bug Fixes
