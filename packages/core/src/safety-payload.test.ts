@@ -150,6 +150,29 @@ describe('the mw-safety line (#713)', () => {
   });
 });
 
+// CodeQL js/polynomial-redos (#21): the old regex re-scanned the rest of the
+// line from every `<!-- mw-safety:{` opener, so a body of forged openers took
+// quadratic time. The parser must stay linear and keep the regex's semantics.
+describe('parseSafetyPayload — linear time, same matches', () => {
+  const real = renderSafetyPayload({ score: 9, band: 'safe', sha: 'x', areas: [] });
+
+  it('a body of 40k forged openers parses in well under a second', () => {
+    const t = Date.now();
+    expect(parseSafetyPayload('<!-- mw-safety:{{'.repeat(40000))).toBeNull();
+    expect(Date.now() - t).toBeLessThan(500);
+  });
+
+  it('openers with no closer on their own line are skipped, as the regex did', () => {
+    const body = `<!-- mw-safety:{ unterminated\n<!-- mw-safety:{\n} -->\n${real}`;
+    expect(parseSafetyPayload(body)).toEqual({ score: 9, band: 'safe', sha: 'x', areas: [] });
+  });
+
+  it('takes the first closer after the opener, and an empty object still parses to null', () => {
+    expect(parseSafetyPayload(`${real} ${real}`)).toEqual({ score: 9, band: 'safe', sha: 'x', areas: [] });
+    expect(parseSafetyPayload('<!-- mw-safety:{} -->')).toBeNull();
+  });
+});
+
 describe('safety section — shedding, off, notice (#713)', () => {
   it('over budget: the detail sheds and is named, the band and hidden lines stay', () => {
     const huge = 'x'.repeat(COMMENT_BODY_BUDGET);

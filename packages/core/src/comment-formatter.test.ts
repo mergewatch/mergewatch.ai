@@ -1250,6 +1250,13 @@ describe('buildReviewDetailUrl (#486)', () => {
     expect(decoded.slice(idx + 1)).toBe('42#abc123');
   });
 
+  it('trims trailing slashes in linear time (CodeQL js/polynomial-redos #20)', () => {
+    expect(buildReviewDetailUrl('https://mw.example///', 'o/r', '1#a')).toBe('https://mw.example/dashboard/reviews/o%2Fr%3A1%23a');
+    const t = Date.now();
+    buildReviewDetailUrl(`https://mw.example${'/'.repeat(200000)}x`, 'o/r', '1#a');
+    expect(Date.now() - t).toBeLessThan(500);
+  });
+
   it('returns undefined when there is no dashboard — the normal self-hosted case', () => {
     // The comment then omits the link rather than rendering a dead one.
     expect(buildReviewDetailUrl(undefined, 'owner/repo', '42#abc')).toBeUndefined();
