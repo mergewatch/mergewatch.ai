@@ -68,8 +68,7 @@ Once you click Install, the following happens automatically:
 
 1. GitHub fires an `installation` webhook to MergeWatch.
 2. MergeWatch creates an installation record in DynamoDB.
-3. An `installation_repositories` event fires for each repo in scope.
-4. All repos appear in **Dashboard > Repositories** within 30 seconds.
+3. **Dashboard > Repositories** lists the repos in scope by asking GitHub for the installation's repositories each time the page loads, so it is current immediately. Repos you add or remove later under the App's **Configure** page show up on the next load; no extra webhook is involved.
 
 <Note>
 No review runs until a pull request is opened. Installing the app does not trigger reviews on existing PRs.
