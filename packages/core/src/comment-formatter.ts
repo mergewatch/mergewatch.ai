@@ -295,7 +295,11 @@ export function buildReviewDetailUrl(
   prNumberCommitSha: string,
 ): string | undefined {
   if (!dashboardBaseUrl) return undefined;
-  const base = dashboardBaseUrl.replace(/\/+$/, '');
+  // A loop, not `/\/+$/`: that regex is quadratic on a run of slashes not at
+  // the end (CodeQL js/polynomial-redos).
+  let end = dashboardBaseUrl.length;
+  while (end > 0 && dashboardBaseUrl[end - 1] === '/') end--;
+  const base = dashboardBaseUrl.slice(0, end);
   return `${base}/dashboard/reviews/${encodeURIComponent(`${repoFullName}:${prNumberCommitSha}`)}`;
 }
 
@@ -702,6 +706,35 @@ export function renderSafetyPayload(p: SafetyPayload): string {
   return `<!-- ${SAFETY_PAYLOAD_MARKER}:${json} -->`;
 }
 
+const SAFETY_OPEN = `<!-- ${SAFETY_PAYLOAD_MARKER}:{`;
+const SAFETY_CLOSE = '} -->';
+
+/**
+ * The JSON of the first `<!-- mw-safety:{…} -->` whose closer is on the same
+ * line: what `/<!-- mw-safety:(\{.*?\}) -->/` matched, in linear time. The
+ * regex re-scanned the rest of the line from every opener, which is quadratic
+ * on a body of forged openers (CodeQL js/polynomial-redos). Both pointers only
+ * move forward because the openers are visited in order.
+ */
+function findSafetyJson(body: string): string | null {
+  const lineEnd = /[\n\r\u2028\u2029]/g;
+  let close = -1;
+  let eol = -1;
+  for (let i = body.indexOf(SAFETY_OPEN); i !== -1; i = body.indexOf(SAFETY_OPEN, i + 1)) {
+    const brace = i + SAFETY_OPEN.length - 1;
+    if (close <= brace) {
+      close = body.indexOf(SAFETY_CLOSE, brace + 1);
+      if (close === -1) return null;
+    }
+    if (eol !== Infinity && eol <= brace) {
+      lineEnd.lastIndex = brace;
+      eol = lineEnd.exec(body)?.index ?? Infinity;
+    }
+    if (close < eol) return body.slice(brace, close + 1);
+  }
+  return null;
+}
+
 /**
  * Read the safety line back. Returns null when it is absent, its JSON is
  * invalid, or a field has the wrong type. Takes the first match: the
@@ -709,10 +742,10 @@ export function renderSafetyPayload(p: SafetyPayload): string {
  * first is the real one.
  */
 export function parseSafetyPayload(body: string): SafetyPayload | null {
-  const m = /<!-- mw-safety:(\{.*?\}) -->/.exec(body ?? '');
-  if (!m) return null;
+  const json = findSafetyJson(body ?? '');
+  if (json === null) return null;
   try {
-    const p = JSON.parse(m[1]) as Partial<SafetyPayload>;
+    const p = JSON.parse(json) as Partial<SafetyPayload>;
     if (typeof p.score !== 'number' || typeof p.sha !== 'string'
       || !SAFETY_LEVELS.includes(p.band as SafetyLevel)
       || !Array.isArray(p.areas) || !p.areas.every((a) => typeof a === 'string')) {

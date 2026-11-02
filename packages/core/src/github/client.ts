@@ -1219,7 +1219,8 @@ export async function resolveAppLogin(
     return login;
   } catch (err) {
     // The only identity source on a silent PR, so say why dismissal will skip.
-    console.warn(`[review] GET /app failed on ${owner}/${repo}; own App login unknown (#707):`, err);
+    // Values as arguments, not in the format string (CodeQL js/tainted-format-string).
+    console.warn('[review] GET /app failed on %s/%s; own App login unknown (#707):', owner, repo, err);
     return null;
   }
 }
