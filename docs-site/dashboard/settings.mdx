@@ -26,12 +26,12 @@ The stored settings object (`InstallationSettings` in `@mergewatch/core`) has th
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `severityThreshold` | `"Low" \| "Med" \| "High"` | `"Low"` | Minimum severity level to post as a comment. Findings below this threshold are suppressed. The default reports every tier including info; `Med` and `High` are explicit opt-ins that suppress lower tiers. |
-| `commentTypes.syntax` | boolean | `true` | Include syntax-category findings. |
-| `commentTypes.logic` | boolean | `true` | Include logic / bug-category findings. |
+| `commentTypes.syntax` | boolean | `true` | Run the bug-finding agent. The key name is historical. |
+| `commentTypes.logic` | boolean | `true` | Run the security agent. The key name is historical. |
 | `commentTypes.style` | boolean | `true` | Include style-category findings. |
 | `maxComments` | number (1–50) | `10` | Upper limit on findings posted per PR. Prevents noisy reviews on large changesets. |
 | `summary.prSummary` | boolean | `true` | Post a high-level summary comment on each PR. |
-| `summary.confidenceScore` | boolean | `true` | Show the AI confidence score in the summary. |
+| `summary.confidenceScore` | boolean | `false` | Show the AI confidence score in the summary. Off by default: the scores are model-reported and not calibrated. |
 | `summary.issuesTable` | boolean | `true` | Add a severity-ranked table of all findings to the summary. |
 | `summary.diagram` | boolean | `true` | Render a Mermaid architecture diagram in the summary comment. |
 | `customInstructions` | string (≤ 1000 chars) | `""` | Free-text instructions injected into every agent prompt. |

@@ -44,8 +44,11 @@ export async function GET(req: NextRequest) {
     const agents = await store.installations.getCustomAgents(installationId);
     // `canEdit` lets the client render read-only for non-admins.
     return NextResponse.json({ agents: annotateNameCollisions(agents), canEdit: isAdmin, softCap: ORG_CUSTOM_AGENT_SOFT_CAP });
-  } catch {
-    return NextResponse.json({ agents: [], canEdit: isAdmin, softCap: ORG_CUSTOM_AGENT_SOFT_CAP });
+  } catch (err) {
+    // Never answer a failed read with an empty agent list: the editor would show an
+    // empty list, and the next save would wipe every org agent.
+    console.error("Failed to load custom agents:", err);
+    return NextResponse.json({ error: "Could not load custom agents, please retry" }, { status: 500 });
   }
 }
 
