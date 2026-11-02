@@ -4,7 +4,6 @@ import { authOptions } from "@/lib/auth";
 import { getDashboardStore } from "@/lib/store";
 import { fetchUserInstallations, checkInstallationAdmin, TokenExpiredError } from "@/lib/github-repos";
 import { settingsValidationError } from "@/lib/settings-validation";
-import { DEFAULT_INSTALLATION_SETTINGS } from "@mergewatch/core";
 import type { InstallationSettings } from "@mergewatch/core";
 
 async function getAuthenticatedAdmin(req: NextRequest) {
@@ -49,15 +48,18 @@ export async function GET(req: NextRequest) {
     if (err instanceof TokenExpiredError) {
       return NextResponse.json({ error: "Token expired" }, { status: 401 });
     }
-    return NextResponse.json({ settings: DEFAULT_INSTALLATION_SETTINGS });
+    return NextResponse.json({ error: "GitHub API unavailable, please retry" }, { status: 503 });
   }
 
   try {
     const store = await getDashboardStore();
     const settings = await store.installations.getSettings(installationId);
     return NextResponse.json({ settings });
-  } catch {
-    return NextResponse.json({ settings: DEFAULT_INSTALLATION_SETTINGS });
+  } catch (err) {
+    // Never answer a failed read with the defaults: the form would show them
+    // as the saved settings, and the next save would overwrite the real ones.
+    console.error("Failed to load settings:", err);
+    return NextResponse.json({ error: "Could not load settings, please retry" }, { status: 500 });
   }
 }
 

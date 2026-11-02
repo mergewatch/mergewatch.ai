@@ -106,6 +106,9 @@ export default function SettingsForm({
   const [settings, setSettings] = useState<InstallationSettings>(DEFAULT_SETTINGS);
   const [savedSettings, setSavedSettings] = useState<InstallationSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
+  // A failed load must never be edited as if it were the saved settings: the
+  // form would show its placeholder defaults, and saving would overwrite them.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -115,11 +118,13 @@ export default function SettingsForm({
         const res = await fetch(
           `/api/settings?installation_id=${installationId}`
         );
-        if (res.ok) {
-          const data = await res.json();
-          setSettings(data.settings);
-          setSavedSettings(data.settings);
-        }
+        if (res.status === 401) { window.location.href = "/signout"; return; }
+        if (!res.ok) throw new Error("Failed to load settings");
+        const data = await res.json();
+        setSettings(data.settings);
+        setSavedSettings(data.settings);
+      } catch {
+        setLoadFailed(true);
       } finally {
         setLoading(false);
       }
@@ -181,6 +186,18 @@ export default function SettingsForm({
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div className="px-4 py-6 sm:px-8">
+        <h1 className="text-fg-primary text-xl font-semibold">Settings</h1>
+        <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-500">
+          Failed to load settings. Editing is disabled so a save cannot overwrite the stored settings.
+          Reload the page to retry.
         </div>
       </div>
     );

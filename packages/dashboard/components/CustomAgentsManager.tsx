@@ -33,6 +33,9 @@ export default function CustomAgentsManager({ installationId, isAdmin, repos }: 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A failed load must never be edited as if it were empty: saving would
+  // replace the stored agents with only what is on screen.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,7 +52,10 @@ export default function CustomAgentsManager({ installationId, isAdmin, repos }: 
           setSoftCap(json.softCap ?? 10);
         }
       } catch (e: any) {
-        if (!cancelled) setError(e.message ?? "Failed to load");
+        if (!cancelled) {
+          setError(e.message ?? "Failed to load");
+          setLoadFailed(true);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -104,6 +110,18 @@ export default function CustomAgentsManager({ installationId, isAdmin, repos }: 
       <div className="px-4 py-6 sm:px-8">
         <div className="h-6 w-48 animate-pulse rounded bg-surface-subtle" />
         <div className="mt-4 h-40 animate-pulse rounded-lg bg-surface-subtle" />
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div className="px-4 py-6 sm:px-8">
+        <h1 className="text-xl font-bold text-fg-primary">Custom Agents</h1>
+        <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-500">
+          {error ?? "Failed to load custom agents"}. Editing is disabled so a save cannot overwrite the
+          stored agents. Reload the page to retry.
+        </div>
       </div>
     );
   }
