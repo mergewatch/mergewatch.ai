@@ -49,15 +49,15 @@ pip install aws-sam-cli
 sam --version
 ```
 
-### Node.js 20.x
+### Node.js 22.x (>= 22.12.0)
 
 ```bash
-# Using nvm (recommended)
-nvm install 20
-nvm use 20
+# Using nvm (recommended) — reads the pinned version from the repo's .nvmrc
+nvm install
+nvm use
 
 # Verify
-node --version  # Should output v20.x.x
+node --version  # Should output v22.x.x
 ```
 
 ---

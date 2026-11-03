@@ -5,6 +5,10 @@ applications:
       phases:
         preBuild:
           commands:
+            # Node comes from the root .nvmrc (#779); appRoot is packages/dashboard.
+            - nvm install "$(cat ../../.nvmrc)"
+            - nvm use "$(cat ../../.nvmrc)"
+            - node --version
             - npm install -g pnpm@10.23.0
             - pnpm install --frozen-lockfile
             - pnpm -w run build

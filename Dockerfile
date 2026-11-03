@@ -1,6 +1,6 @@
 ARG VERSION=0.1.0
 
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 RUN npm install -g pnpm@10.23.0
 
@@ -26,7 +26,7 @@ COPY packages/server/ packages/server/
 
 RUN pnpm run build
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 ARG VERSION
 LABEL org.opencontainers.image.title="MergeWatch"

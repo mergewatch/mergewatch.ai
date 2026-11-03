@@ -24,8 +24,8 @@ graph TD
 | Component | Type | Spec | Role |
 |---|---|---|---|
 | API Gateway | REST API | 29s integration timeout | Receive GitHub webhook, proxy to Lambda |
-| WebhookHandler | Lambda (Node 20, ARM64) | 512 MB, 30s timeout | Validate HMAC, parse event, invoke ReviewAgent async |
-| ReviewAgent | Lambda (Node 20, ARM64) | 1024 MB, 300s timeout | Fetch diff, fan out to 8 agents, post results |
+| WebhookHandler | Lambda (Node 22, ARM64) | 512 MB, 30s timeout | Validate HMAC, parse event, invoke ReviewAgent async |
+| ReviewAgent | Lambda (Node 22, ARM64) | 1024 MB, 300s timeout | Fetch diff, fan out to 8 agents, post results |
 | DynamoDB | On-demand tables | 90-day TTL on reviews | Installation config, review history |
 | SSM Parameter Store | SecureString | KMS-encrypted | GitHub App credentials |
 | Bedrock | Model inference | `us.anthropic.claude-sonnet-5-5` | Powers all 8 review agents |
