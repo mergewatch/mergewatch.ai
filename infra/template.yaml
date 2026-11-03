@@ -85,8 +85,8 @@ Parameters:
 
 Globals:
   Function:
-    # All functions run on Node.js 20.x (LTS)
-    Runtime: nodejs20.x
+    # All functions run on Node.js 22.x (LTS)
+    Runtime: nodejs22.x
 
     # ARM64 (Graviton2) provides better price-performance for Lambda
     Architectures:

@@ -14,7 +14,7 @@
 # Prerequisites:
 #   1. AWS CLI installed and configured (aws configure)
 #   2. AWS SAM CLI installed (brew install aws-sam-cli)
-#   3. Node.js 20.x installed (for building Lambda functions)
+#   3. Node.js 22.x (>= 22.12.0) installed (for building Lambda functions)
 #   4. SSM parameters populated (run ./scripts/setup-ssm.sh first)
 #
 # What this script does:
@@ -59,13 +59,15 @@ check_prerequisites() {
   fi
 
   if ! command -v node &>/dev/null; then
-    error "Node.js is not installed. Install v20.x: https://nodejs.org/"
+    error "Node.js is not installed. Install v22.x (>= 22.12.0): https://nodejs.org/"
     missing=1
   else
-    # Check Node.js version (need 20.x)
-    NODE_VERSION=$(node --version | cut -d'.' -f1 | tr -d 'v')
-    if [ "$NODE_VERSION" -lt 20 ]; then
-      warn "Node.js version $(node --version) detected. Node.js 20.x or later is recommended."
+    # Check Node.js version (need >= 22.12.0, the floor in package.json engines)
+    local node_major node_minor
+    IFS=. read -r node_major node_minor _ <<< "$(node --version | tr -d 'v')"
+    if [ "$node_major" -lt 22 ] || { [ "$node_major" -eq 22 ] && [ "$node_minor" -lt 12 ]; }; then
+      error "Node.js version $(node --version) detected. Node.js 22.12.0 or later is required."
+      missing=1
     fi
   fi
 

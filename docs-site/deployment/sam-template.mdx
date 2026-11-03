@@ -39,8 +39,8 @@ The template creates the following AWS resources:
 | Resource | Type | Details |
 |---|---|---|
 | WebhookApi | `AWS::ApiGateway::RestApi` | REST API endpoint that receives GitHub webhook POST requests |
-| WebhookHandlerFunction | `AWS::Lambda::Function` | Node.js 20, ARM64, 512 MB, 30s timeout. Validates HMAC signature and invokes ReviewAgent asynchronously. |
-| ReviewAgentFunction | `AWS::Lambda::Function` | Node.js 20, ARM64, 1024 MB, 300s timeout. Runs the multi-agent review pipeline. |
+| WebhookHandlerFunction | `AWS::Lambda::Function` | Node.js 22, ARM64, 512 MB, 30s timeout. Validates HMAC signature and invokes ReviewAgent asynchronously. |
+| ReviewAgentFunction | `AWS::Lambda::Function` | Node.js 22, ARM64, 1024 MB, 300s timeout. Runs the multi-agent review pipeline. |
 | InstallationsTable | `AWS::DynamoDB::Table` | On-demand table for GitHub App installation records. GSI on `accountId`. |
 | ReviewsTable | `AWS::DynamoDB::Table` | On-demand table for review history. 90-day TTL. GSI on `createdAt`. |
 | LambdaExecutionRole | `AWS::IAM::Role` | Shared execution role for both Lambda functions with least-privilege permissions. |
